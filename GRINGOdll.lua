@@ -1257,7 +1257,6 @@ do
         { nome="Resolver",  ico="brain",       subs={"Resolver"} },
         { nome="Emotes",    ico="smile",       subs={"Emotes"}, ordem=1.5 },
         { nome="Duelo da Bola", ico="flame",   subs={"Auto Toque"}, ordem=8.5 },
-        { nome="Liberdade", ico="shield-check", subs={"Se Soltar"}, ordem=1.7 },
     }
     do
         local ordem = 0
@@ -1514,7 +1513,7 @@ do
     GS.painelSilent   = painel(8,2)   -- SILENT AIM: montada pelo modulo do fim do arquivo
     GS.painelRecoil   = painel(8,3)   -- NO RECOIL: montada pelo modulo do fim do arquivo
     GS.painelMunicao  = painel(8,4)   -- MUNICAO INFINITA: montada pelo modulo do fim do arquivo
-    GS.painelSoltar   = painel(12,1)  -- LIBERDADE > SE SOLTAR: montada pelo modulo do fim do arquivo
+    GS.painelRetorno  = painel(4,1)
     GS.painelBola     = painel(11,1)  -- DUELO DA BOLA: AUTO TOQUE monta aqui (antes ficava no Combate)
     GS.painelResolver = painel(9,1)
 
@@ -10317,301 +10316,156 @@ end
 GS.rodar("Velocidade da bala", GS.iniciarVelocidade, GS.painelMunicao)
 
 -- ═══════════════════════════════════════════════════════════════
---   SE SOLTAR (BRUTAL) — aba LIBERDADE > SE SOLTAR
--- ═══════════════════════════════════════════════════════════════
---   Algema, prender, agarrar, carregar (inclusive item VIP do jogo):
---   por baixo quase sempre e solda/corda no seu corpo, voce ancorado,
---   velocidade/pulo zerados, sentado a forca, controles/mochila
---   desligados e animacao de algemado. Aqui desfaz TUDO isso:
---   • DETECTOR: junta/constraint ligando seu corpo a algo FORA do seu
---     personagem (BasePart:GetJoints pega ate solda que mora na mao de
---     quem te prendeu), ancorado, WalkSpeed 0, sentado no boneco de outro
---     jogador, item/atributo com nome de algema (cuff/arrest/grab...).
---   • SOLTAR: quebra essas juntas, desancora, devolve velocidade/pulo,
---     religa controles/mochila/estados do Humanoid, levanta, para a
---     animacao, marca "Cuffed" etc. como false e pula pra longe de quem
---     prendeu. Segura a liberdade por 2s reaplicando (jogo que prende de
---     novo na hora). Nunca reseta nem mata o personagem.
---   Respeita o proprio script: nada "Gringo..." e mexido, o Voo (que fica
---   deitado de proposito) nao e desfeito e o CARREGAR de amigo nao e solto.
---   Obs: jogo que segura voce NO SERVIDOR (dono da fisica do seu boneco
---   passa pro servidor) pode te puxar de volta — isso o cliente nao manda.
--- ═══════════════════════════════════════════════════════════════
-GS.iniciarSoltar = function()
+--   RETORNO SEGURO — TELEPORTE > PLAYERS
+GS.iniciarRetorno = function()
     local U = GS.ui
-    local painel = GS.painelSoltar
-    if not U or not painel then
-        error("UI nao pronta (GS.ui=" .. tostring(U ~= nil) .. ", GS.painelSoltar=" .. tostring(painel ~= nil) .. ")")
-    end
-    local T = U.T
-    local StarterGui = game:GetService("StarterGui")
-    local CAS = game:GetService("ContextActionService")
-    local TECLA = Enum.KeyCode.Z
+    local painel = GS.painelRetorno
+    if not U or not painel then error("Painel de retorno indisponivel") end
 
-    local L = { auto=false, pular=true, ws=16, jp=50, jh=7.2, livreAte=0, ultimoSoltar=0,
-                soltou=0, motivo="", captor=nil, conns={} }
-    GS.liberdade = L
+    local estado = { ativo = false, escolhendo = false, tecla = nil, destino = nil, ultimoUso = -math.huge, conns = {} }
+    GS.retornoSeguro = estado
+    local grupo = U.grupo(painel, "Retorno seguro", "Escolha a tecla e ative para salvar seu lugar atual", "map-pin", 2)
+    local teclaBtn = U.pequeno(grupo, "1. DEFINIR TECLA", nil, 1, "keyboard")
+    local ativarBtn = U.tog(grupo, "2. Ativar retorno pela tecla", 2, "shield-check")
+    local salvarBtn = U.pequeno(grupo, "ATUALIZAR LUGAR SALVO", nil, 3, "map-pin")
+    local voltarBtn = U.acao(grupo, "VOLTAR AO LUGAR SALVO", "arrow-up-to-line", 4)
+    local status = U.pequeno(grupo, "Escolha uma tecla para começar", nil, 5, "info")
+    status.Active = false
+    status.AutoButtonColor = false
+    status.TextColor3 = U.T.dim
+    ativarBtn.Text = "RETORNO: OFF"
 
-    -- ── UI ──────────────────────────────────────────────────────
-    local g = U.grupo(painel, "Se Soltar", "Te prenderam (algema, agarrar, carregar)? Um clique e você tá livre", "shield-check", 1)
-    local botao = U.acao(g, "SE SOLTAR AGORA (TECLA Z)", "zap", 1)
-    local status = U.pequeno(g, "STATUS: LIVRE", nil, 2)
-    status.AutoButtonColor = false; status.TextColor3 = T.dim
-    local gb = U.grupo(painel, "Modo brutal", "Solta sozinho no instante em que te prendem", "flame", 2)
-    local togAuto = U.tog(gb, "Soltar sozinho (automático)", 1, "shield")
-    local togPulo = U.tog(gb, "Pular pra longe de quem prendeu", 2, "rabbit")
-    togPulo.Text = "PULO: ON"
-
-    -- ── Palavras de algema/prisao ───────────────────────────────
-    local PALAVRAS = { "cuff", "algema", "arrest", "preso", "prender", "restrain", "detain", "jail",
-                       "captur", "grab", "agarr", "carry", "carreg", "ziptie", "tied", "taser", "tased",
-                       "stun", "rope", "corda", "hostage", "refem", "kidnap", "sequestr", "drag" }
-    local function temPalavra(nome)
-        local n = string.lower(nome)
-        for _, p in ipairs(PALAVRAS) do
-            if string.find(n, p, 1, true) then return true end
-        end
-        return false
-    end
-    local function nosso(o) return string.sub(o.Name, 1, 6) == "Gringo" end
-
-    -- ── O que te prende ─────────────────────────────────────────
-    -- parte do outro lado de uma junta/constraint (nil se nao tiver)
-    local function outroLado(j, minha)
-        local a, b
-        if j:IsA("JointInstance") or j:IsA("WeldConstraint") or j:IsA("NoCollisionConstraint") then
-            a, b = j.Part0, j.Part1
-        elseif j:IsA("Constraint") then
-            a = j.Attachment0 and j.Attachment0.Parent
-            b = j.Attachment1 and j.Attachment1.Parent
-        end
-        if a == minha then return b end
-        if b == minha then return a end
-        return a ~= nil and not a:IsDescendantOf(minha.Parent or minha) and a or b
-    end
-    local function ehPersonagemDeOutro(o)
-        local m = o and o:FindFirstAncestorOfClass("Model")
-        while m do
-            local p = Players:GetPlayerFromCharacter(m)
-            if p then return p ~= LocalPlayer end
-            m = m.Parent and m.Parent:FindFirstAncestorOfClass("Model")
-        end
-        return false
-    end
-    -- junta "de prender": liga voce a algo fora do seu boneco (cadeira normal nao conta)
-    local function juntasDePrender(char)
-        local lista = {}
-        for _, p in ipairs(char:GetDescendants()) do
-            if p:IsA("BasePart") then
-                local ok, juntas = pcall(function() return p:GetJoints() end)
-                if ok then
-                    for _, j in ipairs(juntas) do
-                        if not nosso(j) then
-                            local outro = outroLado(j, p)
-                            if outro and outro:IsA("BasePart") and not outro:IsDescendantOf(char) then
-                                local cadeira = j.Name == "SeatWeld" and outro:IsA("Seat") or outro:IsA("VehicleSeat")
-                                if not cadeira or ehPersonagemDeOutro(outro) then
-                                    table.insert(lista, { j = j, outro = outro })
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        return lista
-    end
-    local function marcadores(char)
-        local lista = {}
-        for _, raiz in ipairs({ char, LocalPlayer }) do
-            for _, d in ipairs(raiz:GetDescendants()) do
-                if d:IsA("BoolValue") and d.Value and temPalavra(d.Name) and not nosso(d) then
-                    table.insert(lista, { o = d })
-                end
-            end
-            for _, o in ipairs({ raiz, char:FindFirstChildOfClass("Humanoid") }) do
-                if o then
-                    for nome, v in pairs(o:GetAttributes()) do
-                        if v == true and temPalavra(nome) then table.insert(lista, { o = o, attr = nome }) end
-                    end
-                end
-            end
-        end
-        return lista
-    end
-    local function carregadoPorAmigo()
-        -- Carregar do proprio script (amigo te carrega ou voce nas costas dele): nao solta
-        local CE = GS.carregarEstado
-        return CE ~= nil and (CE.carregadoPor ~= nil or CE.costas == true)
-    end
-
-    -- motivo (texto) se voce esta preso, ou nil
-    local function preso(char, hum, root)
-        if carregadoPorAmigo() then return nil end
-        local juntas = juntasDePrender(char)
-        if #juntas > 0 then
-            L.captor = juntas[1].outro
-            local quem = juntas[1].outro:FindFirstAncestorOfClass("Model")
-            return "PRESO EM " .. string.upper(quem and quem.Name or juntas[1].outro.Name)
-        end
-        if root.Anchored then return "ANCORADO" end
-        if hum.Sit and hum.SeatPart and ehPersonagemDeOutro(hum.SeatPart) then
-            L.captor = hum.SeatPart; return "SENTADO EM OUTRO JOGADOR"
-        end
-        if not hum.Sit and hum.WalkSpeed == 0 then return "VELOCIDADE ZERADA" end
-        if #marcadores(char) > 0 then return "MARCADO COMO PRESO" end
-        for _, d in ipairs(char:GetChildren()) do
-            if not d:IsA("Tool") and not nosso(d) and temPalavra(d.Name) then return "ITEM DE ALGEMA NO CORPO" end
-        end
-        return nil
-    end
-
-    -- ── Soltar ──────────────────────────────────────────────────
-    local MOVERS = { BodyPosition=true, BodyVelocity=true, BodyGyro=true, BodyForce=true, BodyThrust=true,
-                     BodyAngularVelocity=true, RocketPropulsion=true, LinearVelocity=true, AngularVelocity=true,
-                     VectorForce=true, AlignPosition=true, AlignOrientation=true, LineForce=true, Torque=true }
-    local ESTADOS = { Enum.HumanoidStateType.Running, Enum.HumanoidStateType.Jumping,
-                      Enum.HumanoidStateType.GettingUp, Enum.HumanoidStateType.Freefall,
-                      Enum.HumanoidStateType.Climbing, Enum.HumanoidStateType.Landed,
-                      Enum.HumanoidStateType.RunningNoPhysics }
-    local function soltar(char, hum, root, forte)
-        local captorPos = L.captor and L.captor.Parent and L.captor.Position or nil
-        -- 1) quebra solda/corda com quem prendeu
-        for _, x in ipairs(juntasDePrender(char)) do
-            captorPos = captorPos or x.outro.Position
-            pcall(function() x.j:Destroy() end)
-        end
-        -- 2) item de algema e movers estranhos no seu corpo
-        for _, d in ipairs(char:GetDescendants()) do
-            if not nosso(d) then
-                if MOVERS[d.ClassName] and not (flyAtivado and d:IsA("BodyMover")) then
-                    pcall(function() d:Destroy() end)
-                elseif d:IsA("BasePart") then
-                    if d.Anchored then pcall(function() d.Anchored = false end) end
-                elseif forte and d.Parent == char and not d:IsA("Tool") and not d:IsA("Humanoid")
-                and not d:IsA("BasePart") and temPalavra(d.Name) then
-                    pcall(function() d:Destroy() end)
-                end
-            end
-        end
-        -- 3) marcadores "Cuffed/Arrested" = false (scripts do seu PC leem isso)
-        for _, mk in ipairs(marcadores(char)) do
-            pcall(function()
-                if mk.attr then mk.o:SetAttribute(mk.attr, false) else mk.o.Value = false end
-            end)
-        end
-        -- 4) pernas de volta
-        pcall(function()
-            for _, e in ipairs(ESTADOS) do hum:SetStateEnabled(e, true) end
-            if hum.WalkSpeed < L.ws then hum.WalkSpeed = L.ws end
-            if hum.UseJumpPower then
-                if hum.JumpPower < L.jp then hum.JumpPower = L.jp end
-            elseif hum.JumpHeight < L.jh then hum.JumpHeight = L.jh end
-            if hum.Sit then hum.Sit = false end
-            if hum.PlatformStand and not flyAtivado then hum.PlatformStand = false end
-            hum.AutoRotate = true
-            if not flyAtivado then hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
-        end)
-        -- 5) animacao de algemado / agarrado para
-        pcall(function()
-            local animator = hum:FindFirstChildOfClass("Animator")
-            for _, tr in ipairs(animator and animator:GetPlayingAnimationTracks() or {}) do
-                local nome = (tr.Animation and tr.Animation.Name or "") .. " " .. tr.Name
-                if temPalavra(nome) then tr:Stop(0) end
-            end
-        end)
-        -- 6) controles e mochila de volta
-        pcall(function()
-            local pm = LocalPlayer:FindFirstChildOfClass("PlayerScripts")
-            local mod = pm and pm:FindFirstChild("PlayerModule")
-            if mod then require(mod):GetControls():Enable() end
-        end)
-        pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, true) end)
-        pcall(function()
-            for nome in pairs(CAS:GetAllBoundActionInfo()) do
-                if temPalavra(nome) then CAS:UnbindAction(nome) end
-            end
-        end)
-        -- 7) pula pra longe de quem prendeu (so no primeiro golpe)
-        if forte and L.pular and not flyAtivado then
-            pcall(function()
-                local de = captorPos or (root.Position - root.CFrame.LookVector * 5)
-                local dir = root.Position - de
-                dir = Vector3.new(dir.X, 0, dir.Z)
-                if dir.Magnitude < 0.1 then dir = -root.CFrame.LookVector end
-                local rot = root.CFrame - root.Position
-                root.CFrame = CFrame.new(root.Position + dir.Unit * 10 + Vector3.new(0, 3, 0)) * rot
-                root.AssemblyLinearVelocity = Vector3.zero
-            end)
-        end
-        L.captor = nil
-    end
-
-    -- botao/tecla: solta forte e segura a liberdade por 2s
-    local function soltarAgora(manual)
+    local function personagem()
         local char = LocalPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not (hum and root) then return end
-        local agora = os.clock()
-        if agora - L.ultimoSoltar < 0.25 then return end
-        L.ultimoSoltar = agora
-        pcall(soltar, char, hum, root, true)
-        L.livreAte = agora + 2
-        L.soltou = L.soltou + 1
-        if manual then GS.toast("Livre!", true) end
+        if not (char and hum and root) or hum.Health <= 0 then return end
+        return char, hum, root
     end
 
-    -- ── Loop: guarda velocidade normal, detecta e (auto) solta ──
-    local proxCheck = 0
-    table.insert(L.conns, RunService.Heartbeat:Connect(function()
-        pcall(function()
-            local char = LocalPlayer.Character
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-            if not (hum and root) or hum.Health <= 0 then return end
-            local agora = os.clock()
-            -- segurando a liberdade logo depois de soltar
-            if agora < L.livreAte then pcall(soltar, char, hum, root, false) end
-            if agora < proxCheck then return end
-            proxCheck = agora + 0.1
-            local motivo = preso(char, hum, root)
-            if not motivo then
-                -- livre: guarda a velocidade/pulo normal desse jogo
-                if hum.WalkSpeed > 0 then L.ws = hum.WalkSpeed end
-                if hum.JumpPower > 0 then L.jp = hum.JumpPower end
-                if hum.JumpHeight > 0 then L.jh = hum.JumpHeight end
-                status.Text = "STATUS: LIVRE" .. (L.soltou > 0 and ("  ·  SOLTOU " .. L.soltou .. "x") or "")
-                status.TextColor3 = T.dim
-            else
-                status.Text = "STATUS: " .. motivo .. (L.auto and "  ·  SOLTANDO..." or "  ·  APERTA Z")
-                status.TextColor3 = T.text
-                if L.auto then soltarAgora(false) end
-            end
+    local function salvar()
+        local char, hum, root = personagem()
+        if not char then
+            GS.toast("Espere seu personagem aparecer", false)
+            return false
+        end
+        if hum.Sit or hum.PlatformStand or root.Anchored or hum.WalkSpeed <= 0 then
+            GS.toast("Salve o lugar enquanto estiver livre e em pé", false)
+            return false
+        end
+        if hum.FloorMaterial == Enum.Material.Air then
+            GS.toast("Fique no chão para salvar um lugar seguro", false)
+            return false
+        end
+        estado.destino = root.CFrame
+        status.Text = "Lugar salvo · tecla " .. (estado.tecla and estado.tecla.Name or "não definida")
+        return true
+    end
+
+    local function voltar()
+        if not estado.ativo or estado.escolhendo or not estado.destino then
+            GS.toast("Defina a tecla e ative o retorno primeiro", false)
+            return
+        end
+        if os.clock() - estado.ultimoUso < 1 then return end
+        local char, hum, root = personagem()
+        if not char then return end
+        estado.ultimoUso = os.clock()
+        local ok = pcall(function()
+            hum.Sit = false
+            root.CFrame = estado.destino
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
         end)
+        if not ok then
+            GS.toast("Não foi possível realizar o retorno", false)
+            return
+        end
+        status.Text = "Retorno solicitado · verificando posição..."
+        task.delay(0.5, function()
+            if not ScreenGui.Parent or not estado.ativo then return end
+            local atual, _, raiz = personagem()
+            if atual ~= char then return end
+            local chegou = (raiz.Position - estado.destino.Position).Magnitude < 8
+            status.Text = chegou and "Você voltou ao lugar salvo" or "O jogo impediu o retorno"
+            GS.toast(chegou and "Você voltou ao lugar salvo" or "O servidor pode estar bloqueando o teleporte", chegou)
+        end)
+    end
+
+    teclaBtn.MouseButton1Click:Connect(function()
+        if escutandoTecla then
+            GS.toast("Termine de escolher a tecla do menu primeiro", false)
+            return
+        end
+        estado.escolhendo = true
+        teclaBtn.Text = "PRESSIONE UMA TECLA · ESC CANCELA"
+    end)
+
+    ativarBtn.MouseButton1Click:Connect(function()
+        if estado.ativo then
+            estado.ativo = false
+            ativarBtn.Text = "RETORNO: OFF"
+            status.Text = "Retorno desativado"
+            return
+        end
+        if not estado.tecla or estado.escolhendo then
+            GS.toast("Escolha a tecla do retorno primeiro", false)
+            return
+        end
+        if estado.tecla == teclaMenu then
+            GS.toast("Escolha uma tecla diferente da tecla do menu", false)
+            return
+        end
+        if not salvar() then return end
+        estado.ativo = true
+        ativarBtn.Text = "RETORNO: ON"
+        GS.toast("Lugar salvo! Aperte " .. estado.tecla.Name .. " para voltar", true)
+    end)
+
+    salvarBtn.MouseButton1Click:Connect(function()
+        if salvar() then GS.toast("Lugar seguro atualizado", true) end
+    end)
+    voltarBtn.MouseButton1Click:Connect(voltar)
+
+    table.insert(estado.conns, UserInputService.InputBegan:Connect(function(input, processado)
+        if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        if estado.escolhendo then
+            if UserInputService:GetFocusedTextBox() then return end
+            if input.KeyCode == Enum.KeyCode.Escape then
+                estado.escolhendo = false
+                teclaBtn.Text = estado.tecla and ("TECLA: " .. estado.tecla.Name) or "1. DEFINIR TECLA"
+                return
+            end
+            if input.KeyCode == Enum.KeyCode.Unknown or input.KeyCode == teclaMenu then
+                GS.toast("Escolha uma tecla diferente da tecla do menu", false)
+                return
+            end
+            estado.tecla = input.KeyCode
+            estado.escolhendo = false
+            teclaBtn.Text = "TECLA: " .. estado.tecla.Name
+            status.Text = estado.ativo and ("Retorno ativo · tecla " .. estado.tecla.Name) or "Agora ative para salvar seu lugar"
+            return
+        end
+        if processado or escutandoTecla or UserInputService:GetFocusedTextBox() then return end
+        if estado.ativo and input.KeyCode == estado.tecla and input.KeyCode ~= teclaMenu then voltar() end
     end))
 
-    -- ── Cliques / tecla ─────────────────────────────────────────
-    botao.MouseButton1Click:Connect(function() soltarAgora(true) end)
-    table.insert(L.conns, UserInputService.InputBegan:Connect(function(io, gpe)
-        if gpe or UserInputService:GetFocusedTextBox() then return end
-        if io.KeyCode == TECLA then soltarAgora(true) end
+    table.insert(estado.conns, LocalPlayer.CharacterAdded:Connect(function()
+        estado.ativo = false
+        estado.destino = nil
+        estado.escolhendo = false
+        ativarBtn.Text = "RETORNO: OFF"
+        teclaBtn.Text = estado.tecla and ("TECLA: " .. estado.tecla.Name) or "1. DEFINIR TECLA"
+        status.Text = "Você renasceu · ative novamente para salvar um lugar"
     end))
-    togAuto.MouseButton1Click:Connect(function()
-        L.auto = not L.auto
-        togAuto.Text = L.auto and "AUTO: ON" or "AUTO: OFF"
-    end)
-    togPulo.MouseButton1Click:Connect(function()
-        L.pular = not L.pular
-        togPulo.Text = L.pular and "PULO: ON" or "PULO: OFF"
-    end)
 
     ScreenGui.Destroying:Connect(function()
-        for _, c in ipairs(L.conns) do pcall(function() c:Disconnect() end) end
-        L.conns = {}
+        estado.ativo = false
+        for _, conexao in ipairs(estado.conns) do conexao:Disconnect() end
+        table.clear(estado.conns)
     end)
 end
-GS.rodar("Se Soltar", GS.iniciarSoltar, GS.painelSoltar)
+GS.rodar("Retorno seguro", GS.iniciarRetorno, GS.painelRetorno)
 
 -- MODO LEVE (CONFIGURACOES): pra PC fraco / Windows 10 que crasha.
 -- Pausa as animacoes em loop (borda girando, brilho do titulo), desliga o
