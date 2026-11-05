@@ -1387,7 +1387,7 @@ do
         AntiTravaButton  = tile(g, "Anti-trava", "anchor",    2)
         RegenUI.antiVoid = tile(g, "Anti-void",  "life-buoy", 3)
         local gs = grupo(p, "Socorro", "Caiu no void ou travou? Volte na hora", "life-buoy", 2)
-        RegenUI.regenerar = acao(gs,"REGENERAR / RENASCER (TECLA K)","refresh-cw",1)
+        RegenUI.regenerar = acao(gs,"REGENERAR / RENASCER","refresh-cw",1)
         RegenUI.voltar    = pequeno(gs,"VOLTAR PRO ÚLTIMO CHÃO (TECLA L)",nil,2,"arrow-up-to-line")
     end
 
@@ -5109,7 +5109,7 @@ local function regenerar()
         R.morrendo = false
         task.delay(2, function()
             if ScreenGui.Parent and not R.morrendo then
-                RegenUI.regenerar.Text = "RENASCER (TECLA K)"
+                RegenUI.regenerar.Text = "RENASCER"
             end
         end)
     end)
@@ -5150,7 +5150,8 @@ end)
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp or escutandoTecla or UserInputService:GetFocusedTextBox()
         or (GS.retornoSeguro and GS.retornoSeguro.escolhendo) then return end
-    if input.KeyCode == Enum.KeyCode.K then regenerar()
+    if input.KeyCode == Enum.KeyCode.K then
+        if not GS.noclipArquivo then regenerar() end
     elseif input.KeyCode == Enum.KeyCode.L then voltarProChao() end
 end)
 end  -- fim REGENERAR
@@ -6012,6 +6013,217 @@ GS.prepararTelaFarma = function()
     selecionar(1)
 end
 GS.rodar("Layout Farma",GS.prepararTelaFarma,GS.painelFarma)
+GS.iniciarNoclipArquivo = function()
+    local guiPainel=ScreenGui
+    local ModuloAtivo=true
+    local Conexoes={}
+    local CapturarPersonagem
+    -- Conteudo de s.lua; as conexoes e o loop recebem controle de ciclo de vida.
+--[[ 
+    NOCLIP SYSTEM (ATRAVESSAR PAREDES)
+    Funcionalidades:
+    - Desativa colisões do personagem
+    - Painel de controle simples (GUI)
+    - Toggle via Tecla K
+]]
+
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local Settings = {
+    Enabled = false,
+    AntiVoid = true,
+    VoidY = -100,
+    RecoveryOffset = Vector3.new(0, 5, 0),
+    ToggleKey = Enum.KeyCode.K
+}
+
+local LastSafeCFrame
+
+-- Criação do Painel Simples
+local ScreenGui = Instance.new("ScreenGui")
+local MainFrame = Instance.new("Frame")
+local ToggleButton = Instance.new("TextButton")
+
+ScreenGui.Name = "NoclipPanel"
+ScreenGui.Parent = game.CoreGui
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
+MainFrame.Size = UDim2.new(0, 150, 0, 50)
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+ToggleButton.Name = "ToggleButton"
+ToggleButton.Parent = MainFrame
+ToggleButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+ToggleButton.Position = UDim2.new(0.1, 0, 0.2, 0)
+ToggleButton.Size = UDim2.new(0.8, 0, 0.6, 0)
+ToggleButton.Font = Enum.Font.SourceSansBold
+ToggleButton.Text = "Noclip: OFF"
+ToggleButton.TextColor3 = Color3.new(1, 1, 1)
+ToggleButton.TextSize = 18
+
+local function UpdateUI()
+    ToggleButton.Text = "Noclip: " .. (Settings.Enabled and "ON" or "OFF")
+    ToggleButton.BackgroundColor3 = Settings.Enabled and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(60, 60, 60)
+end
+
+local function ToggleNoclip()
+    Settings.Enabled = not Settings.Enabled
+    UpdateUI()
+end
+
+local function GetRoot(character)
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+local function SaveSafePosition(character)
+    local root = GetRoot(character)
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid or humanoid.Health <= 0 then return end
+
+    if root.Position.Y > Settings.VoidY + 20 then
+        LastSafeCFrame = root.CFrame
+    end
+end
+
+local function RecoverFromVoid(character)
+    if not Settings.AntiVoid then return end
+
+    local root = GetRoot(character)
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid or humanoid.Health <= 0 then return end
+
+    if root.Position.Y <= Settings.VoidY then
+        if LastSafeCFrame then
+            root.CFrame = LastSafeCFrame + Settings.RecoveryOffset
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            warn("[DEBUG-BOT]: Void recovery activated")
+        else
+            warn("[DEBUG-BOT]: No safe position available for recovery")
+        end
+    end
+end
+
+local function ApplyNoCollision(character)
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = false
+        end
+    end
+end
+
+local function BindCharacter(character)
+    LastSafeCFrame = nil
+    if CapturarPersonagem then CapturarPersonagem(character) end
+    print("[DEBUG-BOT]: Character bound")
+
+    task.spawn(function()
+        while ModuloAtivo and character.Parent and LocalPlayer.Character == character do
+            SaveSafePosition(character)
+            RecoverFromVoid(character)
+
+            if Settings.Enabled then
+                ApplyNoCollision(character)
+            end
+
+            task.wait(0.05)
+        end
+    end)
+end
+
+table.insert(Conexoes, ToggleButton.MouseButton1Click:Connect(ToggleNoclip))
+
+local conexaoTecla = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Settings.ToggleKey then
+        ToggleNoclip()
+    end
+end)
+
+if LocalPlayer.Character then
+    BindCharacter(LocalPlayer.Character)
+end
+
+table.insert(Conexoes, LocalPlayer.CharacterAdded:Connect(BindCharacter))
+
+print("[DEBUG-BOT]: Anti-void controller active")
+    table.insert(Conexoes,conexaoTecla)
+    local donos={}
+    local anteriores=setmetatable({}, {__mode="k"})
+    local observados=setmetatable({}, {__mode="k"})
+    local eraManual=false
+    local function guardarParte(obj)
+        if obj:IsA("BasePart") and anteriores[obj]==nil then anteriores[obj]=obj.CanCollide end
+    end
+    local function guardarPersonagem(char)
+        for _,obj in ipairs(char:GetDescendants()) do guardarParte(obj) end
+        if observados[char] then return end
+        observados[char]=true
+        table.insert(Conexoes,char.DescendantAdded:Connect(function(obj)
+            if next(donos) then guardarParte(obj) end
+        end))
+    end
+    CapturarPersonagem=function(char)
+        if next(donos) then guardarPersonagem(char) end
+    end
+    local function restaurarColisoes()
+        if Settings.Enabled or noclipAtivado then return end
+        for obj,valor in pairs(anteriores) do
+            if obj.Parent then obj.CanCollide=valor end
+        end
+        table.clear(anteriores)
+    end
+    GS.noclipArquivo={
+        ativar=function(dono)
+            if not ModuloAtivo or donos[dono] then return end
+            if not next(donos) then
+                eraManual=Settings.Enabled
+                table.clear(anteriores)
+                if LocalPlayer.Character then guardarPersonagem(LocalPlayer.Character) end
+            end
+            donos[dono]=true
+            Settings.Enabled=true
+            UpdateUI()
+            print("[DEBUG-BOT]: Noclip do arquivo ativado pela farma",dono)
+        end,
+        liberar=function(dono)
+            if not donos[dono] then return end
+            donos[dono]=nil
+            if not next(donos) then
+                Settings.Enabled=eraManual
+                UpdateUI()
+                restaurarColisoes()
+            end
+        end,
+    }
+    table.insert(Conexoes,LocalPlayer.CharacterAdded:Connect(function(char)
+        if next(donos) then guardarPersonagem(char) end
+    end))
+    -- Reaproveita o mesmo botao do arquivo dentro da tela Farma.
+    MainFrame.Parent=GS.painelFarma
+    MainFrame.LayoutOrder=-0.5
+    MainFrame.Draggable=false
+    ScreenGui:Destroy()
+    guiPainel.Destroying:Connect(function()
+        ModuloAtivo=false
+        Settings.Enabled=false
+        Settings.AntiVoid=false
+        for _,conn in ipairs(Conexoes) do conn:Disconnect() end
+        table.clear(donos)
+        restaurarColisoes()
+        GS.noclipArquivo=nil
+    end)
+end
+GS.rodar("Noclip s.lua",GS.iniciarNoclipArquivo,GS.painelFarma)
+
 
 GS.iniciarFarma = function()
     local U = GS.ui
@@ -6021,7 +6233,7 @@ GS.iniciarFarma = function()
     -- Configuracao exclusiva dos frascos; nenhum filtro por cor ou brilho.
     local CFG = {
         nome = "PotionTemplate",
-        voo = 90,
+        voo = 500,
         caminhada = 16,
         aproxima = 12,
         toque = 4,
@@ -6071,7 +6283,7 @@ GS.iniciarFarma = function()
     local monitorBtn = U.tog(painel, "DETECTAR E MOSTRAR FRASCOS", 2)
     monitorBtn:SetAttribute("Controlado", true)
     monitorBtn.Text = "DETECÇÃO: OFF"
-    local autoBtn = U.tog(painel, "AUTOMÁTICO · MODO LIVRE 90", 3)
+    local autoBtn = U.tog(painel, "AUTOMÁTICO · MODO LIVRE 500", 3)
     autoBtn:SetAttribute("Controlado", true)
     autoBtn.Text = "AUTOMÁTICO: OFF"
     local status = U.pequeno(painel, "DESLIGADO", nil, 4, "radar")
@@ -6102,7 +6314,7 @@ GS.iniciarFarma = function()
         historico.Visible=not historico.Visible
         detalhes.Text=historico.Visible and "OCULTAR HISTÓRICO" or "MOSTRAR HISTÓRICO"
     end)
-    resumo.Text = "Monitorar registra aparições. Automático ativa voo 90 e aproximação a pé."
+    resumo.Text = "Automático: voo 500, noclip do arquivo e aproximação a pé."
     locais.Text = "Filtro exclusivo: PotionTemplate."
     historico.Text = "Histórico: aguardando ativação."
 
@@ -6363,6 +6575,10 @@ GS.iniciarFarma = function()
 
     local function setVoo(ativo)
         GS.farmaDirecao = nil
+        if GS.noclipArquivo then
+            if ativo then GS.noclipArquivo.ativar("frascos")
+            else GS.noclipArquivo.liberar("frascos") end
+        end
         if not ativo then
             local _,_,root = personagem()
             if root then root.AssemblyLinearVelocity = Vector3.zero end
@@ -6416,7 +6632,7 @@ GS.iniciarFarma = function()
     local function voar(e,g,a)
         setVoo(true)
         local inicio = os.clock()
-        R.fase = "MODO LIVRE · 90"
+        R.fase = "MODO LIVRE · 500"
         while autoVivo(g,a) and valido(e.obj) do
             local _,hum,root = personagem()
             if not hum or root.Anchored then break end
@@ -6431,7 +6647,8 @@ GS.iniciarFarma = function()
                 registrar("TRAJETO","Voo sem chegada; tentando aproximação a pé.")
                 break
             end
-            GS.farmaDirecao = delta.Unit * math.clamp(delta.Magnitude/10,0,1)
+            GS.farmaDirecao = delta.Unit * math.clamp(
+                (delta.Magnitude-CFG.aproxima*0.5)/(CFG.voo*0.15),0,1)
             task.wait(0.05)
         end
         GS.farmaDirecao = Vector3.zero
@@ -6533,6 +6750,7 @@ GS.iniciarFarma = function()
         R.cicloAuto = R.cicloAuto+1
         R.alvo = nil
         restaurarMovimento()
+        if GS.noclipArquivo then GS.noclipArquivo.liberar("frascos") end
         autoBtn.Text = "AUTOMÁTICO: OFF"
         R.fase = R.monitor and "MONITORANDO" or "DESLIGADO"
     end
@@ -6545,8 +6763,9 @@ GS.iniciarFarma = function()
         R.cicloAuto = R.cicloAuto+1
         local g,a = R.geracao,R.cicloAuto
         salvarMovimento()
-        autoBtn.Text = "AUTOMÁTICO: ON · VOO 90"
-        registrar("AUTO","Voo 90 no trajeto; chegada a pé e confirmação por inventário.")
+        if GS.noclipArquivo then GS.noclipArquivo.ativar("frascos") end
+        autoBtn.Text = "AUTOMÁTICO: ON · VOO 500"
+        registrar("AUTO","Voo 500 e noclip; chegada a pé e confirmação por inventário.")
         task.spawn(function()
             while autoVivo(g,a) do
                 local ok,err = pcall(function()
@@ -6917,6 +7136,7 @@ GS.iniciarFarmaLucky = function()
         L.ciclo=L.ciclo+1
         L.alvo=nil
         restaurar()
+        if GS.noclipArquivo then GS.noclipArquivo.liberar("lucky") end
         automatico.Text="AUTO LUCKY: OFF"
         L.fase="MONITORANDO LUCKY"
     end
@@ -6993,6 +7213,7 @@ GS.iniciarFarmaLucky = function()
     local function buscarAlvo(e,g,c)
         local _,hum,root=personagem()
         if not hum then return end
+        if GS.noclipArquivo then GS.noclipArquivo.ativar("lucky") end
         L.fase="INDO ATÉ "..(e.it.nome or e.obj.Name)
         velocidadeVoo=90
         FlyLabel.Text="VOO: 90"
@@ -7021,6 +7242,7 @@ GS.iniciarFarmaLucky = function()
         GS.farmaDirecao=nil
         if flyAtivado then alternarFly() end
         root.AssemblyLinearVelocity=Vector3.zero
+        if GS.noclipArquivo then GS.noclipArquivo.liberar("lucky") end
         hum.WalkSpeed=16
         aproximar(e,g,c)
         if not autoVivo(g,c) then return end
@@ -7107,6 +7329,7 @@ GS.iniciarFarmaLucky = function()
         L.salvo={fly=flyAtivado,voo=velocidadeVoo,speed=speedAtivado,walk=hum and hum.WalkSpeed or 16}
         if speedAtivado then alternarSpeed() end
         L.auto=true
+        if GS.noclipArquivo then GS.noclipArquivo.ativar("lucky") end
         L.ciclo=L.ciclo+1
         local g,c=L.geracao,L.ciclo
         automatico.Text="AUTO LUCKY: ON · 90"
@@ -11940,10 +12163,10 @@ GS.iniciarRetorno = function()
     if not U or not painel then error("Painel de retorno indisponivel") end
 
     GS.resetMesmoLugar = true
-    local resetGrupo = U.grupo(painel, "Renascer no mesmo lugar", "Tecla K · aguarda renascer e tenta voltar à posição anterior", "refresh-cw", 1.5)
+    local resetGrupo = U.grupo(painel, "Renascer no mesmo lugar", "Aguarda renascer e tenta voltar à posição anterior", "refresh-cw", 1.5)
     local resetModo = U.tog(resetGrupo, "Voltar ao mesmo lugar após renascer", 1, "map-pin")
     resetModo.Text = "MESMO LUGAR: ON"
-    local resetBotao = U.acao(resetGrupo, "MORRER / RENASCER AGORA (K)", "refresh-cw", 2)
+    local resetBotao = U.acao(resetGrupo, "MORRER / RENASCER AGORA", "refresh-cw", 2)
     GS.resetStatus = U.pequeno(resetGrupo, "Pronto · o tempo de renascer depende do jogo", nil, 3, "info")
     GS.resetStatus.Active = false
     GS.resetStatus.AutoButtonColor = false
@@ -12070,7 +12293,7 @@ GS.iniciarRetorno = function()
                 return
             end
             if input.KeyCode == Enum.KeyCode.Unknown or input.KeyCode == teclaMenu or input.KeyCode == Enum.KeyCode.K then
-                GS.toast("K é renascer. Escolha outra tecla para o retorno", false)
+                GS.toast("K controla o noclip. Escolha outra tecla para o retorno", false)
                 return
             end
             estado.tecla = input.KeyCode
