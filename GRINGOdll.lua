@@ -575,11 +575,10 @@ do
         task.wait(0.15)
     end
 
-    -- janela: splash primeiro, depois sobe + cresce com elastico. Se o splash
-    -- der erro a janela abre igual (e tem limite de 17s de seguranca).
+    -- Janela abre imediatamente; a tela de carregamento foi removida.
     local abrirScale=Instance.new("UIScale",MainFrame); abrirScale.Scale=escalaBase*0.85
     MainFrame.Position=UDim2.new(0.5,-W/2,0.5,-H/2+40)
-    MainFrame.Visible=false
+    MainFrame.Visible=true
     task.spawn(function()
         local aberta = false
         local function abrirJanela()
@@ -589,8 +588,6 @@ do
             tw(MainFrame,{Position=UDim2.new(0.5,-W/2,0.5,-H/2)},0.55)
             tw(abrirScale,{Scale=escalaBase},0.55,Enum.EasingStyle.Back)
         end
-        task.delay(17, abrirJanela)   -- seguranca: carregamento leva ~14s
-        pcall(splash)
         abrirJanela()
     end)
 
