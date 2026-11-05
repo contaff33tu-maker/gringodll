@@ -5946,20 +5946,35 @@ GS.rodar("Rastreio", GS.iniciarRastreio, GS.painelRastrear)
 --   FARMA BOT — coleta local para playtest
 -- ═══════════════════════════════════════════════════════════════
 GS.iniciarFarma = function()
-    local U = GS.ui
-    local painel = GS.painelFarma
+    local U, painel = GS.ui, GS.painelFarma
     if not U or not painel then return end
-
     local PathfindingService = game:GetService("PathfindingService")
-    local R = { ativo = false, andando = false, conns = {}, alvo = nil, proximo = 0, status = nil }
-    local PALAVRAS = {"coin", "moeda", "cash", "item", "loot", "chest", "bau", "baú", "pickup", "collect", "reward", "premio", "prêmio"}
-
-    U.sec(painel, "FARMA BOT", "📦", 1)
+    local R = {ativo=false, geracao=0, itens={}, espera={}, conns={}, gui=nil, sujo=true}
+    local categorias = {
+        {nome="FRASCO", palavras={"frasco","flask","vial","potion","pocao","poção","bottle","garrafa","elixir"}},
+        {nome="LUCKY BLOCK", palavras={"lucky","luckyblock","luckblock","lockblock","lucky block","lock block"}},
+        {nome="BAÚ / CAIXA", palavras={"chest","bau","baú","crate","caixa","treasure","lootbox"}},
+        {nome="ITEM", palavras={"coin","moeda","pickup","collectible","reward","premio","prêmio"}},
+    }
+    U.sec(painel, "FARMA · ITENS NO MAPA", "package", 1)
     local tog = U.tog(painel, "FARMA AUTOMÁTICA", 2)
     tog:SetAttribute("Controlado", true)
-    local status = U.pequeno(painel, "BOT: DESLIGADO", nil, 3, "radar")
-    status.AutoButtonColor = false; status.TextColor3 = U.T.dim
-    R.status = status
+    tog.Text = "FARMA AUTOMÁTICA: OFF"
+    local status = U.pequeno(painel, "DESLIGADO", nil, 3, "radar")
+    status.AutoButtonColor = false
+    local lista = Instance.new("TextLabel")
+    lista.Name = "LocaisFarma"
+    lista.Size = UDim2.new(1,-12,0,180)
+    lista.LayoutOrder = 4
+    lista.BackgroundTransparency = 1
+    lista.Font = Enum.Font.GothamMedium
+    lista.TextSize = 13
+    lista.TextColor3 = U.T.text
+    lista.TextXAlignment = Enum.TextXAlignment.Left
+    lista.TextYAlignment = Enum.TextYAlignment.Top
+    lista.TextWrapped = true
+    lista.Text = "Ative para localizar baús, caixas, Lucky Blocks e frascos."
+    lista.Parent = painel
 
     local function personagem()
         local char = LocalPlayer.Character
@@ -5968,109 +5983,236 @@ GS.iniciarFarma = function()
         if hum and root and hum.Health > 0 then return char, hum, root end
     end
 
-    local function eItem(obj)
-        if not (obj:IsA("Model") or obj:IsA("BasePart") or obj:IsA("Tool")) then return false end
-        if obj:IsDescendantOf(LocalPlayer.Character or Instance.new("Folder")) then return false end
-        local n = string.lower(obj.Name)
-        for _, palavra in ipairs(PALAVRAS) do
-            if string.find(n, palavra, 1, true) then return true end
-        end
-        return obj:IsA("Tool") and obj.Parent == workspace
-    end
-
     local function parte(obj)
         if obj:IsA("BasePart") then return obj end
-        if obj:IsA("Model") and obj.PrimaryPart then return obj.PrimaryPart end
         return obj:FindFirstChildWhichIsA("BasePart", true)
     end
 
-    local function procurarMaisPerto(origem)
-        local escolhido, distancia
-        for _, obj in ipairs(workspace:GetChildren()) do
-            if eItem(obj) then
-                local p = parte(obj)
-                if p then
-                    local d = (p.Position - origem).Magnitude
-                    if not distancia or d < distancia then escolhido, distancia = obj, d end
-                end
+    local function categoria(texto)
+        texto = string.lower(texto)
+        for _, c in ipairs(categorias) do
+            for _, palavra in ipairs(c.palavras) do
+                if string.find(texto, palavra, 1, true) then return c.nome end
             end
         end
-        return escolhido, distancia
     end
 
-    local function interagir(alvo)
-        local prompt = alvo:FindFirstChildWhichIsA("ProximityPrompt", true)
-        if prompt and prompt.Enabled then
-            pcall(function()
-                if fireproximityprompt then fireproximityprompt(prompt) end
-            end)
+    local function dePersonagem(obj)
+        local p = obj
+        while p and p ~= workspace do
+            if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then return true end
+            p = p.Parent
         end
-        local click = alvo:FindFirstChildWhichIsA("ClickDetector", true)
-        if click then
-            pcall(function()
-                if fireclickdetector then fireclickdetector(click) end
-            end)
+        return false
+    end
+
+    local function avaliar(obj)
+        if not (obj:IsA("BasePart") or obj:IsA("Model") or obj:IsA("Tool")) then return end
+        if dePersonagem(obj) then return end
+        local p = parte(obj)
+        if not p then return end
+        local cat = categoria(obj.Name)
+        if not cat and obj:IsA("BasePart") and p.Transparency < 0.9
+            and p.Size.Magnitude < 12 and p.Size.Magnitude > 0.2 then
+            local c = p.Color
+            local luminoso = p.Material == Enum.Material.Neon or p:FindFirstChildWhichIsA("Light")
+            if luminoso and c.G > 0.65 and c.R < c.G * 0.85 and c.B < c.G * 0.85 then
+                cat = "POSSÍVEL FRASCO"
+            end
+        end
+        if not cat then
+            local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt then cat = categoria(prompt.ObjectText .. " " .. prompt.ActionText) end
+        end
+        if not cat then return end
+        if obj:IsA("Model") and obj:GetExtentsSize().Magnitude > 60 then return end
+        local alvo = obj
+        local pai = obj.Parent
+        while pai and pai ~= workspace and (pai:IsA("Model") or pai:IsA("Tool")) do
+            if categoria(pai.Name) then alvo = pai end
+            pai = pai.Parent
+        end
+        return alvo, cat
+    end
+
+    local function marcar(obj, cat)
+        if R.itens[obj] then return end
+        local p = parte(obj)
+        if not p then return end
+        local gui = Instance.new("BillboardGui")
+        gui.Name = "FarmaLocal"
+        gui.Adornee = p
+        gui.Size = UDim2.fromOffset(240,48)
+        gui.StudsOffsetWorldSpace = Vector3.new(0,3,0)
+        gui.AlwaysOnTop = true
+        gui.LightInfluence = 0
+        gui.Parent = R.gui
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.fromScale(1,1)
+        label.BackgroundColor3 = Color3.fromRGB(4,24,18)
+        label.BackgroundTransparency = 0.18
+        label.TextColor3 = U.T.strokeHi
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = 12
+        label.TextWrapped = true
+        label.Text = cat .. " · " .. obj.Name
+        label.Parent = gui
+        Instance.new("UICorner",label).CornerRadius = UDim.new(0,8)
+        R.itens[obj] = {parte=p, gui=gui, label=label, cat=cat}
+    end
+
+    local function vivo(g)
+        return R.ativo and R.geracao == g and ScreenGui.Parent ~= nil
+    end
+
+    local function varrer(g)
+        R.sujo = false
+        for i, obj in ipairs(workspace:GetDescendants()) do
+            if not vivo(g) then return end
+            local ok, alvo, cat = pcall(avaliar, obj)
+            if ok and alvo then
+                local pai, duplicado = alvo.Parent, false
+                while pai and pai ~= workspace do
+                    if R.itens[pai] then duplicado = true; break end
+                    pai = pai.Parent
+                end
+                if not duplicado then
+                    -- Um modelo reconhecido substitui marcadores de suas peças.
+                    for existente, it in pairs(R.itens) do
+                        if existente ~= alvo and existente:IsDescendantOf(alvo) then
+                            it.gui:Destroy(); R.itens[existente] = nil
+                        end
+                    end
+                    marcar(alvo, cat)
+                end
+            end
+            if i % 150 == 0 then task.wait() end
         end
     end
 
-    local function irAte(alvo, hum, root)
-        local p = parte(alvo)
-        if not p then return false end
-        local caminho = PathfindingService:CreatePath({AgentRadius = 2, AgentHeight = 5, AgentCanJump = true})
-        local ok = pcall(function() caminho:ComputeAsync(root.Position, p.Position) end)
-        if not ok or caminho.Status ~= Enum.PathStatus.Success then
-            hum:MoveTo(p.Position)
-            hum.MoveToFinished:Wait(2)
-            return true
+    local function atualizar(root)
+        local encontrados = {}
+        for obj, it in pairs(R.itens) do
+            if not obj:IsDescendantOf(workspace) or not it.parte:IsDescendantOf(workspace) or dePersonagem(obj) then
+                it.gui:Destroy(); R.itens[obj] = nil; R.espera[obj] = nil
+            else
+                local d = (it.parte.Position-root.Position).Magnitude
+                it.label.Text = string.format("%s · %s\n%.0f studs",it.cat,obj.Name,d)
+                table.insert(encontrados,{obj=obj,it=it,dist=d})
+            end
         end
-        for _, ponto in ipairs(caminho:GetWaypoints()) do
-            if not R.ativo or not alvo:IsDescendantOf(workspace) then return false end
-            if ponto.Action == Enum.PathWaypointAction.Jump then hum.Jump = true end
-            hum:MoveTo(ponto.Position)
-            local chegou = hum.MoveToFinished:Wait(2)
-            if not chegou then return false end
+        table.sort(encontrados,function(a,b) return a.dist < b.dist end)
+        local linhas = {}
+        for i=1,math.min(7,#encontrados) do
+            local e = encontrados[i]
+            local p = e.it.parte.Position
+            linhas[i] = string.format("%s · %s · %.0f st | X %.0f Y %.0f Z %.0f",
+                e.it.cat,e.obj.Name,e.dist,p.X,p.Y,p.Z)
         end
-        return true
+        lista.Text = #linhas > 0 and table.concat(linhas,"\n") or "Aguardando itens aparecerem no mapa..."
+        for _, e in ipairs(encontrados) do
+            if (R.espera[e.obj] or 0) <= os.clock() then return e, #encontrados end
+        end
+        return nil,#encontrados
+    end
+
+    local function mover(hum,root,pos,g)
+        hum:MoveTo(pos)
+        local limite = os.clock()+5
+        while vivo(g) and hum.Health > 0 and root.Parent and os.clock()<limite do
+            if (root.Position-pos).Magnitude < 4 then return true end
+            task.wait(0.1)
+        end
+        return false
+    end
+
+    local function buscar(e,hum,root,g)
+        if not e.obj:IsDescendantOf(workspace) then return end
+        local destino = e.it.parte.Position
+        status.Text = "BUSCANDO: " .. e.obj.Name
+        print("[DEBUG-BOT]: Buscando",e.obj:GetFullName())
+        local path = PathfindingService:CreatePath({AgentRadius=2,AgentHeight=5,AgentCanJump=true})
+        local ok = pcall(function() path:ComputeAsync(root.Position,destino) end)
+        if not vivo(g) then path:Destroy(); return end
+        if ok and path.Status == Enum.PathStatus.Success then
+            for _, wp in ipairs(path:GetWaypoints()) do
+                if not vivo(g) or not e.obj:IsDescendantOf(workspace) then break end
+                if (root.Position-destino).Magnitude < 6 then break end
+                if wp.Action == Enum.PathWaypointAction.Jump then hum.Jump = true end
+                if not mover(hum,root,wp.Position,g) then break end
+            end
+        else
+            mover(hum,root,destino,g)
+        end
+        path:Destroy()
+        if not vivo(g) or not e.obj:IsDescendantOf(workspace) then return end
+        if (root.Position-e.it.parte.Position).Magnitude <= 8 then
+            local prompt = e.obj:FindFirstChildWhichIsA("ProximityPrompt",true)
+            if prompt and prompt.Enabled and type(fireproximityprompt)=="function" then
+                fireproximityprompt(prompt)
+            end
+            local click = e.obj:FindFirstChildWhichIsA("ClickDetector",true)
+            if click and type(fireclickdetector)=="function" then fireclickdetector(click) end
+            print("[DEBUG-BOT]: Interação solicitada",e.obj.Name)
+        end
+        R.espera[e.obj] = os.clock()+15
     end
 
     local function desligar()
-        R.ativo = false
-        for _, c in ipairs(R.conns) do pcall(function() c:Disconnect() end) end
-        table.clear(R.conns); R.alvo = nil
-        tog.Text = "FARMA AUTOMÁTICA: OFF"
-        status.Text = "BOT: DESLIGADO"
-        print("[DEBUG-BOT]: Farma desativada")
+        R.ativo=false; R.geracao=R.geracao+1
+        for _, c in ipairs(R.conns) do c:Disconnect() end
+        table.clear(R.conns)
+        for _, it in pairs(R.itens) do it.gui:Destroy() end
+        table.clear(R.itens); table.clear(R.espera)
+        if R.gui then R.gui:Destroy(); R.gui=nil end
+        local _,hum,root = personagem()
+        if hum then hum:MoveTo(root.Position) end
+        tog.Text="FARMA AUTOMÁTICA: OFF"
+        status.Text="DESLIGADO"
+        lista.Text="Ative para localizar itens no mapa."
     end
 
     local function ligar()
-        R.ativo = true
-        tog.Text = "FARMA AUTOMÁTICA: ON"
-        print("[DEBUG-BOT]: Farma ativa")
-        table.insert(R.conns, RunService.Heartbeat:Connect(function()
-            if not R.ativo or R.andando or os.clock() < R.proximo then return end
-            R.proximo = os.clock() + 0.4
-            local _, hum, root = personagem()
-            if not hum then status.Text = "BOT: aguardando personagem"; return end
-            if not R.alvo or not R.alvo:IsDescendantOf(workspace) then
-                R.alvo = procurarMaisPerto(root.Position)
+        R.ativo=true; R.geracao=R.geracao+1; R.sujo=true
+        local g=R.geracao
+        R.gui=Instance.new("Folder")
+        R.gui.Name="FarmaMarcadores"; R.gui.Parent=ScreenGui
+        tog.Text="FARMA AUTOMÁTICA: ON"
+        table.insert(R.conns,workspace.DescendantAdded:Connect(function() R.sujo=true end))
+        print("[DEBUG-BOT]: Detecção de frascos, Lucky Blocks e caixas ativa")
+        task.spawn(function()
+            local ultima=0
+            while vivo(g) do
+                local ok,err=pcall(function()
+                    if R.sujo or os.clock()-ultima>5 then varrer(g); ultima=os.clock() end
+                    if not vivo(g) then return end
+                    local _,_,root=personagem()
+                    if root then
+                        local _,total=atualizar(root)
+                        if not R.buscando then status.Text="ITENS LOCALIZADOS: "..total end
+                    else status.Text="AGUARDANDO PERSONAGEM" end
+                end)
+                if not ok then warn("[DEBUG-BOT]: Detecção:",err) end
+                task.wait(0.5)
             end
-            if not R.alvo then status.Text = "BOT: nenhum item encontrado"; return end
-            local p = parte(R.alvo)
-            local distancia = p and (p.Position - root.Position).Magnitude or math.huge
-            status.Text = string.format("BOT: indo buscar %s · %.0f m", R.alvo.Name, distancia)
-            R.andando = true
-            task.spawn(function()
-                if R.ativo and irAte(R.alvo, hum, root) then
-                    interagir(R.alvo)
-                    print("[DEBUG-BOT]: Item visitado: " .. R.alvo.Name)
-                    task.wait(0.35)
-                    R.alvo = nil
-                end
-                R.andando = false
-            end)
-        end))
+        end)
+        task.spawn(function()
+            while vivo(g) do
+                local ok,err=pcall(function()
+                    local _,hum,root=personagem()
+                    if not hum then return end
+                    local e=atualizar(root)
+                    if e then
+                        R.buscando=true
+                        buscar(e,hum,root,g)
+                    end
+                end)
+                R.buscando=false
+                if not ok then warn("[DEBUG-BOT]: Navegação:",err) end
+                task.wait(0.5)
+            end
+        end)
     end
-
     tog.MouseButton1Click:Connect(function()
         if R.ativo then desligar() else ligar() end
     end)
