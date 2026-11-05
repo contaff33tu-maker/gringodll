@@ -1254,6 +1254,7 @@ do
         { nome="Resolver",  ico="brain",       subs={"Resolver"} },
         { nome="Emotes",    ico="smile",       subs={"Emotes"}, ordem=1.5 },
         { nome="Duelo da Bola", ico="flame",   subs={"Auto Toque"}, ordem=8.5 },
+        { nome="Farma", ico="package", subs={"Farma Bot"}, ordem=9.5 },
     }
     do
         local ordem = 0
@@ -1506,6 +1507,7 @@ do
 
     -- ── RASTREAR / COMBATE / RESOLVER ── (montadas pelos modulos do fim do arquivo)
     GS.painelRastrear = painel(7,1)
+    GS.painelFarma    = painel(12,1)
     GS.painelCombate  = painel(8,1)
     GS.painelSilent   = painel(8,2)   -- SILENT AIM: montada pelo modulo do fim do arquivo
     GS.painelRecoil   = painel(8,3)   -- NO RECOIL: montada pelo modulo do fim do arquivo
@@ -5939,6 +5941,142 @@ GS.iniciarRastreio = function()
     ScreenGui.Destroying:Connect(desligar)
 end
 GS.rodar("Rastreio", GS.iniciarRastreio, GS.painelRastrear)
+
+-- ═══════════════════════════════════════════════════════════════
+--   FARMA BOT — coleta local para playtest
+-- ═══════════════════════════════════════════════════════════════
+GS.iniciarFarma = function()
+    local U = GS.ui
+    local painel = GS.painelFarma
+    if not U or not painel then return end
+
+    local PathfindingService = game:GetService("PathfindingService")
+    local R = { ativo = false, andando = false, conns = {}, alvo = nil, proximo = 0, status = nil }
+    local PALAVRAS = {"coin", "moeda", "cash", "item", "loot", "chest", "bau", "baú", "pickup", "collect", "reward", "premio", "prêmio"}
+
+    U.sec(painel, "FARMA BOT", "📦", 1)
+    local tog = U.tog(painel, "FARMA AUTOMÁTICA", 2)
+    tog:SetAttribute("Controlado", true)
+    local status = U.pequeno(painel, "BOT: DESLIGADO", nil, 3, "radar")
+    status.AutoButtonColor = false; status.TextColor3 = U.T.dim
+    R.status = status
+
+    local function personagem()
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if hum and root and hum.Health > 0 then return char, hum, root end
+    end
+
+    local function eItem(obj)
+        if not (obj:IsA("Model") or obj:IsA("BasePart") or obj:IsA("Tool")) then return false end
+        if obj:IsDescendantOf(LocalPlayer.Character or Instance.new("Folder")) then return false end
+        local n = string.lower(obj.Name)
+        for _, palavra in ipairs(PALAVRAS) do
+            if string.find(n, palavra, 1, true) then return true end
+        end
+        return obj:IsA("Tool") and obj.Parent == workspace
+    end
+
+    local function parte(obj)
+        if obj:IsA("BasePart") then return obj end
+        if obj:IsA("Model") and obj.PrimaryPart then return obj.PrimaryPart end
+        return obj:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    local function procurarMaisPerto(origem)
+        local escolhido, distancia
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if eItem(obj) then
+                local p = parte(obj)
+                if p then
+                    local d = (p.Position - origem).Magnitude
+                    if not distancia or d < distancia then escolhido, distancia = obj, d end
+                end
+            end
+        end
+        return escolhido, distancia
+    end
+
+    local function interagir(alvo)
+        local prompt = alvo:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if prompt and prompt.Enabled then
+            pcall(function()
+                if fireproximityprompt then fireproximityprompt(prompt) end
+            end)
+        end
+        local click = alvo:FindFirstChildWhichIsA("ClickDetector", true)
+        if click then
+            pcall(function()
+                if fireclickdetector then fireclickdetector(click) end
+            end)
+        end
+    end
+
+    local function irAte(alvo, hum, root)
+        local p = parte(alvo)
+        if not p then return false end
+        local caminho = PathfindingService:CreatePath({AgentRadius = 2, AgentHeight = 5, AgentCanJump = true})
+        local ok = pcall(function() caminho:ComputeAsync(root.Position, p.Position) end)
+        if not ok or caminho.Status ~= Enum.PathStatus.Success then
+            hum:MoveTo(p.Position)
+            hum.MoveToFinished:Wait(2)
+            return true
+        end
+        for _, ponto in ipairs(caminho:GetWaypoints()) do
+            if not R.ativo or not alvo:IsDescendantOf(workspace) then return false end
+            if ponto.Action == Enum.PathWaypointAction.Jump then hum.Jump = true end
+            hum:MoveTo(ponto.Position)
+            local chegou = hum.MoveToFinished:Wait(2)
+            if not chegou then return false end
+        end
+        return true
+    end
+
+    local function desligar()
+        R.ativo = false
+        for _, c in ipairs(R.conns) do pcall(function() c:Disconnect() end) end
+        table.clear(R.conns); R.alvo = nil
+        tog.Text = "FARMA AUTOMÁTICA: OFF"
+        status.Text = "BOT: DESLIGADO"
+        print("[DEBUG-BOT]: Farma desativada")
+    end
+
+    local function ligar()
+        R.ativo = true
+        tog.Text = "FARMA AUTOMÁTICA: ON"
+        print("[DEBUG-BOT]: Farma ativa")
+        table.insert(R.conns, RunService.Heartbeat:Connect(function()
+            if not R.ativo or R.andando or os.clock() < R.proximo then return end
+            R.proximo = os.clock() + 0.4
+            local _, hum, root = personagem()
+            if not hum then status.Text = "BOT: aguardando personagem"; return end
+            if not R.alvo or not R.alvo:IsDescendantOf(workspace) then
+                R.alvo = procurarMaisPerto(root.Position)
+            end
+            if not R.alvo then status.Text = "BOT: nenhum item encontrado"; return end
+            local p = parte(R.alvo)
+            local distancia = p and (p.Position - root.Position).Magnitude or math.huge
+            status.Text = string.format("BOT: indo buscar %s · %.0f m", R.alvo.Name, distancia)
+            R.andando = true
+            task.spawn(function()
+                if R.ativo and irAte(R.alvo, hum, root) then
+                    interagir(R.alvo)
+                    print("[DEBUG-BOT]: Item visitado: " .. R.alvo.Name)
+                    task.wait(0.35)
+                    R.alvo = nil
+                end
+                R.andando = false
+            end)
+        end))
+    end
+
+    tog.MouseButton1Click:Connect(function()
+        if R.ativo then desligar() else ligar() end
+    end)
+    ScreenGui.Destroying:Connect(desligar)
+end
+GS.rodar("Farma Bot", GS.iniciarFarma, GS.painelFarma)
 
 -- ═══════════════════════════════════════════════════════════════
 --   ESCUDO ANTI-MONSTRO — NENHUM MONSTRO ENCOSTA EM VOCE
