@@ -60,31 +60,31 @@ do
     local BRANCO = Color3.new(1, 1, 1)
     local T = {
         -- v9.1.2: roxo bem mais escuro (o destaque "ligado" continua vivo)
-        bg        = Color3.fromRGB(10, 8, 22),
-        header    = Color3.fromRGB(25, 19, 49),
-        side      = Color3.fromRGB(21, 16, 43),
-        card      = Color3.fromRGB(38, 29, 72),
-        cardHover = Color3.fromRGB(63, 46, 112),
-        ctrl      = Color3.fromRGB(49, 38, 88),
-        stroke    = Color3.fromRGB(102, 82, 166),
-        strokeHi  = Color3.fromRGB(208, 190, 255),
+        bg        = Color3.fromRGB(5, 14, 14),
+        header    = Color3.fromRGB(8, 31, 29),
+        side      = Color3.fromRGB(6, 24, 23),
+        card      = Color3.fromRGB(10, 43, 39),
+        cardHover = Color3.fromRGB(15, 75, 63),
+        ctrl      = Color3.fromRGB(10, 54, 47),
+        stroke    = Color3.fromRGB(34, 119, 99),
+        strokeHi  = Color3.fromRGB(110, 255, 204),
         text      = Color3.fromRGB(248, 245, 255),
         dim       = Color3.fromRGB(218, 209, 239),
-        mute      = Color3.fromRGB(158, 145, 190),
-        on        = Color3.fromRGB(126, 82, 224),
-        off       = Color3.fromRGB(47, 35, 78),
+        mute      = Color3.fromRGB(139, 190, 177),
+        on        = Color3.fromRGB(27, 181, 126),
+        off       = Color3.fromRGB(20, 58, 52),
         knobOn    = Color3.fromRGB(255, 255, 255),
         knobOff   = Color3.fromRGB(205, 194, 228),
-        perigo    = Color3.fromRGB(130, 44, 83),
-        perigoTxt = Color3.fromRGB(255, 205, 232),
-        roxoA     = Color3.fromRGB(47, 28, 94),   -- topo da janela
-        roxoB     = Color3.fromRGB(10, 8, 24),    -- fundo da janela
-        vidro     = Color3.fromRGB(151, 121, 224),  -- tom dos cards de vidro
+        perigo    = Color3.fromRGB(112, 42, 58),
+        perigoTxt = Color3.fromRGB(255, 205, 210),
+        roxoA     = Color3.fromRGB(12, 55, 48),   -- topo do vidro verde
+        roxoB     = Color3.fromRGB(3, 18, 18),    -- fundo do vidro verde
+        vidro     = Color3.fromRGB(24, 105, 85),  -- tom dos cards de vidro
     }
     -- Transparencia do vidro (0 = solido, 1 = invisivel).
     -- Quer a janela mais transparente? aumenta "janela" (ex: 0.35).
     local V = {
-        janela = 0.28,  -- fundo roxo da janela
+        janela = 0.22,  -- fundo escuro e translucido da janela
         campo  = 0.78,  -- barra lateral, busca, campos de texto
         linha  = 0.84,  -- cards das funcoes
         grupo  = 0.9,   -- caixa que agrupa varias funcoes
@@ -283,7 +283,7 @@ do
         end)
     end
     local function vidroRoxo(o, rot)
-        o.BackgroundColor3 = BRANCO
+        o.BackgroundColor3 = T.roxoB
         local g = Instance.new("UIGradient", o)
         g.Color = ColorSequence.new(T.roxoA, T.roxoB); g.Rotation = rot or 60
         return g
