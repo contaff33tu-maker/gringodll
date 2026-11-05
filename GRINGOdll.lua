@@ -60,36 +60,36 @@ do
     local BRANCO = Color3.new(1, 1, 1)
     local T = {
         -- v9.1.2: roxo bem mais escuro (o destaque "ligado" continua vivo)
-        bg        = Color3.fromRGB(12, 3, 26),
-        header    = Color3.fromRGB(28, 8, 60),
-        side      = Color3.fromRGB(44, 14, 92),
-        card      = Color3.fromRGB(58, 22, 118),
-        cardHover = Color3.fromRGB(82, 36, 160),
-        ctrl      = Color3.fromRGB(70, 30, 140),
-        stroke    = Color3.fromRGB(96, 52, 170),
-        strokeHi  = Color3.fromRGB(196, 150, 255),
+        bg        = Color3.fromRGB(10, 10, 10),
+        header    = Color3.fromRGB(24, 24, 24),
+        side      = Color3.fromRGB(38, 38, 38),
+        card      = Color3.fromRGB(52, 52, 52),
+        cardHover = Color3.fromRGB(76, 76, 76),
+        ctrl      = Color3.fromRGB(64, 64, 64),
+        stroke    = Color3.fromRGB(96, 96, 96),
+        strokeHi  = Color3.fromRGB(210, 210, 210),
         text      = Color3.fromRGB(255, 255, 255),
-        dim       = Color3.fromRGB(215, 205, 238),
-        mute      = Color3.fromRGB(168, 140, 215),
-        on        = Color3.fromRGB(138, 60, 240),
-        off       = Color3.fromRGB(46, 20, 90),
+        dim       = Color3.fromRGB(220, 220, 220),
+        mute      = Color3.fromRGB(160, 160, 160),
+        on        = Color3.fromRGB(130, 130, 130),
+        off       = Color3.fromRGB(40, 40, 40),
         knobOn    = Color3.fromRGB(255, 255, 255),
-        knobOff   = Color3.fromRGB(238, 232, 250),
-        perigo    = Color3.fromRGB(122, 34, 64),
-        perigoTxt = Color3.fromRGB(255, 180, 198),
-        roxoA     = Color3.fromRGB(46, 10, 104),   -- topo da janela
-        roxoB     = Color3.fromRGB(10, 2, 24),     -- fundo da janela
-        vidro     = Color3.fromRGB(150, 96, 230),  -- tom dos cards de vidro
+        knobOff   = Color3.fromRGB(238, 238, 238),
+        perigo    = Color3.fromRGB(122, 34, 40),
+        perigoTxt = Color3.fromRGB(255, 180, 185),
+        roxoA     = Color3.fromRGB(40, 40, 40),   -- topo da janela
+        roxoB     = Color3.fromRGB(8, 8, 8) ,     -- fundo da janela
+        vidro     = Color3.fromRGB(200, 200, 200),  -- tom dos cards de vidro
     }
     -- Transparencia do vidro (0 = solido, 1 = invisivel).
     -- Quer a janela mais transparente? aumenta "janela" (ex: 0.35).
     local V = {
-        janela = 0.08,  -- fundo roxo da janela
-        campo  = 0.9,   -- barra lateral, busca, campos de texto
+        janela = 0.55,  -- fundo roxo da janela
+        campo  = 0.88,  -- barra lateral, busca, campos de texto
         linha  = 0.9,   -- cards das funcoes
         grupo  = 0.94,  -- caixa que agrupa varias funcoes
         borda  = 0.84,  -- contorno branco dos cards
-        card   = 0.5,   -- botoes de selecao dos modulos (modos, dancas...)
+        card   = 0.6,   -- botoes de selecao dos modulos (modos, dancas...)
     }
 
     -- ── Icones Lucide (48px, spritesheet publico no Roblox) ──
@@ -369,11 +369,11 @@ do
         local ms = mkS(1.2, BRANCO, MainFrame, 0.45)
         local g = Instance.new("UIGradient", ms)
         g.Color=ColorSequence.new{
-            ColorSequenceKeypoint.new(0,   Color3.fromRGB(92, 40, 180)),
-            ColorSequenceKeypoint.new(0.45,Color3.fromRGB(92, 40, 180)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(235, 220, 255)),
-            ColorSequenceKeypoint.new(0.55,Color3.fromRGB(92, 40, 180)),
-            ColorSequenceKeypoint.new(1,   Color3.fromRGB(92, 40, 180)),
+            ColorSequenceKeypoint.new(0,   Color3.fromRGB(110, 110, 110)),
+            ColorSequenceKeypoint.new(0.45,Color3.fromRGB(110, 110, 110)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 240, 240)),
+            ColorSequenceKeypoint.new(0.55,Color3.fromRGB(110, 110, 110)),
+            ColorSequenceKeypoint.new(1,   Color3.fromRGB(110, 110, 110)),
         }
         local giro = TweenService:Create(g,TweenInfo.new(7,Enum.EasingStyle.Linear,Enum.EasingDirection.InOut,-1),{Rotation=360})
         giro:Play(); table.insert(GS.animsInfinitas, giro)
@@ -394,9 +394,9 @@ do
         fundoVivo.BackgroundTransparency = 1; fundoVivo.ZIndex = 0
         -- aurora: manchas de luz roxa passeando devagar
         local MANCHAS = {
-            { cor = Color3.fromRGB(120, 40, 255), tam = 420, de = UDim2.new(0, -120, 0, -160), para = UDim2.new(0.45, 0, 0, -60), tempo = 11 },
-            { cor = Color3.fromRGB(190, 60, 255), tam = 360, de = UDim2.new(0.7, 0, 0.55, 0),  para = UDim2.new(0.25, 0, 0.7, 0), tempo = 14 },
-            { cor = Color3.fromRGB(70, 30, 200),  tam = 300, de = UDim2.new(0.35, 0, 0.3, 0),  para = UDim2.new(0.8, 0, -0.1, 0), tempo = 9 },
+            { cor = Color3.fromRGB(255, 255, 255), tam = 420, de = UDim2.new(0, -120, 0, -160), para = UDim2.new(0.45, 0, 0, -60), tempo = 11 },
+            { cor = Color3.fromRGB(200, 200, 200), tam = 360, de = UDim2.new(0.7, 0, 0.55, 0),  para = UDim2.new(0.25, 0, 0.7, 0), tempo = 14 },
+            { cor = Color3.fromRGB(150, 150, 150), tam = 300, de = UDim2.new(0.35, 0, 0.3, 0),  para = UDim2.new(0.8, 0, -0.1, 0), tempo = 9 },
         }
         for _, m in ipairs(MANCHAS) do
             local f = Instance.new("Frame", fundoVivo)
@@ -416,7 +416,7 @@ do
             local e = Instance.new("Frame", fundoVivo)
             local tam, x = math.random(2, 4), math.random()
             e.Size = UDim2.fromOffset(tam, tam); e.Position = UDim2.new(x, 0, 1, 10)
-            e.BackgroundColor3 = Color3.fromRGB(225, 205, 255); e.BackgroundTransparency = 0.35
+            e.BackgroundColor3 = Color3.fromRGB(255, 255, 255); e.BackgroundTransparency = 0.35
             e.BorderSizePixel = 0; e.ZIndex = 0; redondo(e)
             local sobe = TweenService:Create(e,
                 TweenInfo.new(math.random(70, 140) / 10, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1, false, math.random(0, 40) / 10),
@@ -445,7 +445,7 @@ do
         local vivos = {}   -- animacoes em loop daqui (param no fim)
         local fundo = Instance.new("Frame")
         fundo.Name = "GringoSplash"; fundo.Size = UDim2.fromScale(1, 1)
-        fundo.BackgroundColor3 = Color3.fromRGB(6, 1, 14); fundo.BackgroundTransparency = 1
+        fundo.BackgroundColor3 = Color3.fromRGB(0, 0, 0); fundo.BackgroundTransparency = 1
         fundo.BorderSizePixel = 0; fundo.ZIndex = 200; fundo.Parent = ScreenGui
         tw(fundo, {BackgroundTransparency = 0.12}, 0.4)
         -- brilho roxo atras do nome, respirando
@@ -483,7 +483,7 @@ do
             t.Size = UDim2.fromOffset(0, 84); t.AutomaticSize = Enum.AutomaticSize.X
             t.Position = UDim2.fromOffset(0, 40); t.ZIndex = 203
             local g = Instance.new("UIGradient", t); g.Rotation = 90
-            g.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(160, 100, 255))
+            g.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(170, 170, 170))
             local st = Instance.new("UIStroke", t); st.Color = T.on; st.Thickness = 2; st.Transparency = 1
             letras[i] = { t = t, st = st }
         end
@@ -509,12 +509,12 @@ do
         msg.AnchorPoint = Vector2.new(0.5, 0); msg.Position = UDim2.new(0.5, 0, 0.5, 64)
         msg.Size = UDim2.fromOffset(420, 22); msg.BackgroundTransparency = 1
         msg.Font = Enum.Font.GothamMedium; msg.TextSize = 15; msg.Text = ""
-        msg.TextColor3 = Color3.fromRGB(215, 195, 255); msg.ZIndex = 202
+        msg.TextColor3 = Color3.fromRGB(225, 225, 225); msg.ZIndex = 202
         local pct = Instance.new("TextLabel", fundo)
         pct.AnchorPoint = Vector2.new(0.5, 0); pct.Position = UDim2.new(0.5, 0, 0.5, 112)
         pct.Size = UDim2.fromOffset(120, 18); pct.BackgroundTransparency = 1
         pct.Font = Enum.Font.GothamBold; pct.TextSize = 13; pct.Text = "0%"
-        pct.TextColor3 = Color3.fromRGB(180, 150, 235); pct.ZIndex = 202
+        pct.TextColor3 = Color3.fromRGB(180, 180, 180); pct.ZIndex = 202
         -- barrinha
         local trilho = Instance.new("Frame", fundo)
         trilho.AnchorPoint = Vector2.new(0.5, 0); trilho.Position = UDim2.new(0.5, 0, 0.5, 96)
@@ -525,14 +525,14 @@ do
         enche.BorderSizePixel = 0; enche.ZIndex = 203; redondo(enche)
         do
             local eg = Instance.new("UIGradient", enche)
-            eg.Color = ColorSequence.new(Color3.fromRGB(140, 70, 255), Color3.fromRGB(235, 215, 255))
+            eg.Color = ColorSequence.new(Color3.fromRGB(150, 150, 150), Color3.fromRGB(240, 240, 240))
         end
         -- insta embaixo
         local insta = Instance.new("TextLabel", fundo)
         insta.AnchorPoint = Vector2.new(0.5, 1); insta.Position = UDim2.new(0.5, 0, 1, -28)
         insta.Size = UDim2.fromOffset(300, 22); insta.BackgroundTransparency = 1
         insta.Font = Enum.Font.GothamBold; insta.TextSize = 16; insta.Text = "insta @henrique_system"
-        insta.TextColor3 = Color3.fromRGB(200, 170, 255); insta.TextTransparency = 1; insta.ZIndex = 202
+        insta.TextColor3 = Color3.fromRGB(205, 205, 205); insta.TextTransparency = 1; insta.ZIndex = 202
         tw(insta, {TextTransparency = 0.1}, 0.8)
         local brilhoInsta = TweenService:Create(insta, TweenInfo.new(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { TextTransparency = 0.5 })
         task.delay(0.8, function() if insta.Parent then brilhoInsta:Play() end end)
@@ -646,11 +646,11 @@ do
         marca.TextColor3 = BRANCO; marca.TextXAlignment = Enum.TextXAlignment.Left
         local mg = Instance.new("UIGradient", marca)
         mg.Color = ColorSequence.new{
-            ColorSequenceKeypoint.new(0,    Color3.fromRGB(176, 120, 255)),
-            ColorSequenceKeypoint.new(0.42, Color3.fromRGB(176, 120, 255)),
+            ColorSequenceKeypoint.new(0,    Color3.fromRGB(170, 170, 170)),
+            ColorSequenceKeypoint.new(0.42, Color3.fromRGB(170, 170, 170)),
             ColorSequenceKeypoint.new(0.5,  Color3.fromRGB(255, 255, 255)),
-            ColorSequenceKeypoint.new(0.58, Color3.fromRGB(176, 120, 255)),
-            ColorSequenceKeypoint.new(1,    Color3.fromRGB(176, 120, 255)),
+            ColorSequenceKeypoint.new(0.58, Color3.fromRGB(170, 170, 170)),
+            ColorSequenceKeypoint.new(1,    Color3.fromRGB(170, 170, 170)),
         }
         mg.Offset = Vector2.new(-1, 0)
         local brilho = TweenService:Create(mg, TweenInfo.new(2.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false, 1.2), { Offset = Vector2.new(1, 0) })
@@ -673,11 +673,11 @@ do
         vivo.LayoutOrder = 3; vivo.Size = UDim2.fromOffset(18, 18); vivo.BackgroundTransparency = 1
         local onda = Instance.new("Frame", vivo)
         onda.AnchorPoint = Vector2.new(0.5, 0.5); onda.Position = UDim2.fromScale(0.5, 0.5)
-        onda.Size = UDim2.fromOffset(8, 8); onda.BackgroundColor3 = Color3.fromRGB(190, 140, 255)
+        onda.Size = UDim2.fromOffset(8, 8); onda.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
         onda.BackgroundTransparency = 0.2; onda.BorderSizePixel = 0; redondo(onda)
         local ponto = Instance.new("Frame", vivo)
         ponto.AnchorPoint = Vector2.new(0.5, 0.5); ponto.Position = UDim2.fromScale(0.5, 0.5)
-        ponto.Size = UDim2.fromOffset(8, 8); ponto.BackgroundColor3 = Color3.fromRGB(190, 140, 255)
+        ponto.Size = UDim2.fromOffset(8, 8); ponto.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
         ponto.BorderSizePixel = 0; redondo(ponto)
         local pulso = TweenService:Create(onda, TweenInfo.new(1.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, -1), { Size = UDim2.fromOffset(20, 20), BackgroundTransparency = 1 })
         pulso:Play(); table.insert(GS.animsInfinitas, pulso)
@@ -690,7 +690,7 @@ do
                                               NumberSequenceKeypoint.new(0.85, 0), NumberSequenceKeypoint.new(1, 1) }
         local faisca = Instance.new("Frame", fio)
         faisca.AnchorPoint = Vector2.new(0.5, 0.5); faisca.Position = UDim2.new(0, 0, 0.5, 0)
-        faisca.Size = UDim2.fromOffset(70, 3); faisca.BackgroundColor3 = Color3.fromRGB(215, 180, 255)
+        faisca.Size = UDim2.fromOffset(70, 3); faisca.BackgroundColor3 = Color3.fromRGB(225, 225, 225)
         faisca.BorderSizePixel = 0; redondo(faisca)
         local sg = Instance.new("UIGradient", faisca)
         sg.Transparency = NumberSequence.new{ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1) }
@@ -1122,7 +1122,7 @@ do
         fill.Size=UDim2.new((valInicial-minV)/(maxV-minV),0,1,0); redondo(fill)
         do
             local g=Instance.new("UIGradient",fill)
-            g.Color=ColorSequence.new(Color3.fromRGB(196,150,255), T.on)
+            g.Color=ColorSequence.new(Color3.fromRGB(220,220,220), T.on)
         end
         local knob=Instance.new("Frame",track); knob.Size=UDim2.new(0,18,0,18)
         knob.AnchorPoint=Vector2.new(0.5,0.5); knob.BackgroundColor3=BRANCO
