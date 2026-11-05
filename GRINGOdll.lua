@@ -3,9 +3,17 @@
 do
     local pais = { game.CoreGui }
     pcall(function() if gethui then table.insert(pais, gethui()) end end)
+    pcall(function()
+        local jogador = game:GetService("Players").LocalPlayer
+        local playerGui = jogador and jogador:FindFirstChildOfClass("PlayerGui")
+        if playerGui then table.insert(pais, playerGui) end
+    end)
     for _, pai in ipairs(pais) do
-        local velho = pai:FindFirstChild("GringoScripts")
-        if velho then velho:Destroy() end
+        for _, velho in ipairs(pai:GetChildren()) do
+            if velho.Name == "GringoScripts" or velho.Name == "FarmaMarcadores" then
+                velho:Destroy()
+            end
+        end
     end
 end
 
@@ -5950,13 +5958,8 @@ GS.iniciarFarma = function()
     if not U or not painel then return end
     local PathfindingService = game:GetService("PathfindingService")
     local R = {ativo=false, geracao=0, itens={}, espera={}, conns={}, gui=nil, sujo=true}
-    local categorias = {
-        {nome="FRASCO", palavras={"frasco","flask","vial","potion","pocao","poção","bottle","garrafa","elixir"}},
-        {nome="LUCKY BLOCK", palavras={"lucky","luckyblock","luckblock","lockblock","lucky block","lock block"}},
-        {nome="BAÚ / CAIXA", palavras={"chest","bau","baú","crate","caixa","treasure","lootbox"}},
-        {nome="ITEM", palavras={"coin","moeda","pickup","collectible","reward","premio","prêmio"}},
-    }
-    U.sec(painel, "FARMA · ITENS NO MAPA", "package", 1)
+    local NOME_FRASCO = "PotionTemplate"
+    U.sec(painel, "FARMA · FRASCOS · FILTRO EXATO V3", "package", 1)
     local tog = U.tog(painel, "FARMA AUTOMÁTICA", 2)
     tog:SetAttribute("Controlado", true)
     tog.Text = "FARMA AUTOMÁTICA: OFF"
@@ -5973,7 +5976,7 @@ GS.iniciarFarma = function()
     lista.TextXAlignment = Enum.TextXAlignment.Left
     lista.TextYAlignment = Enum.TextYAlignment.Top
     lista.TextWrapped = true
-    lista.Text = "Ative para localizar baús, caixas, Lucky Blocks e frascos."
+    lista.Text = "Ative para localizar somente frascos PotionTemplate."
     lista.Parent = painel
 
     local function personagem()
@@ -5988,15 +5991,6 @@ GS.iniciarFarma = function()
         return obj:FindFirstChildWhichIsA("BasePart", true)
     end
 
-    local function categoria(texto)
-        texto = string.lower(texto)
-        for _, c in ipairs(categorias) do
-            for _, palavra in ipairs(c.palavras) do
-                if string.find(texto, palavra, 1, true) then return c.nome end
-            end
-        end
-    end
-
     local function dePersonagem(obj)
         local p = obj
         while p and p ~= workspace do
@@ -6008,31 +6002,18 @@ GS.iniciarFarma = function()
 
     local function avaliar(obj)
         if not (obj:IsA("BasePart") or obj:IsA("Model") or obj:IsA("Tool")) then return end
+        if obj.Name ~= NOME_FRASCO then return end
         if dePersonagem(obj) then return end
         local p = parte(obj)
         if not p then return end
-        local cat = categoria(obj.Name)
-        if not cat and obj:IsA("BasePart") and p.Transparency < 0.9
-            and p.Size.Magnitude < 12 and p.Size.Magnitude > 0.2 then
-            local c = p.Color
-            local luminoso = p.Material == Enum.Material.Neon or p:FindFirstChildWhichIsA("Light")
-            if luminoso and c.G > 0.65 and c.R < c.G * 0.85 and c.B < c.G * 0.85 then
-                cat = "POSSÍVEL FRASCO"
-            end
-        end
-        if not cat then
-            local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if prompt then cat = categoria(prompt.ObjectText .. " " .. prompt.ActionText) end
-        end
-        if not cat then return end
-        if obj:IsA("Model") and obj:GetExtentsSize().Magnitude > 60 then return end
-        local alvo = obj
         local pai = obj.Parent
-        while pai and pai ~= workspace and (pai:IsA("Model") or pai:IsA("Tool")) do
-            if categoria(pai.Name) then alvo = pai end
+        while pai and pai ~= workspace do
+            if pai.Name == NOME_FRASCO and (pai:IsA("Model") or pai:IsA("Tool")) then
+                return pai, "FRASCO"
+            end
             pai = pai.Parent
         end
-        return alvo, cat
+        return obj, "FRASCO"
     end
 
     local function marcar(obj, cat)
@@ -6042,9 +6023,10 @@ GS.iniciarFarma = function()
         local gui = Instance.new("BillboardGui")
         gui.Name = "FarmaLocal"
         gui.Adornee = p
-        gui.Size = UDim2.fromOffset(240,48)
+        gui.Size = UDim2.fromOffset(170,36)
         gui.StudsOffsetWorldSpace = Vector3.new(0,3,0)
         gui.AlwaysOnTop = true
+        gui.MaxDistance = 0
         gui.LightInfluence = 0
         gui.Parent = R.gui
         local label = Instance.new("TextLabel")
@@ -6093,7 +6075,8 @@ GS.iniciarFarma = function()
     local function atualizar(root)
         local encontrados = {}
         for obj, it in pairs(R.itens) do
-            if not obj:IsDescendantOf(workspace) or not it.parte:IsDescendantOf(workspace) or dePersonagem(obj) then
+            if obj.Name ~= NOME_FRASCO or not obj:IsDescendantOf(workspace)
+                or not it.parte:IsDescendantOf(workspace) or dePersonagem(obj) then
                 it.gui:Destroy(); R.itens[obj] = nil; R.espera[obj] = nil
             else
                 local d = (it.parte.Position-root.Position).Magnitude
@@ -6102,6 +6085,26 @@ GS.iniciarFarma = function()
             end
         end
         table.sort(encontrados,function(a,b) return a.dist < b.dist end)
+        -- Exibe somente marcadores separados na tela; a lista continua contando todos.
+        local camera = workspace.CurrentCamera
+        local ocupados = {}
+        for _, e in ipairs(encontrados) do
+            local mostrar = false
+            if camera and #ocupados < 12 then
+                local tela, visivel = camera:WorldToViewportPoint(e.it.parte.Position + Vector3.new(0,3,0))
+                if visivel and tela.Z > 0 then
+                    mostrar = true
+                    for _, usado in ipairs(ocupados) do
+                        if math.abs(tela.X-usado.X) < 180 and math.abs(tela.Y-usado.Y) < 42 then
+                            mostrar = false
+                            break
+                        end
+                    end
+                    if mostrar then table.insert(ocupados,tela) end
+                end
+            end
+            e.it.gui.Enabled = mostrar
+        end
         local linhas = {}
         for i=1,math.min(7,#encontrados) do
             local e = encontrados[i]
@@ -6109,7 +6112,9 @@ GS.iniciarFarma = function()
             linhas[i] = string.format("%s · %s · %.0f st | X %.0f Y %.0f Z %.0f",
                 e.it.cat,e.obj.Name,e.dist,p.X,p.Y,p.Z)
         end
-        lista.Text = #linhas > 0 and table.concat(linhas,"\n") or "Aguardando itens aparecerem no mapa..."
+        lista.Text = #linhas > 0 and table.concat(linhas,"\n")
+            or (workspace.StreamingEnabled and "Nenhum PotionTemplate carregado. Streaming ativo: áreas distantes podem estar ausentes."
+                or "Aguardando frascos PotionTemplate aparecerem no mapa...")
         for _, e in ipairs(encontrados) do
             if (R.espera[e.obj] or 0) <= os.clock() then return e, #encontrados end
         end
@@ -6178,13 +6183,26 @@ GS.iniciarFarma = function()
         R.gui=Instance.new("Folder")
         R.gui.Name="FarmaMarcadores"; R.gui.Parent=ScreenGui
         tog.Text="FARMA AUTOMÁTICA: ON"
-        table.insert(R.conns,workspace.DescendantAdded:Connect(function() R.sujo=true end))
-        print("[DEBUG-BOT]: Detecção de frascos, Lucky Blocks e caixas ativa")
+        table.insert(R.conns,workspace.DescendantAdded:Connect(function(obj)
+            R.sujo=true
+            task.defer(function()
+                if not vivo(g) then return end
+                local atual = obj
+                while atual and atual ~= workspace do
+                    if atual.Name == NOME_FRASCO then
+                        local ok,alvo,cat = pcall(avaliar,atual)
+                        if ok and alvo then marcar(alvo,cat); break end
+                    end
+                    atual = atual.Parent
+                end
+            end)
+        end))
+        print("[DEBUG-BOT]: Filtro exato ativo: PotionTemplate")
         task.spawn(function()
             local ultima=0
             while vivo(g) do
                 local ok,err=pcall(function()
-                    if R.sujo or os.clock()-ultima>5 then varrer(g); ultima=os.clock() end
+                    if R.sujo or os.clock()-ultima>2 then varrer(g); ultima=os.clock() end
                     if not vivo(g) then return end
                     local _,_,root=personagem()
                     if root then
