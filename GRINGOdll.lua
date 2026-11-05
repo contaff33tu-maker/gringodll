@@ -60,36 +60,36 @@ do
     local BRANCO = Color3.new(1, 1, 1)
     local T = {
         -- v9.1.2: roxo bem mais escuro (o destaque "ligado" continua vivo)
-        bg        = Color3.fromRGB(10, 10, 10),
-        header    = Color3.fromRGB(24, 24, 24),
-        side      = Color3.fromRGB(38, 38, 38),
-        card      = Color3.fromRGB(52, 52, 52),
-        cardHover = Color3.fromRGB(76, 76, 76),
-        ctrl      = Color3.fromRGB(64, 64, 64),
-        stroke    = Color3.fromRGB(96, 96, 96),
-        strokeHi  = Color3.fromRGB(210, 210, 210),
-        text      = Color3.fromRGB(255, 255, 255),
-        dim       = Color3.fromRGB(220, 220, 220),
-        mute      = Color3.fromRGB(160, 160, 160),
-        on        = Color3.fromRGB(130, 130, 130),
-        off       = Color3.fromRGB(40, 40, 40),
+        bg        = Color3.fromRGB(10, 8, 22),
+        header    = Color3.fromRGB(25, 19, 49),
+        side      = Color3.fromRGB(21, 16, 43),
+        card      = Color3.fromRGB(38, 29, 72),
+        cardHover = Color3.fromRGB(63, 46, 112),
+        ctrl      = Color3.fromRGB(49, 38, 88),
+        stroke    = Color3.fromRGB(102, 82, 166),
+        strokeHi  = Color3.fromRGB(208, 190, 255),
+        text      = Color3.fromRGB(248, 245, 255),
+        dim       = Color3.fromRGB(218, 209, 239),
+        mute      = Color3.fromRGB(158, 145, 190),
+        on        = Color3.fromRGB(126, 82, 224),
+        off       = Color3.fromRGB(47, 35, 78),
         knobOn    = Color3.fromRGB(255, 255, 255),
-        knobOff   = Color3.fromRGB(238, 238, 238),
-        perigo    = Color3.fromRGB(122, 34, 40),
-        perigoTxt = Color3.fromRGB(255, 180, 185),
-        roxoA     = Color3.fromRGB(40, 40, 40),   -- topo da janela
-        roxoB     = Color3.fromRGB(8, 8, 8) ,     -- fundo da janela
-        vidro     = Color3.fromRGB(200, 200, 200),  -- tom dos cards de vidro
+        knobOff   = Color3.fromRGB(205, 194, 228),
+        perigo    = Color3.fromRGB(130, 44, 83),
+        perigoTxt = Color3.fromRGB(255, 205, 232),
+        roxoA     = Color3.fromRGB(47, 28, 94),   -- topo da janela
+        roxoB     = Color3.fromRGB(10, 8, 24),    -- fundo da janela
+        vidro     = Color3.fromRGB(151, 121, 224),  -- tom dos cards de vidro
     }
     -- Transparencia do vidro (0 = solido, 1 = invisivel).
     -- Quer a janela mais transparente? aumenta "janela" (ex: 0.35).
     local V = {
-        janela = 0.55,  -- fundo roxo da janela
-        campo  = 0.88,  -- barra lateral, busca, campos de texto
-        linha  = 0.9,   -- cards das funcoes
-        grupo  = 0.94,  -- caixa que agrupa varias funcoes
-        borda  = 0.84,  -- contorno branco dos cards
-        card   = 0.6,   -- botoes de selecao dos modulos (modos, dancas...)
+        janela = 0.28,  -- fundo roxo da janela
+        campo  = 0.78,  -- barra lateral, busca, campos de texto
+        linha  = 0.84,  -- cards das funcoes
+        grupo  = 0.9,   -- caixa que agrupa varias funcoes
+        borda  = 0.72,  -- contorno dos cards
+        card   = 0.42,  -- botoes de selecao dos modulos (modos, dancas...)
     }
 
     -- ── Icones Lucide (48px, spritesheet publico no Roblox) ──
@@ -354,9 +354,9 @@ do
     end
 
     -- ═══════════════ JANELA ═══════════════
-    local TITULO_H = 40   -- barra do nome GRINGOdll v9.1.2
-    local W, H = 800, 540 + TITULO_H
-    local HEADER_H = 48
+    local TITULO_H = 44   -- barra do nome GRINGOdll v9.1.2
+    local W, H = 860, 570 + TITULO_H
+    local HEADER_H = 52
     MainFrame = Instance.new("Frame")
     MainFrame.Size = UDim2.fromOffset(W, H); MainFrame.Position = UDim2.new(0.5,-W/2,0.5,-H/2)
     MainFrame.BackgroundTransparency = V.janela; MainFrame.BorderSizePixel = 0
@@ -596,14 +596,14 @@ do
 
     -- ── Barra lateral (abas por icone) ──
     local Sidebar=Instance.new("Frame",MainFrame)
-    Sidebar.Position=UDim2.fromOffset(12,12); Sidebar.Size=UDim2.new(0,60,1,-24)
+    Sidebar.Position=UDim2.fromOffset(14,14); Sidebar.Size=UDim2.new(0,68,1,-28)
     Sidebar.BackgroundColor3=T.vidro; Sidebar.BackgroundTransparency=V.campo; Sidebar.BorderSizePixel=0
     mkC(22,Sidebar); mkS(1,BRANCO,Sidebar,V.borda)
     -- v9.1.2: sem logo na lateral (o nome fica na barra de titulo)
     -- lista de abas: do topo ate a engrenagem; se um dia tiver aba demais
     -- ela rola em vez de passar por cima da engrenagem
     local ListaAbas=Instance.new("ScrollingFrame",Sidebar)
-    ListaAbas.Position=UDim2.fromOffset(0,14); ListaAbas.Size=UDim2.new(1,0,1,-74)
+    ListaAbas.Position=UDim2.fromOffset(0,16); ListaAbas.Size=UDim2.new(1,0,1,-78)
     ListaAbas.BackgroundTransparency=1; ListaAbas.BorderSizePixel=0
     ListaAbas.ScrollBarThickness=0; ListaAbas.ScrollingDirection=Enum.ScrollingDirection.Y
     ListaAbas.CanvasSize=UDim2.new(0,0,0,0); ListaAbas.AutomaticCanvasSize=Enum.AutomaticSize.Y
@@ -631,8 +631,8 @@ do
 
     -- ═══════════ TITULO: GRINGOdll v9.1.2 ═══════════
     local Titulo = Instance.new("Frame", MainFrame)
-    Titulo.Name = "Titulo"; Titulo.Position = UDim2.fromOffset(84, 12)
-    Titulo.Size = UDim2.new(1, -96, 0, TITULO_H); Titulo.BackgroundTransparency = 1; Titulo.Active = true
+    Titulo.Name = "Titulo"; Titulo.Position = UDim2.fromOffset(96, 14)
+    Titulo.Size = UDim2.new(1, -110, 0, TITULO_H); Titulo.BackgroundTransparency = 1; Titulo.Active = true
     do
         local l = Instance.new("UIListLayout", Titulo); l.FillDirection = Enum.FillDirection.Horizontal
         l.SortOrder = Enum.SortOrder.LayoutOrder; l.Padding = UDim.new(0, 10)
@@ -683,7 +683,7 @@ do
         pulso:Play(); table.insert(GS.animsInfinitas, pulso)
         -- linha de luz embaixo do titulo, com uma faisca indo e voltando
         local fio = Instance.new("Frame", MainFrame)
-        fio.Name = "FioTitulo"; fio.Position = UDim2.fromOffset(94, 12 + TITULO_H); fio.Size = UDim2.new(1, -116, 0, 1)
+        fio.Name = "FioTitulo"; fio.Position = UDim2.fromOffset(106, 14 + TITULO_H); fio.Size = UDim2.new(1, -128, 0, 1)
         fio.BackgroundColor3 = BRANCO; fio.BackgroundTransparency = 0.82; fio.BorderSizePixel = 0
         local fg = Instance.new("UIGradient", fio)
         fg.Transparency = NumberSequence.new{ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.15, 0),
@@ -700,7 +700,7 @@ do
 
     -- ── Topo: subabas + busca + minimizar/fechar + avatar ──
     local Header=Instance.new("Frame",MainFrame)
-    Header.Position=UDim2.fromOffset(84,12+TITULO_H); Header.Size=UDim2.new(1,-96,0,HEADER_H)
+    Header.Position=UDim2.fromOffset(96,14+TITULO_H); Header.Size=UDim2.new(1,-110,0,HEADER_H)
     Header.BackgroundTransparency=1; Header.Active=true
 
     -- Arrastar janela — SO pelo topo (evita conflito com sliders/botoes)
@@ -793,7 +793,7 @@ do
 
     -- ── Area de conteudo ──
     local CA=Instance.new("ScrollingFrame",MainFrame)
-    CA.Position=UDim2.fromOffset(84,TITULO_H+HEADER_H+22); CA.Size=UDim2.new(1,-96,1,-(TITULO_H+HEADER_H+34))
+    CA.Position=UDim2.fromOffset(96,TITULO_H+HEADER_H+28); CA.Size=UDim2.new(1,-110,1,-(TITULO_H+HEADER_H+42))
     CA.BackgroundTransparency=1; CA.BorderSizePixel=0
     CA.ScrollBarThickness=3; CA.ScrollBarImageColor3=BRANCO; CA.ScrollBarImageTransparency=0.6
     CA.CanvasSize=UDim2.new(0,0,0,0); CA.AutomaticCanvasSize=Enum.AutomaticSize.Y
