@@ -1918,6 +1918,12 @@ local function alternarFly()
 
             local UIS    = game:GetService("UserInputService")
             local dir    = Vector3.new(0, 0, 0)
+            if GS.farmaDirecao then
+                pcall(function()
+                    bodyVelocity.Velocity = GS.farmaDirecao * velocidadeVoo
+                end)
+                return
+            end
             if UIS:IsKeyDown(Enum.KeyCode.W)           then dir = dir + cam.CFrame.LookVector  end
             if UIS:IsKeyDown(Enum.KeyCode.S)           then dir = dir - cam.CFrame.LookVector  end
             if UIS:IsKeyDown(Enum.KeyCode.A)           then dir = dir - cam.CFrame.RightVector end
@@ -5954,80 +5960,164 @@ GS.rodar("Rastreio", GS.iniciarRastreio, GS.painelRastrear)
 --   FARMA BOT — coleta local para playtest
 -- ═══════════════════════════════════════════════════════════════
 GS.iniciarFarma = function()
-    local U, painel = GS.ui, GS.painelFarma
+    local U = GS.ui
+    local painel = GS.painelFarma
     if not U or not painel then return end
+
+    -- Configuracao exclusiva dos frascos; nenhum filtro por cor ou brilho.
+    local CFG = {
+        nome = "PotionTemplate",
+        voo = 90,
+        caminhada = 16,
+        aproxima = 12,
+        toque = 4,
+        alcance = 8,
+        limiteVoo = 20,
+        limiteColeta = 18,
+        pausaErro = 12,
+        correlacao = 8,
+        intervaloScan = 3,
+        intervaloUI = 0.25,
+        maxHistorico = 60,
+        maxMarcadores = 10,
+    }
     local PathfindingService = game:GetService("PathfindingService")
-    local R = {ativo=false, geracao=0, itens={}, espera={}, conns={}, gui=nil, sujo=true}
-    local NOME_FRASCO = "PotionTemplate"
-    U.sec(painel, "FARMA · FRASCOS · FILTRO EXATO V3", "package", 1)
-    local tog = U.tog(painel, "FARMA AUTOMÁTICA", 2)
-    tog:SetAttribute("Controlado", true)
-    tog.Text = "FARMA AUTOMÁTICA: OFF"
-    local status = U.pequeno(painel, "DESLIGADO", nil, 3, "radar")
+    local R = {
+        monitor = false,
+        auto = false,
+        geracao = 0,
+        cicloAuto = 0,
+        itens = {},
+        conns = {},
+        log = {},
+        pendentes = {},
+        vistos = setmetatable({}, {__mode="k"}),
+        personagens = setmetatable({}, {__mode="k"}),
+        ferramentas = setmetatable({}, {__mode="k"}),
+        alvo = nil,
+        gui = nil,
+        sujo = true,
+        inicial = true,
+        fase = "DESLIGADO",
+        nascimentos = 0,
+        carregados = 0,
+        coletados = 0,
+        retirados = 0,
+        perto = 0,
+        depois = 0,
+        ultimaColeta = -math.huge,
+        ultimaPos = nil,
+        movimento = 0,
+        salvo = nil,
+        destruindo = false,
+    }
+
+    -- Controles e diagnostico visivel no painel.
+    U.sec(painel, "FARMA · FRASCOS V4", "package", 1)
+    local monitorBtn = U.tog(painel, "DETECTAR E MOSTRAR FRASCOS", 2)
+    monitorBtn:SetAttribute("Controlado", true)
+    monitorBtn.Text = "DETECÇÃO: OFF"
+    local autoBtn = U.tog(painel, "AUTOMÁTICO · MODO LIVRE 90", 3)
+    autoBtn:SetAttribute("Controlado", true)
+    autoBtn.Text = "AUTOMÁTICO: OFF"
+    local status = U.pequeno(painel, "DESLIGADO", nil, 4, "radar")
     status.AutoButtonColor = false
-    local lista = Instance.new("TextLabel")
-    lista.Name = "LocaisFarma"
-    lista.Size = UDim2.new(1,-12,0,180)
-    lista.LayoutOrder = 4
-    lista.BackgroundTransparency = 1
-    lista.Font = Enum.Font.GothamMedium
-    lista.TextSize = 13
-    lista.TextColor3 = U.T.text
-    lista.TextXAlignment = Enum.TextXAlignment.Left
-    lista.TextYAlignment = Enum.TextYAlignment.Top
-    lista.TextWrapped = true
-    lista.Text = "Ative para localizar somente frascos PotionTemplate."
-    lista.Parent = painel
+
+    local function texto(nome, altura, ordem)
+        local label = Instance.new("TextLabel")
+        label.Name = nome
+        label.Size = UDim2.new(1,-16,0,altura)
+        label.LayoutOrder = ordem
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.GothamMedium
+        label.TextSize = 12
+        label.TextColor3 = U.T.text
+        label.TextWrapped = true
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.TextYAlignment = Enum.TextYAlignment.Top
+        label.Parent = painel
+        return label
+    end
+
+    local resumo = texto("ResumoFarma", 110, 5)
+    local locais = texto("LocaisFarma", 150, 6)
+    local historico = texto("HistoricoFarma", 140, 7)
+    resumo.Text = "Monitorar registra aparições. Automático ativa voo 90 e aproximação a pé."
+    locais.Text = "Filtro exclusivo: PotionTemplate."
+    historico.Text = "Histórico: aguardando ativação."
+
+    local function registrar(tipo, mensagem)
+        local linha = string.format("[%s] %s · %s", os.date("%H:%M:%S"), tipo, mensagem)
+        table.insert(R.log,1,linha)
+        while #R.log > CFG.maxHistorico do table.remove(R.log) end
+        print("[DEBUG-BOT]: " .. linha)
+    end
 
     local function personagem()
         local char = LocalPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if hum and root and hum.Health > 0 then return char, hum, root end
+        if not hum or not root or hum.Health <= 0 then return end
+        return char,hum,root
     end
 
     local function parte(obj)
         if obj:IsA("BasePart") then return obj end
-        return obj:FindFirstChildWhichIsA("BasePart", true)
+        if obj:IsA("Model") and obj.PrimaryPart then return obj.PrimaryPart end
+        if obj:IsA("Tool") then
+            local handle = obj:FindFirstChild("Handle")
+            if handle and handle:IsA("BasePart") then return handle end
+        end
+        return obj:FindFirstChildWhichIsA("BasePart",true)
     end
 
     local function dePersonagem(obj)
-        local p = obj
-        while p and p ~= workspace do
-            if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then return true end
-            p = p.Parent
+        local pai = obj
+        while pai and pai ~= workspace do
+            if pai:IsA("Model") and pai:FindFirstChildOfClass("Humanoid") then return true end
+            pai = pai.Parent
         end
         return false
     end
 
     local function avaliar(obj)
-        if not (obj:IsA("BasePart") or obj:IsA("Model") or obj:IsA("Tool")) then return end
-        if obj.Name ~= NOME_FRASCO then return end
-        if dePersonagem(obj) then return end
-        local p = parte(obj)
-        if not p then return end
+        if obj.Name ~= CFG.nome then return end
+        if not (obj:IsA("Model") or obj:IsA("BasePart") or obj:IsA("Tool")) then return end
+        if not obj:IsDescendantOf(workspace) or dePersonagem(obj) then return end
+        local alvo = obj
         local pai = obj.Parent
         while pai and pai ~= workspace do
-            if pai.Name == NOME_FRASCO and (pai:IsA("Model") or pai:IsA("Tool")) then
-                return pai, "FRASCO"
-            end
+            if pai.Name == CFG.nome and (pai:IsA("Model") or pai:IsA("Tool")) then alvo = pai end
             pai = pai.Parent
         end
-        return obj, "FRASCO"
+        local p = parte(alvo)
+        if not p then return end
+        return alvo,p
     end
 
-    local function marcar(obj, cat)
-        if R.itens[obj] then return end
-        local p = parte(obj)
-        if not p then return end
+    local function mesmoCiclo(g)
+        return R.monitor and R.geracao == g and not R.destruindo
+    end
+
+    local function autoVivo(g,a)
+        return mesmoCiclo(g) and R.auto and R.cicloAuto == a
+    end
+
+    local function valido(obj)
+        return obj and obj.Name == CFG.nome and obj:IsDescendantOf(workspace)
+            and not dePersonagem(obj)
+    end
+
+    local function marcar(obj,p)
         local gui = Instance.new("BillboardGui")
-        gui.Name = "FarmaLocal"
+        gui.Name = "FarmaFrascoV4"
         gui.Adornee = p
-        gui.Size = UDim2.fromOffset(170,36)
-        gui.StudsOffsetWorldSpace = Vector3.new(0,3,0)
+        gui.Size = UDim2.fromOffset(168,36)
+        gui.StudsOffsetWorldSpace = Vector3.new(0,2.5,0)
         gui.AlwaysOnTop = true
         gui.MaxDistance = 0
         gui.LightInfluence = 0
+        gui.Enabled = false
         gui.Parent = R.gui
         local label = Instance.new("TextLabel")
         label.Size = UDim2.fromScale(1,1)
@@ -6037,65 +6127,138 @@ GS.iniciarFarma = function()
         label.Font = Enum.Font.GothamBold
         label.TextSize = 12
         label.TextWrapped = true
-        label.Text = cat .. " · " .. obj.Name
         label.Parent = gui
         Instance.new("UICorner",label).CornerRadius = UDim.new(0,8)
-        R.itens[obj] = {parte=p, gui=gui, label=label, cat=cat}
+        return gui,label
     end
 
-    local function vivo(g)
-        return R.ativo and R.geracao == g and ScreenGui.Parent ~= nil
+    local function adicionar(obj,inicial)
+        local alvo,p = avaliar(obj)
+        if not alvo or R.itens[alvo] then return end
+        for outro,it in pairs(R.itens) do
+            if outro:IsDescendantOf(alvo) then
+                it.gui:Destroy()
+                R.itens[outro] = nil
+            elseif alvo:IsDescendantOf(outro) then
+                return
+            end
+        end
+        local gui,label = marcar(alvo,p)
+        R.itens[alvo] = {
+            parte=p, gui=gui, label=label,
+            pos=p.Position, distancia=math.huge,
+            tentarEm=0, detectado=os.clock(),
+        }
+        local conhecido = R.vistos[alvo]
+        R.vistos[alvo] = true
+        if conhecido then return end
+        local _,_,root = personagem()
+        local distancia = root and (root.Position-p.Position).Magnitude or 0
+        if inicial then
+            R.carregados = R.carregados+1
+            return
+        end
+        R.nascimentos = R.nascimentos+1
+        local detalhe = string.format("%s a %.0f studs",alvo.Name,distancia)
+        if workspace.StreamingEnabled then detalhe = detalhe .. " (spawn ou carregamento)" end
+        registrar("APARECEU",detalhe)
+        if os.clock()-R.ultimaColeta <= CFG.correlacao then
+            R.depois = R.depois+1
+            registrar("OBSERVAÇÃO","Apareceu até " .. CFG.correlacao .. "s após coleta; relação não confirmada.")
+        end
+        if R.movimento > 0.5 and distancia < 100 then
+            R.perto = R.perto+1
+            registrar("OBSERVAÇÃO","Detectado durante deslocamento perto do personagem.")
+        end
+    end
+
+    local function inventario(obj)
+        if not obj:IsA("Tool") or obj.Name ~= CFG.nome then return end
+        if R.ferramentas[obj] then return end
+        R.ferramentas[obj] = true
+        R.coletados = R.coletados+1
+        R.ultimaColeta = os.clock()
+        registrar("COLETA CONFIRMADA","PotionTemplate recebido no inventário.")
+    end
+
+    local function ligarInventario(char)
+        if R.personagens[char] then return end
+        R.personagens[char] = true
+        -- Ferramentas existentes sao base inicial, nao uma nova coleta.
+        for _, obj in ipairs(char:GetChildren()) do
+            if obj:IsA("Tool") then R.ferramentas[obj] = true end
+        end
+        table.insert(R.conns,char.ChildAdded:Connect(inventario))
+    end
+
+    local function retirar(obj,it)
+        if it.gui then it.gui:Destroy() end
+        R.itens[obj] = nil
+        R.retirados = R.retirados+1
+        if obj == R.alvo then
+            registrar("ALVO RETIRADO","Saiu do mapa; aguardando confirmação no inventário.")
+        end
+    end
+
+    local function examinar(obj,g,inicial)
+        if not mesmoCiclo(g) then return end
+        local atual = obj
+        while atual and atual ~= workspace do
+            if atual.Name == CFG.nome then adicionar(atual,inicial); return end
+            atual = atual.Parent
+        end
     end
 
     local function varrer(g)
         R.sujo = false
-        for i, obj in ipairs(workspace:GetDescendants()) do
-            if not vivo(g) then return end
-            local ok, alvo, cat = pcall(avaliar, obj)
-            if ok and alvo then
-                local pai, duplicado = alvo.Parent, false
-                while pai and pai ~= workspace do
-                    if R.itens[pai] then duplicado = true; break end
-                    pai = pai.Parent
-                end
-                if not duplicado then
-                    -- Um modelo reconhecido substitui marcadores de suas peças.
-                    for existente, it in pairs(R.itens) do
-                        if existente ~= alvo and existente:IsDescendantOf(alvo) then
-                            it.gui:Destroy(); R.itens[existente] = nil
-                        end
-                    end
-                    marcar(alvo, cat)
-                end
-            end
-            if i % 150 == 0 then task.wait() end
+        local inicial = R.inicial
+        for i,obj in ipairs(workspace:GetDescendants()) do
+            if not mesmoCiclo(g) then return end
+            if obj.Name == CFG.nome then adicionar(obj,inicial) end
+            if i % 300 == 0 then task.wait() end
+        end
+        if mesmoCiclo(g) and inicial then
+            R.inicial = false
+            registrar("VARREDURA",R.carregados .. " frascos já carregados; não contam como spawn novo.")
         end
     end
 
-    local function atualizar(root)
-        local encontrados = {}
-        for obj, it in pairs(R.itens) do
-            if obj.Name ~= NOME_FRASCO or not obj:IsDescendantOf(workspace)
-                or not it.parte:IsDescendantOf(workspace) or dePersonagem(obj) then
-                it.gui:Destroy(); R.itens[obj] = nil; R.espera[obj] = nil
+    local function listar(root)
+        local achados = {}
+        for obj,it in pairs(R.itens) do
+            if not valido(obj) then
+                retirar(obj,it)
             else
-                local d = (it.parte.Position-root.Position).Magnitude
-                it.label.Text = string.format("%s · %s\n%.0f studs",it.cat,obj.Name,d)
-                table.insert(encontrados,{obj=obj,it=it,dist=d})
+                local p = parte(obj)
+                if p and p:IsDescendantOf(workspace) then
+                    it.parte = p
+                    it.pos = p.Position
+                    it.gui.Adornee = p
+                    it.distancia = (root.Position-it.pos).Magnitude
+                    table.insert(achados,{obj=obj,it=it})
+                else
+                    it.gui.Enabled = false
+                end
             end
         end
-        table.sort(encontrados,function(a,b) return a.dist < b.dist end)
-        -- Exibe somente marcadores separados na tela; a lista continua contando todos.
+        table.sort(achados,function(a,b) return a.it.distancia < b.it.distancia end)
+        return achados
+    end
+
+    local function desenhar(achados)
         local camera = workspace.CurrentCamera
         local ocupados = {}
-        for _, e in ipairs(encontrados) do
+        local linhas = {}
+        for i,e in ipairs(achados) do
+            local it = e.it
+            it.label.Text = string.format("FRASCO · %.0f studs",it.distancia)
             local mostrar = false
-            if camera and #ocupados < 12 then
-                local tela, visivel = camera:WorldToViewportPoint(e.it.parte.Position + Vector3.new(0,3,0))
+            if camera and #ocupados < CFG.maxMarcadores then
+                local tela,visivel = camera:WorldToViewportPoint(it.pos+Vector3.new(0,2.5,0))
                 if visivel and tela.Z > 0 then
                     mostrar = true
-                    for _, usado in ipairs(ocupados) do
-                        if math.abs(tela.X-usado.X) < 180 and math.abs(tela.Y-usado.Y) < 42 then
+                    for _,usado in ipairs(ocupados) do
+                        if math.abs(tela.X-usado.X)<178 and math.abs(tela.Y-usado.Y)<42 then
                             mostrar = false
                             break
                         end
@@ -6103,138 +6266,353 @@ GS.iniciarFarma = function()
                     if mostrar then table.insert(ocupados,tela) end
                 end
             end
-            e.it.gui.Enabled = mostrar
+            it.gui.Enabled = mostrar
+            if i <= 7 then
+                linhas[i] = string.format("%d. %.0f studs · X %.0f Y %.0f Z %.0f",
+                    i,it.distancia,it.pos.X,it.pos.Y,it.pos.Z)
+            end
         end
-        local linhas = {}
-        for i=1,math.min(7,#encontrados) do
-            local e = encontrados[i]
-            local p = e.it.parte.Position
-            linhas[i] = string.format("%s · %s · %.0f st | X %.0f Y %.0f Z %.0f",
-                e.it.cat,e.obj.Name,e.dist,p.X,p.Y,p.Z)
-        end
-        lista.Text = #linhas > 0 and table.concat(linhas,"\n")
-            or (workspace.StreamingEnabled and "Nenhum PotionTemplate carregado. Streaming ativo: áreas distantes podem estar ausentes."
-                or "Aguardando frascos PotionTemplate aparecerem no mapa...")
-        for _, e in ipairs(encontrados) do
-            if (R.espera[e.obj] or 0) <= os.clock() then return e, #encontrados end
-        end
-        return nil,#encontrados
+        locais.Text = #linhas>0 and table.concat(linhas,"\n") or "Nenhum PotionTemplate carregado."
     end
 
-    local function mover(hum,root,pos,g)
+    local function atualizarResumo(total)
+        status.Text = R.fase .. " · LOCALIZADOS: " .. total
+        local limite = workspace.StreamingEnabled
+            and "Streaming ativo: aparição no cliente não prova spawn no servidor."
+            or "Streaming desligado: novas aparições são observações locais."
+        resumo.Text = string.format(
+            "Iniciais: %d | Aparições: %d | Recebidos: %d | Retirados: %d\nApós coleta: %d | Durante movimento: %d\n%s",
+            R.carregados,R.nascimentos,R.coletados,R.retirados,R.depois,R.perto,limite)
+        local linhas = {}
+        for i=1,math.min(6,#R.log) do linhas[i] = R.log[i] end
+        historico.Text = table.concat(linhas,"\n")
+    end
+
+    local function salvarMovimento()
+        if R.salvo then return end
+        local _,hum = personagem()
+        R.salvo = {
+            fly=flyAtivado, velocidadeVoo=velocidadeVoo,
+            speed=speedAtivado, velocidade=velocidadeCustomizada,
+            caminhada=hum and hum.WalkSpeed or 16,
+        }
+        if speedAtivado then alternarSpeed() end
+        velocidadeVoo = CFG.voo
+        if FlyLabel then FlyLabel.Text = "VOO: " .. CFG.voo end
+    end
+
+    local function setVoo(ativo)
+        GS.farmaDirecao = nil
+        if not ativo then
+            local _,_,root = personagem()
+            if root then root.AssemblyLinearVelocity = Vector3.zero end
+        end
+        if flyAtivado ~= ativo then alternarFly() end
+        if ativo then
+            velocidadeVoo = CFG.voo
+            if FlyLabel then FlyLabel.Text = "VOO: " .. CFG.voo end
+            GS.farmaDirecao = Vector3.zero
+        end
+    end
+
+    local function restaurarMovimento()
+        GS.farmaDirecao = nil
+        local salvo = R.salvo
+        if not salvo then return end
+        if flyAtivado then alternarFly() end
+        velocidadeVoo = salvo.velocidadeVoo
+        velocidadeCustomizada = salvo.velocidade
+        if FlyLabel then FlyLabel.Text = "VOO: " .. velocidadeVoo end
+        if SpeedLabel then SpeedLabel.Text = "VEL: " .. velocidadeCustomizada end
+        if speedAtivado ~= salvo.speed then alternarSpeed() end
+        if salvo.fly then alternarFly() end
+        local _,hum,root = personagem()
+        if hum then
+            hum.WalkSpeed = salvo.caminhada
+            hum:MoveTo(root.Position)
+        end
+        R.salvo = nil
+    end
+
+    local function selecionar(root)
+        for _,e in ipairs(listar(root)) do
+            if e.it.tentarEm <= os.clock() then return e end
+        end
+    end
+
+    local function destinoPe(root,pos)
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        local char = LocalPlayer.Character
+        params.FilterDescendantsInstances = char and {char} or {}
+        local ray = workspace:Raycast(pos+Vector3.new(0,4,0),Vector3.new(0,-14,0),params)
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if ray and hum then
+            return Vector3.new(pos.X,ray.Position.Y+hum.HipHeight+root.Size.Y/2,pos.Z)
+        end
+        return Vector3.new(pos.X,pos.Y+2,pos.Z)
+    end
+
+    local function voar(e,g,a)
+        setVoo(true)
+        local inicio = os.clock()
+        R.fase = "MODO LIVRE · 90"
+        while autoVivo(g,a) and valido(e.obj) do
+            local _,hum,root = personagem()
+            if not hum or root.Anchored then break end
+            local p = parte(e.obj)
+            if not p then break end
+            local delta = destinoPe(root,p.Position)-root.Position
+            if delta.Magnitude <= CFG.aproxima then
+                GS.farmaDirecao = Vector3.zero
+                return true
+            end
+            if os.clock()-inicio > CFG.limiteVoo then
+                registrar("TRAJETO","Voo sem chegada; tentando aproximação a pé.")
+                break
+            end
+            GS.farmaDirecao = delta.Unit * math.clamp(delta.Magnitude/10,0,1)
+            task.wait(0.05)
+        end
+        GS.farmaDirecao = Vector3.zero
+        return false
+    end
+
+    local function andar(hum,root,pos,g,a,limite)
         hum:MoveTo(pos)
-        local limite = os.clock()+5
-        while vivo(g) and hum.Health > 0 and root.Parent and os.clock()<limite do
-            if (root.Position-pos).Magnitude < 4 then return true end
-            task.wait(0.1)
+        local fim = os.clock()+limite
+        while autoVivo(g,a) and os.clock()<fim do
+            if hum.Health<=0 or not root.Parent then return false end
+            if (root.Position-pos).Magnitude <= 3 then return true end
+            task.wait(0.08)
         end
         return false
     end
 
-    local function buscar(e,hum,root,g)
-        if not e.obj:IsDescendantOf(workspace) then return end
-        local destino = e.it.parte.Position
-        status.Text = "BUSCANDO: " .. e.obj.Name
-        print("[DEBUG-BOT]: Buscando",e.obj:GetFullName())
+    local function caminhoAte(e,g,a)
+        local _,hum,root = personagem()
+        local p = valido(e.obj) and parte(e.obj)
+        if not hum or not p then return end
         local path = PathfindingService:CreatePath({AgentRadius=2,AgentHeight=5,AgentCanJump=true})
-        local ok = pcall(function() path:ComputeAsync(root.Position,destino) end)
-        if not vivo(g) then path:Destroy(); return end
-        if ok and path.Status == Enum.PathStatus.Success then
-            for _, wp in ipairs(path:GetWaypoints()) do
-                if not vivo(g) or not e.obj:IsDescendantOf(workspace) then break end
-                if (root.Position-destino).Magnitude < 6 then break end
-                if wp.Action == Enum.PathWaypointAction.Jump then hum.Jump = true end
-                if not mover(hum,root,wp.Position,g) then break end
+        local ok = pcall(function() path:ComputeAsync(root.Position,p.Position) end)
+        if autoVivo(g,a) and ok and path.Status == Enum.PathStatus.Success then
+            for _,wp in ipairs(path:GetWaypoints()) do
+                if not autoVivo(g,a) or not valido(e.obj) then break end
+                if (root.Position-p.Position).Magnitude <= CFG.alcance then break end
+                if wp.Action == Enum.PathWaypointAction.Jump then hum.Jump=true end
+                if not andar(hum,root,wp.Position,g,a,2) then break end
             end
-        else
-            mover(hum,root,destino,g)
         end
         path:Destroy()
-        if not vivo(g) or not e.obj:IsDescendantOf(workspace) then return end
-        if (root.Position-e.it.parte.Position).Magnitude <= 8 then
-            local prompt = e.obj:FindFirstChildWhichIsA("ProximityPrompt",true)
-            if prompt and prompt.Enabled and type(fireproximityprompt)=="function" then
-                fireproximityprompt(prompt)
+    end
+
+    local function interagir(e,g,a)
+        if not autoVivo(g,a) or not valido(e.obj) then return end
+        local _,_,root = personagem()
+        local p = parte(e.obj)
+        if not root or not p then return end
+        local distancia = (root.Position-p.Position).Magnitude
+        local prompt = e.obj:FindFirstChildWhichIsA("ProximityPrompt",true)
+        if prompt and prompt.Enabled and distancia <= math.min(prompt.MaxActivationDistance,CFG.alcance) then
+            if type(fireproximityprompt) == "function" then
+                pcall(fireproximityprompt,prompt)
+            else
+                pcall(function() prompt:InputHoldBegin() end)
+                local fim = os.clock()+prompt.HoldDuration
+                while autoVivo(g,a) and prompt.Parent and os.clock()<fim do task.wait(0.05) end
+                pcall(function() prompt:InputHoldEnd() end)
             end
-            local click = e.obj:FindFirstChildWhichIsA("ClickDetector",true)
-            if click and type(fireclickdetector)=="function" then fireclickdetector(click) end
-            print("[DEBUG-BOT]: Interação solicitada",e.obj.Name)
         end
-        R.espera[e.obj] = os.clock()+15
+        local click = e.obj:FindFirstChildWhichIsA("ClickDetector",true)
+        if click and distancia <= math.min(click.MaxActivationDistance,CFG.alcance)
+            and type(fireclickdetector)=="function" then
+            pcall(fireclickdetector,click)
+        end
     end
 
-    local function desligar()
-        R.ativo=false; R.geracao=R.geracao+1
-        for _, c in ipairs(R.conns) do c:Disconnect() end
-        table.clear(R.conns)
-        for _, it in pairs(R.itens) do it.gui:Destroy() end
-        table.clear(R.itens); table.clear(R.espera)
-        if R.gui then R.gui:Destroy(); R.gui=nil end
+    local function coletar(e,g,a)
+        if not autoVivo(g,a) then return end
+        setVoo(false)
         local _,hum,root = personagem()
-        if hum then hum:MoveTo(root.Position) end
-        tog.Text="FARMA AUTOMÁTICA: OFF"
-        status.Text="DESLIGADO"
-        lista.Text="Ative para localizar itens no mapa."
+        if not hum then return end
+        hum.PlatformStand = false
+        hum.WalkSpeed = CFG.caminhada
+        R.fase = "CAMINHANDO ATÉ O FRASCO"
+        if valido(e.obj) then caminhoAte(e,g,a) end
+        if not autoVivo(g,a) then return end
+        local inicio = os.clock()
+        local recebidos = R.coletados
+        local tentativa = 0
+        while autoVivo(g,a) and os.clock()-inicio<CFG.limiteColeta do
+            if R.coletados>recebidos then return end
+            if not valido(e.obj) then
+                registrar("RETIRADO","Frasco saiu do mapa; coleta sem confirmação adicional.")
+                return
+            end
+            local char,atual,raiz = personagem()
+            local p = parte(e.obj)
+            if not char or atual~=hum or not p then return end
+            tentativa = tentativa+1
+            R.fase = "TENTANDO COLETAR · " .. tentativa
+            local angulo = tentativa*math.pi/2
+            local raio = tentativa%3==0 and 0 or 1.5
+            local pos = p.Position+Vector3.new(math.cos(angulo)*raio,0,math.sin(angulo)*raio)
+            andar(hum,raiz,pos,g,a,0.8)
+            if not autoVivo(g,a) then return end
+            interagir(e,g,a)
+            task.wait(0.2)
+        end
+        if autoVivo(g,a) and valido(e.obj) then
+            registrar("NOVA TENTATIVA","Sem confirmação; intervalo de " .. CFG.pausaErro .. "s para este frasco.")
+        end
     end
 
-    local function ligar()
-        R.ativo=true; R.geracao=R.geracao+1; R.sujo=true
-        local g=R.geracao
-        R.gui=Instance.new("Folder")
-        R.gui.Name="FarmaMarcadores"; R.gui.Parent=ScreenGui
-        tog.Text="FARMA AUTOMÁTICA: ON"
-        table.insert(R.conns,workspace.DescendantAdded:Connect(function(obj)
-            R.sujo=true
-            task.defer(function()
-                if not vivo(g) then return end
-                local atual = obj
-                while atual and atual ~= workspace do
-                    if atual.Name == NOME_FRASCO then
-                        local ok,alvo,cat = pcall(avaliar,atual)
-                        if ok and alvo then marcar(alvo,cat); break end
+    local function desligarAuto()
+        R.auto = false
+        R.cicloAuto = R.cicloAuto+1
+        R.alvo = nil
+        restaurarMovimento()
+        autoBtn.Text = "AUTOMÁTICO: OFF"
+        R.fase = R.monitor and "MONITORANDO" or "DESLIGADO"
+    end
+
+    local function iniciarAuto()
+        if R.auto then return end
+        R.auto = true
+        R.cicloAuto = R.cicloAuto+1
+        local g,a = R.geracao,R.cicloAuto
+        salvarMovimento()
+        autoBtn.Text = "AUTOMÁTICO: ON · VOO 90"
+        registrar("AUTO","Voo 90 no trajeto; chegada a pé e confirmação por inventário.")
+        task.spawn(function()
+            while autoVivo(g,a) do
+                local ok,err = pcall(function()
+                    local _,hum,root = personagem()
+                    if not hum then R.fase="AGUARDANDO PERSONAGEM"; return end
+                    local e = selecionar(root)
+                    if not e then
+                        if flyAtivado then setVoo(false) end
+                        R.fase = "AGUARDANDO FRASCOS"
+                        return
                     end
-                    atual = atual.Parent
+                    R.alvo = e.obj
+                    registrar("ALVO",e.obj:GetFullName())
+                    voar(e,g,a)
+                    if autoVivo(g,a) then coletar(e,g,a) end
+                    if autoVivo(g,a) then e.it.tentarEm=os.clock()+CFG.pausaErro end
+                end)
+                if not autoVivo(g,a) then break end
+                R.alvo = nil
+                if not ok then
+                    warn("[DEBUG-BOT]: Farma:",err)
+                    GS.farmaDirecao = Vector3.zero
+                    if flyAtivado then setVoo(false) end
+                    R.fase = "RECUPERANDO MOVIMENTO"
+                end
+                task.wait(0.3)
+            end
+        end)
+    end
+
+    local function iniciarMonitor()
+        if R.monitor then return end
+        R.monitor = true
+        R.geracao = R.geracao+1
+        R.inicial = true
+        R.sujo = true
+        R.ultimaPos = nil
+        R.gui = Instance.new("Folder")
+        R.gui.Name = "FarmaMarcadores"
+        R.gui.Parent = ScreenGui
+        local g = R.geracao
+        monitorBtn.Text = "DETECÇÃO: ON · FILTRO EXATO V4"
+        R.fase = "MONITORANDO"
+        local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if backpack then
+            for _,obj in ipairs(backpack:GetChildren()) do
+                if obj:IsA("Tool") then R.ferramentas[obj]=true end
+            end
+            table.insert(R.conns,backpack.ChildAdded:Connect(inventario))
+        end
+        if LocalPlayer.Character then ligarInventario(LocalPlayer.Character) end
+        table.insert(R.conns,LocalPlayer.CharacterAdded:Connect(function(char)
+            if mesmoCiclo(g) then ligarInventario(char) end
+        end))
+        table.insert(R.conns,workspace.DescendantAdded:Connect(function(obj)
+            if not mesmoCiclo(g) then return end
+            R.sujo = true
+            R.pendentes[obj] = os.clock()+1
+            task.defer(function()
+                if mesmoCiclo(g) then
+                    local ok,err=pcall(examinar,obj,g,R.inicial)
+                    if not ok then warn("[DEBUG-BOT]: Registro:",err) end
                 end
             end)
         end))
-        print("[DEBUG-BOT]: Filtro exato ativo: PotionTemplate")
+        registrar("MONITOR","Ativo; somente PotionTemplate. Histórico não determina a regra do servidor.")
         task.spawn(function()
-            local ultima=0
-            while vivo(g) do
-                local ok,err=pcall(function()
-                    if R.sujo or os.clock()-ultima>2 then varrer(g); ultima=os.clock() end
-                    if not vivo(g) then return end
-                    local _,_,root=personagem()
+            local ultima = 0
+            while mesmoCiclo(g) do
+                local ok,err = pcall(function()
+                    for obj,prazo in pairs(R.pendentes) do
+                        if os.clock() >= prazo then
+                            R.pendentes[obj]=nil
+                            examinar(obj,g,R.inicial)
+                        end
+                    end
+                    if R.sujo or os.clock()-ultima >= CFG.intervaloScan then
+                        varrer(g)
+                        ultima = os.clock()
+                    end
+                    if not mesmoCiclo(g) then return end
+                    local _,_,root = personagem()
                     if root then
-                        local _,total=atualizar(root)
-                        if not R.buscando then status.Text="ITENS LOCALIZADOS: "..total end
-                    else status.Text="AGUARDANDO PERSONAGEM" end
-                end)
-                if not ok then warn("[DEBUG-BOT]: Detecção:",err) end
-                task.wait(0.5)
-            end
-        end)
-        task.spawn(function()
-            while vivo(g) do
-                local ok,err=pcall(function()
-                    local _,hum,root=personagem()
-                    if not hum then return end
-                    local e=atualizar(root)
-                    if e then
-                        R.buscando=true
-                        buscar(e,hum,root,g)
+                        R.movimento = R.ultimaPos and (root.Position-R.ultimaPos).Magnitude or 0
+                        R.ultimaPos = root.Position
+                        local achados = listar(root)
+                        desenhar(achados)
+                        atualizarResumo(#achados)
+                    else
+                        R.fase = "AGUARDANDO PERSONAGEM"
+                        atualizarResumo(0)
                     end
                 end)
-                R.buscando=false
-                if not ok then warn("[DEBUG-BOT]: Navegação:",err) end
-                task.wait(0.5)
+                if not ok then warn("[DEBUG-BOT]: Monitor:",err) end
+                task.wait(CFG.intervaloUI)
             end
         end)
     end
-    tog.MouseButton1Click:Connect(function()
-        if R.ativo then desligar() else ligar() end
+
+    local function pararMonitor()
+        desligarAuto()
+        R.monitor = false
+        R.geracao = R.geracao+1
+        for _,conn in ipairs(R.conns) do conn:Disconnect() end
+        table.clear(R.conns)
+        table.clear(R.itens)
+        table.clear(R.pendentes)
+        table.clear(R.personagens)
+        if R.gui then R.gui:Destroy(); R.gui=nil end
+        monitorBtn.Text = "DETECÇÃO: OFF"
+        status.Text = "DESLIGADO"
+        locais.Text = "Monitoramento desligado."
+    end
+
+    monitorBtn.MouseButton1Click:Connect(function()
+        if R.monitor then pararMonitor() else iniciarMonitor() end
     end)
-    ScreenGui.Destroying:Connect(desligar)
+    autoBtn.MouseButton1Click:Connect(function()
+        if R.auto then
+            desligarAuto()
+        else
+            iniciarMonitor()
+            iniciarAuto()
+        end
+    end)
+    ScreenGui.Destroying:Connect(function()
+        R.destruindo = true
+        pararMonitor()
+    end)
 end
 GS.rodar("Farma Bot", GS.iniciarFarma, GS.painelFarma)
 
