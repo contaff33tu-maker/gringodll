@@ -1,3 +1,4 @@
+-- GRINGOdll V50.1 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -28,6 +29,8 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
+GS.versao = "V50.1"
+GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
 pcall(function() if gethui then GS.pai = gethui() end end)
@@ -362,7 +365,7 @@ do
     end
 
     -- ═══════════════ JANELA ═══════════════
-    local TITULO_H = 44   -- barra do nome GRINGOdll v9.1.2
+    local TITULO_H = 44   -- barra do nome, versao e autoria
     local W, H = 860, 570 + TITULO_H
     local HEADER_H = 52
     MainFrame = Instance.new("Frame")
@@ -634,7 +637,7 @@ do
         btn.MouseLeave:Connect(function() Dica.Visible=false end)
     end
 
-    -- ═══════════ TITULO: GRINGOdll v9.1.2 ═══════════
+    -- ═══════════ TITULO: GRINGOdll, versao e autoria ═══════════
     local Titulo = Instance.new("Frame", MainFrame)
     Titulo.Name = "Titulo"; Titulo.Position = UDim2.fromOffset(96, 14)
     Titulo.Size = UDim2.new(1, -110, 0, TITULO_H); Titulo.BackgroundTransparency = 1; Titulo.Active = true
@@ -672,7 +675,15 @@ do
         do local pp = Instance.new("UIPadding", pilula); pp.PaddingLeft = UDim.new(0, 10); pp.PaddingRight = UDim.new(0, 10) end
         local ver = Instance.new("TextLabel", pilula)
         ver.BackgroundTransparency = 1; ver.Size = UDim2.fromOffset(0, 22); ver.AutomaticSize = Enum.AutomaticSize.X
-        ver.Font = Enum.Font.GothamBold; ver.TextSize = 12; ver.Text = "v9.1.2"; ver.TextColor3 = BRANCO
+        ver.Font = Enum.Font.GothamBold; ver.TextSize = 12; ver.Text = GS.versao; ver.TextColor3 = BRANCO
+        local credito = Instance.new("TextLabel", Titulo)
+        credito.Name = "CreditoAutor"; credito.LayoutOrder = 4
+        credito.BackgroundTransparency = 1
+        credito.Size = UDim2.fromOffset(0, 22)
+        credito.AutomaticSize = Enum.AutomaticSize.X
+        credito.Font = Enum.Font.GothamMedium; credito.TextSize = 12
+        credito.TextColor3 = T.dim; credito.Text = GS.credito
+        credito.TextXAlignment = Enum.TextXAlignment.Left
         -- bolinha pulsando (onda que abre e some)
         local vivo = Instance.new("Frame", Titulo)
         vivo.LayoutOrder = 3; vivo.Size = UDim2.fromOffset(18, 18); vivo.BackgroundTransparency = 1
@@ -6279,7 +6290,7 @@ GS.iniciarFarma = function()
     }
 
     -- Controles e diagnostico visivel no painel.
-    U.sec(painel, "FARMA · FRASCOS V4", "package", 1)
+    U.sec(painel, "FARMA · FRASCOS V5 · AUTO ADAPTATIVO", "package", 1)
     local monitorBtn = U.tog(painel, "DETECTAR E MOSTRAR FRASCOS", 2)
     monitorBtn:SetAttribute("Controlado", true)
     monitorBtn.Text = "DETECÇÃO: OFF"
@@ -6314,7 +6325,7 @@ GS.iniciarFarma = function()
         historico.Visible=not historico.Visible
         detalhes.Text=historico.Visible and "OCULTAR HISTÓRICO" or "MOSTRAR HISTÓRICO"
     end)
-    resumo.Text = "Automático: voo 500, noclip do arquivo e aproximação a pé."
+    resumo.Text = "Um automático: patrulha, voo 500, chegada por cima, laterais e pulos."
     locais.Text = "Filtro exclusivo: PotionTemplate."
     historico.Text = "Histórico: aguardando ativação."
 
@@ -6610,137 +6621,1198 @@ GS.iniciarFarma = function()
         R.salvo = nil
     end
 
-    local function selecionar(root)
-        for _,e in ipairs(listar(root)) do
-            if e.it.tentarEm <= os.clock() then return e end
+    -- Um unico controlador decide a rota, a chegada e a patrulha.
+    local Nav = {}
+    Nav.cfg = {
+        velocidade = 500,
+        velocidadePerto = 18,
+        freioSegundos = 0.18,
+        intervalo = 0.05,
+        chegada = 1.5,
+        raioVertical = 1.5,
+        alturaElevada = 5,
+        alturaSobrevoo = 14,
+        alturaExtra = 8,
+        alturaPatrulha = 18,
+        distanciaPouso = 2.5,
+        margemBorda = 0.6,
+        raioSuporte = 5,
+        raioSonda = 3,
+        normalMinima = 0.48,
+        limiteTrecho = 12,
+        limiteAlvo = 72,
+        limitePouso = 3,
+        limitePe = 4,
+        limitePatrulha = 5,
+        semProgresso = 2.5,
+        margemProgresso = 0.6,
+        progressoPe = 0.2,
+        distanciaReplanejar = 3,
+        alturaSalto = 6,
+        raioToque = 1.8,
+        cooldownBase = 6,
+        cooldownMaximo = 45,
+        pausaConfirmacao = 0.7,
+        limiteMemoria = 64,
+        idadeMemoria = 180,
+        raioCelula = 30,
+        maxHistorico = 60,
+        raioPatrulha = 90,
+        maxAnel = 8,
+        alturaMaxPatrulha = 180,
+        setores = 12,
+        tempoRevisita = 25,
+        maxTentativasPatrulha = 5,
+        limiteRotaPe = 8,
+        recuo = 5,
+        minAltura = 20,
+    }
+    Nav.estado = {
+        ancora = nil,
+        seguro = nil,
+        memoria = {},
+        falhas = setmetatable({}, {__mode = "k"}),
+        visita = {},
+        passos = 0,
+        anel = 1,
+        setor = 0,
+        alvo = nil,
+        rota = nil,
+        prompt = nil,
+        tokenPrompt = nil,
+        voo = false,
+        patrulhas = 0,
+        recuperacoes = 0,
+        ultimaFase = "",
+        ultimoLog = 0,
+        ultimaPos = nil,
+        ultimoDestino = nil,
+        ultimamente = {},
+    }
+
+    function Nav.fase(nome)
+        R.fase = nome
+        local mudou = Nav.estado.ultimaFase ~= nome
+        local tempo = os.clock() - Nav.estado.ultimoLog
+        if mudou and tempo > 0.4 then
+            Nav.estado.ultimaFase = nome
+            Nav.estado.ultimoLog = os.clock()
+            registrar("NAVEGAÇÃO", nome)
         end
     end
 
-    local function destinoPe(root,pos)
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        local char = LocalPlayer.Character
-        params.FilterDescendantsInstances = char and {char} or {}
-        local ray = workspace:Raycast(pos+Vector3.new(0,4,0),Vector3.new(0,-14,0),params)
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if ray and hum then
-            return Vector3.new(pos.X,ray.Position.Y+hum.HipHeight+root.Size.Y/2,pos.Z)
-        end
-        return Vector3.new(pos.X,pos.Y+2,pos.Z)
+    function Nav.finito(numero)
+        return numero == numero
+            and numero > -math.huge
+            and numero < math.huge
     end
 
-    local function voar(e,g,a)
-        setVoo(true)
+    function Nav.vetorValido(vetor)
+        return vetor
+            and Nav.finito(vetor.X)
+            and Nav.finito(vetor.Y)
+            and Nav.finito(vetor.Z)
+    end
+
+    function Nav.distanciaHorizontal(a,b)
+        local dx = a.X - b.X
+        local dz = a.Z - b.Z
+        return math.sqrt(dx*dx + dz*dz)
+    end
+
+    function Nav.chave(pos)
+        local celula = Nav.cfg.raioCelula
+        return string.format("%d:%d",
+            math.floor(pos.X/celula),
+            math.floor(pos.Z/celula))
+    end
+
+    function Nav.contexto(g,a)
+        local char,hum,root = personagem()
+        if not char then return end
+        if not autoVivo(g,a) then return end
+        return {
+            g = g,
+            a = a,
+            char = char,
+            hum = hum,
+            root = root,
+            recebido = R.coletados,
+            inicio = os.clock(),
+        }
+    end
+
+    function Nav.vivo(ctx)
+        if not ctx then return false end
+        if not autoVivo(ctx.g,ctx.a) then return false end
+        if LocalPlayer.Character ~= ctx.char then return false end
+        if not ctx.root:IsDescendantOf(ctx.char) then return false end
+        if not ctx.hum:IsDescendantOf(ctx.char) then return false end
+        if ctx.hum.Health <= 0 then return false end
+        return true
+    end
+
+    function Nav.alvoValido(e)
+        if not e or not valido(e.obj) then return false end
+        local p = parte(e.obj)
+        if not p or not p:IsDescendantOf(workspace) then return false end
+        if not Nav.vetorValido(p.Position) then return false end
+        e.it.parte = p
+        e.it.pos = p.Position
+        return true
+    end
+
+    function Nav.posAlvo(e)
+        if not Nav.alvoValido(e) then return end
+        return e.it.parte.Position
+    end
+
+    function Nav.terminou(ctx,e)
+        if not Nav.vivo(ctx) then return "cancelado" end
+        if R.coletados > ctx.recebido then return "inventario" end
+        if not Nav.alvoValido(e) then return "retirado" end
+        return nil
+    end
+
+    function Nav.esperar(ctx,duracao)
+        local fim = os.clock() + duracao
+        while Nav.vivo(ctx) and os.clock() < fim do
+            task.wait(math.min(0.05,math.max(0,fim-os.clock())))
+        end
+        return Nav.vivo(ctx)
+    end
+
+    function Nav.parametros(ctx,e)
+        local parametros = RaycastParams.new()
+        parametros.FilterType = Enum.RaycastFilterType.Exclude
+        local ignorados = {}
+        if ctx and ctx.char then
+            table.insert(ignorados,ctx.char)
+        elseif LocalPlayer.Character then
+            table.insert(ignorados,LocalPlayer.Character)
+        end
+        if e and e.obj and e.obj.Parent then
+            table.insert(ignorados,e.obj)
+        end
+        parametros.FilterDescendantsInstances = ignorados
+        parametros.IgnoreWater = true
+        parametros.RespectCanCollide = true
+        return parametros
+    end
+
+    function Nav.raio(origem,direcao,ctx,e)
+        if not Nav.vetorValido(origem) then return end
+        if not Nav.vetorValido(direcao) then return end
+        if direcao.Magnitude < 0.01 then return end
+        return workspace:Raycast(origem,direcao,Nav.parametros(ctx,e))
+    end
+
+    function Nav.alturaRoot(ctx)
+        local h = math.max(0,ctx.hum.HipHeight)
+        return math.max(2,h+ctx.root.Size.Y*0.5)
+    end
+
+    function Nav.superficie(pos,ctx,e,profundidade)
+        local cima = pos + Vector3.new(0,2,0)
+        local baixo = Vector3.new(0,-(profundidade or 24),0)
+        local hit = Nav.raio(cima,baixo,ctx,e)
+        if not hit then return end
+        if hit.Normal.Y < Nav.cfg.normalMinima then return end
+        if not Nav.vetorValido(hit.Position) then return end
+        return {
+            pos = hit.Position,
+            normal = hit.Normal,
+            objeto = hit.Instance,
+            altura = hit.Position.Y,
+        }
+    end
+
+    function Nav.suporte(pos,ctx,e)
+        local melhor
+        local dist
+        local deslocamentos = {
+            Vector3.zero,
+            Vector3.new(0.8,0,0),
+            Vector3.new(-0.8,0,0),
+            Vector3.new(0,0,0.8),
+            Vector3.new(0,0,-0.8),
+        }
+        for _,delta in ipairs(deslocamentos) do
+            local s = Nav.superficie(pos+delta,ctx,e,16)
+            if s then
+                local d = math.abs(pos.Y-s.altura)
+                if d <= 12 and (not dist or d < dist) then
+                    melhor = s
+                    dist = d
+                end
+            end
+        end
+        return melhor
+    end
+
+    function Nav.cabecaLivre(pouso,ctx,e)
+        local altura = Nav.alturaRoot(ctx) + 2
+        local origem = pouso.pos + Vector3.new(0,0.25,0)
+        local hit = Nav.raio(origem,Vector3.new(0,altura,0),ctx,e)
+        return hit == nil
+    end
+
+    function Nav.analise(ctx,e)
+        local pos = Nav.posAlvo(e)
+        if not pos then return end
+        local suporte = Nav.suporte(pos,ctx,e)
+        local alturaRoot = Nav.alturaRoot(ctx)
+        local destino
+        if suporte then
+            destino = suporte.pos + Vector3.new(0,alturaRoot+0.2,0)
+        else
+            destino = pos + Vector3.new(0,0.5,0)
+        end
+        local deltaY = pos.Y - ctx.root.Position.Y
+        local origem = ctx.root.Position
+        local bloqueio = Nav.raio(origem,destino-origem,ctx,e)
+        return {
+            pos = pos,
+            suporte = suporte,
+            destino = destino,
+            elevado = deltaY > Nav.cfg.alturaElevada,
+            deltaY = deltaY,
+            bloqueio = bloqueio,
+            alturaRoot = alturaRoot,
+            cabeca = suporte and Nav.cabecaLivre(suporte,ctx,e) or false,
+        }
+    end
+
+    function Nav.salvarSeguro(ctx)
+        if not Nav.vivo(ctx) then return end
+        local pos = ctx.root.Position
+        local piso = Nav.superficie(pos,ctx,nil,12)
+        if not piso then return end
+        if pos.Y <= workspace.FallenPartsDestroyHeight+20 then return end
+        Nav.estado.seguro = piso.pos + Vector3.new(0,Nav.alturaRoot(ctx)+1,0)
+    end
+
+    function Nav.reset()
+        Nav.estado.ancora = nil
+        Nav.estado.seguro = nil
+        Nav.estado.alvo = nil
+        Nav.estado.anel = 1
+        Nav.estado.setor = 0
+        Nav.estado.passos = 0
+        Nav.estado.ultimaPos = nil
+        Nav.estado.ultimoDestino = nil
+        Nav.estado.prompt = nil
+        Nav.estado.tokenPrompt = nil
+        Nav.estado.ultimaFase = ""
+        Nav.estado.ultimoLog = 0
+        Nav.estado.voo = false
+        Nav.estado.visita = {}
+    end
+
+    function Nav.liberarPrompt()
+        local prompt = Nav.estado.prompt
+        Nav.estado.tokenPrompt = nil
+        Nav.estado.prompt = nil
+        if prompt then
+            pcall(function()
+                prompt:InputHoldEnd()
+            end)
+        end
+    end
+
+    function Nav.parar()
+        Nav.liberarPrompt()
+        Nav.estado.alvo = nil
+        Nav.estado.rota = nil
+        GS.farmaDirecao = nil
+        if bodyVelocity and bodyVelocity.Parent then
+            bodyVelocity.Velocity = Vector3.zero
+        end
+    end
+
+    function Nav.voo(ctx)
+        if not Nav.vivo(ctx) then return false end
+        if ctx.root.Anchored then return false end
+        if not flyAtivado then
+            setVoo(true)
+        else
+            if GS.noclipArquivo then
+                GS.noclipArquivo.ativar("frascos")
+            end
+            velocidadeVoo = Nav.cfg.velocidade
+            GS.farmaDirecao = Vector3.zero
+        end
+        Nav.estado.voo = true
+        return true
+    end
+
+    function Nav.zerar(ctx)
+        GS.farmaDirecao = Vector3.zero
+        if bodyVelocity and bodyVelocity.Parent then
+            bodyVelocity.Velocity = Vector3.zero
+        end
+        if ctx and Nav.vivo(ctx) then
+            ctx.root.AssemblyLinearVelocity = Vector3.zero
+            ctx.root.AssemblyAngularVelocity = Vector3.zero
+        end
+    end
+
+    function Nav.velocidadePara(delta,preciso)
+        local distancia = delta.Magnitude
+        if distancia < 0.01 then return Vector3.zero end
+        local teto = preciso and Nav.cfg.velocidadePerto or Nav.cfg.velocidade
+        local velocidade = math.min(teto,distancia/Nav.cfg.freioSegundos)
+        return delta.Unit*(velocidade/Nav.cfg.velocidade)
+    end
+
+    function Nav.moverVoo(ctx,destino,opcoes)
+        opcoes = opcoes or {}
+        if not Nav.vetorValido(destino) then return "destino_invalido" end
+        if not Nav.voo(ctx) then return "sem_movimento" end
         local inicio = os.clock()
-        R.fase = "MODO LIVRE · 500"
-        while autoVivo(g,a) and valido(e.obj) do
-            local _,hum,root = personagem()
-            if not hum or root.Anchored then break end
-            local p = parte(e.obj)
-            if not p then break end
-            local delta = destinoPe(root,p.Position)-root.Position
-            if delta.Magnitude <= CFG.aproxima then
-                GS.farmaDirecao = Vector3.zero
-                return true
+        local limite = opcoes.limite or Nav.cfg.limiteTrecho
+        local tolerancia = opcoes.tolerancia or Nav.cfg.chegada
+        local ultimaDistancia = math.huge
+        local progresso = os.clock()
+        local ultimaPos = ctx.root.Position
+        local parado = os.clock()
+        Nav.estado.ultimoDestino = destino
+        while Nav.vivo(ctx) do
+            if opcoes.alvo then
+                local fim = Nav.terminou(ctx,opcoes.alvo)
+                if fim then
+                    Nav.zerar(ctx)
+                    return fim
+                end
+                if os.clock()-ctx.inicio > Nav.cfg.limiteAlvo then
+                    Nav.zerar(ctx)
+                    return "limite_do_alvo"
+                end
             end
-            if os.clock()-inicio > CFG.limiteVoo then
-                registrar("TRAJETO","Voo sem chegada; tentando aproximação a pé.")
-                break
+            if ctx.root.Anchored then
+                Nav.zerar(ctx)
+                return "ancorado"
             end
-            GS.farmaDirecao = delta.Unit * math.clamp(
-                (delta.Magnitude-CFG.aproxima*0.5)/(CFG.voo*0.15),0,1)
+            if os.clock()-inicio > limite then
+                Nav.zerar(ctx)
+                return "tempo"
+            end
+            local delta = destino-ctx.root.Position
+            local distancia = delta.Magnitude
+            if distancia <= tolerancia then
+                Nav.zerar(ctx)
+                return "chegou"
+            end
+            if distancia < ultimaDistancia-Nav.cfg.margemProgresso then
+                ultimaDistancia = distancia
+                progresso = os.clock()
+            elseif os.clock()-progresso > Nav.cfg.semProgresso then
+                Nav.zerar(ctx)
+                return "bloqueado"
+            end
+            local avancou = (ctx.root.Position-ultimaPos).Magnitude
+            if avancou > 0.15 then
+                ultimaPos = ctx.root.Position
+                parado = os.clock()
+            elseif os.clock()-parado > Nav.cfg.semProgresso then
+                Nav.zerar(ctx)
+                return "parado"
+            end
+            local limiteY = workspace.FallenPartsDestroyHeight+Nav.cfg.minAltura
+            if ctx.root.Position.Y < limiteY and not opcoes.recuperacao then
+                Nav.zerar(ctx)
+                return "void"
+            end
+            if opcoes.patrulha then
+                local e = Nav.escolher(ctx)
+                if e then
+                    Nav.zerar(ctx)
+                    return "alvo_detectado"
+                end
+            end
+            if opcoes.alvo and opcoes.posOriginal then
+                local pos = Nav.posAlvo(opcoes.alvo)
+                if pos and (pos-opcoes.posOriginal).Magnitude > Nav.cfg.distanciaReplanejar then
+                    Nav.zerar(ctx)
+                    return "replanejar"
+                end
+            end
+            GS.farmaDirecao = Nav.velocidadePara(delta,opcoes.preciso)
+            task.wait(Nav.cfg.intervalo)
+        end
+        if autoVivo(ctx.g,ctx.a) then Nav.zerar(ctx) end
+        return "cancelado"
+    end
+
+    function Nav.observarItens()
+        local agora = os.clock()
+        for obj,it in pairs(R.itens) do
+            if valido(obj) and it.parte and it.parte.Parent then
+                local pos = it.parte.Position
+                local chave = Nav.chave(pos)
+                Nav.estado.memoria[chave] = {
+                    pos = pos,
+                    hora = agora,
+                    objeto = obj,
+                }
+            end
+        end
+        local chaves = {}
+        for chave,memoria in pairs(Nav.estado.memoria) do
+            if agora-memoria.hora > Nav.cfg.idadeMemoria then
+                Nav.estado.memoria[chave] = nil
+            else
+                table.insert(chaves,{chave=chave,hora=memoria.hora})
+            end
+        end
+        if #chaves > Nav.cfg.limiteMemoria then
+            table.sort(chaves,function(a,b)
+                return a.hora < b.hora
+            end)
+            for i=1,#chaves-Nav.cfg.limiteMemoria do
+                Nav.estado.memoria[chaves[i].chave] = nil
+            end
+        end
+    end
+
+    function Nav.escolher(ctx)
+        if not Nav.vivo(ctx) then return end
+        Nav.observarItens()
+        local escolhido
+        local menor
+        local agora = os.clock()
+        for obj,it in pairs(R.itens) do
+            if valido(obj) and (it.tentarEm or 0) <= agora then
+                local p = parte(obj)
+                if p then
+                    local distancia = (p.Position-ctx.root.Position).Magnitude
+                    local erros = Nav.estado.falhas[obj] or 0
+                    local custo = distancia + erros*25
+                    local idade = agora-(it.detectado or agora)
+                    custo = custo-math.min(40,idade*0.1)
+                    if not menor or custo < menor then
+                        menor = custo
+                        escolhido = {obj=obj,it=it}
+                    end
+                end
+            end
+        end
+        return escolhido
+    end
+
+    function Nav.pontoLateral(analise,indice)
+        local angulo = (indice-1)*math.pi/2
+        local raio = Nav.cfg.raioSuporte
+        return analise.destino + Vector3.new(
+            math.cos(angulo)*raio,
+            0,
+            math.sin(angulo)*raio)
+    end
+
+    function Nav.teto(ctx,e,analise)
+        local origem = ctx.root.Position
+        local pos = analise.destino
+        local cima = math.max(origem.Y,pos.Y)+Nav.cfg.alturaSobrevoo
+        local hit = Nav.raio(pos+Vector3.new(0,1,0),
+            Vector3.new(0,Nav.cfg.alturaSobrevoo*3,0),ctx,e)
+        if hit then
+            cima = math.max(cima,hit.Position.Y+Nav.cfg.alturaExtra)
+        end
+        return cima
+    end
+
+    function Nav.rotas(ctx,e,analise)
+        local teto = Nav.teto(ctx,e,analise)
+        local origem = ctx.root.Position
+        local centro = analise.destino
+        local rotas = {}
+        local direto = {
+            nome = "APROXIMAÇÃO DIRETA",
+            pontos = {centro},
+        }
+        local porCima = {
+            nome = "SUBINDO POR CIMA DO OBSTÁCULO",
+            pontos = {
+                Vector3.new(origem.X,teto,origem.Z),
+                Vector3.new(centro.X,teto,centro.Z),
+                centro,
+            },
+        }
+        if analise.elevado or analise.bloqueio then
+            table.insert(rotas,porCima)
+            table.insert(rotas,direto)
+        else
+            table.insert(rotas,direto)
+            table.insert(rotas,porCima)
+        end
+        for i=1,4 do
+            local lateral = Nav.pontoLateral(analise,i)
+            table.insert(rotas,{
+                nome = "TENTANDO LATERAL " .. i,
+                pontos = {
+                    Vector3.new(origem.X,teto+4,origem.Z),
+                    Vector3.new(lateral.X,teto+4,lateral.Z),
+                    lateral+Vector3.new(0,3,0),
+                    centro,
+                },
+            })
+        end
+        table.insert(rotas,{
+            nome = "RECUANDO E TENTANDO POR BAIXO",
+            pontos = {
+                centro+Vector3.new(Nav.cfg.recuo,0,Nav.cfg.recuo),
+                centro,
+            },
+        })
+        return rotas
+    end
+
+    function Nav.executarRota(ctx,e,rota,analise)
+        Nav.fase(rota.nome)
+        Nav.estado.rota = rota.nome
+        for i,ponto in ipairs(rota.pontos) do
+            if not Nav.vivo(ctx) then return "cancelado" end
+            local fim = Nav.terminou(ctx,e)
+            if fim then return fim end
+            local resultado = Nav.moverVoo(ctx,ponto,{
+                alvo = e,
+                posOriginal = analise.pos,
+                preciso = i == #rota.pontos,
+                tolerancia = i == #rota.pontos and 1.1 or 2,
+                limite = Nav.cfg.limiteTrecho,
+            })
+            if resultado ~= "chegou" then return resultado end
+        end
+        return "chegou"
+    end
+
+    function Nav.pousar(ctx,e,analise)
+        if not Nav.vivo(ctx) then return "cancelado" end
+        local suporte = analise.suporte
+        if not suporte or not analise.cabeca then
+            Nav.fase("COLETA EM VOO · SEM APOIO SEGURO")
+            return "sem_suporte"
+        end
+        local acima = suporte.pos + Vector3.new(0,Nav.alturaRoot(ctx)+0.5,0)
+        local resultado = Nav.moverVoo(ctx,acima,{
+            alvo = e,
+            preciso = true,
+            tolerancia = 1,
+            limite = 4,
+        })
+        if resultado ~= "chegou" then return resultado end
+        if not Nav.vivo(ctx) then return "cancelado" end
+        local p = Nav.posAlvo(e)
+        if not p then return "retirado" end
+        if math.abs(ctx.root.Position.Y-acima.Y) > 2 then
+            return "altura_errada"
+        end
+        Nav.fase("POUSANDO NA SUPERFÍCIE")
+        Nav.zerar(ctx)
+        setVoo(false)
+        Nav.estado.voo = false
+        ctx.hum.PlatformStand = false
+        ctx.hum.WalkSpeed = CFG.caminhada
+        local inicio = os.clock()
+        while Nav.vivo(ctx) and os.clock()-inicio < Nav.cfg.limitePouso do
+            local fim = Nav.terminou(ctx,e)
+            if fim then return fim end
+            local y = ctx.root.Position.Y
+            if y < suporte.altura-3 then
+                Nav.voo(ctx)
+                return "caiu"
+            end
+            if ctx.hum.FloorMaterial ~= Enum.Material.Air then
+                Nav.salvarSeguro(ctx)
+                return "pousou"
+            end
             task.wait(0.05)
         end
-        GS.farmaDirecao = Vector3.zero
-        return false
+        if Nav.vivo(ctx) then Nav.voo(ctx) end
+        return "sem_chao"
     end
 
-    local function andar(hum,root,pos,g,a,limite)
-        hum:MoveTo(pos)
-        local fim = os.clock()+limite
-        while autoVivo(g,a) and os.clock()<fim do
-            if hum.Health<=0 or not root.Parent then return false end
-            if (root.Position-pos).Magnitude <= 3 then return true end
+    function Nav.posPrompt(prompt,e)
+        local pai = prompt and prompt.Parent
+        if pai and pai:IsA("Attachment") then
+            return pai.WorldPosition
+        end
+        if pai and pai:IsA("BasePart") then
+            return pai.Position
+        end
+        if pai and pai:IsA("Model") then
+            return pai:GetPivot().Position
+        end
+        return Nav.posAlvo(e)
+    end
+
+    function Nav.linhaVisao(ctx,e,destino)
+        local origem = ctx.root.Position + Vector3.new(0,1,0)
+        local delta = destino-origem
+        if delta.Magnitude < 0.05 then return true end
+        local hit = Nav.raio(origem,delta,ctx,e)
+        return hit == nil
+    end
+
+    function Nav.segurar(ctx,e,prompt)
+        if not Nav.vivo(ctx) then return "cancelado" end
+        if not prompt.Enabled then return "prompt_desligado" end
+        local pos = Nav.posPrompt(prompt,e)
+        if not pos then return "retirado" end
+        local distancia = (ctx.root.Position-pos).Magnitude
+        if distancia > prompt.MaxActivationDistance then
+            return "longe"
+        end
+        if prompt.RequiresLineOfSight and not Nav.linhaVisao(ctx,e,pos) then
+            return "sem_visao"
+        end
+        local token = {}
+        local disparou = false
+        Nav.estado.prompt = prompt
+        Nav.estado.tokenPrompt = token
+        local conn = prompt.Triggered:Connect(function(player)
+            if player == LocalPlayer and Nav.vivo(ctx) then
+                disparou = true
+            end
+        end)
+        local ok,erro = pcall(function()
+            Nav.fase("SEGURANDO INTERAÇÃO DO FRASCO")
+            ctx.hum:MoveTo(ctx.root.Position)
+            prompt:InputHoldBegin()
+            local fim = os.clock()+prompt.HoldDuration+0.25
+            while Nav.vivo(ctx) and prompt.Parent and prompt.Enabled do
+                if Nav.terminou(ctx,e) then break end
+                local atual = Nav.posPrompt(prompt,e)
+                if not atual then break end
+                if (ctx.root.Position-atual).Magnitude > prompt.MaxActivationDistance then break end
+                if disparou or os.clock() >= fim then break end
+                task.wait(0.05)
+            end
+        end)
+        if Nav.estado.tokenPrompt == token then
+            Nav.liberarPrompt()
+        end
+        conn:Disconnect()
+        if not ok then
+            registrar("INTERAÇÃO",tostring(erro))
+            return "erro_interacao"
+        end
+        if disparou then return "interacao" end
+        return Nav.terminou(ctx,e) or "sem_confirmacao"
+    end
+
+    function Nav.interagir(ctx,e)
+        local fim = Nav.terminou(ctx,e)
+        if fim then return fim end
+        local prompt = e.obj:FindFirstChildWhichIsA("ProximityPrompt",true)
+        if prompt then
+            return Nav.segurar(ctx,e,prompt)
+        end
+        local click = e.obj:FindFirstChildWhichIsA("ClickDetector",true)
+        local pos = Nav.posAlvo(e)
+        if not pos then return "retirado" end
+        local distancia = (ctx.root.Position-pos).Magnitude
+        if click and distancia <= click.MaxActivationDistance then
+            if type(fireclickdetector) == "function" then
+                local ok,erro = pcall(fireclickdetector,click)
+                if not ok then registrar("INTERAÇÃO",tostring(erro)) end
+            end
+        end
+        return Nav.terminou(ctx,e) or "aguardando_toque"
+    end
+
+    function Nav.confirmar(ctx,e)
+        local fim = os.clock()+Nav.cfg.pausaConfirmacao
+        while Nav.vivo(ctx) and os.clock()<fim do
+            local resultado = Nav.terminou(ctx,e)
+            if resultado then return resultado end
+            task.wait(0.05)
+        end
+        return Nav.terminou(ctx,e) or "sem_confirmacao"
+    end
+
+    function Nav.pontoPe(ctx,e,deslocamento)
+        local pos = Nav.posAlvo(e)
+        if not pos then return end
+        local alvo = pos+deslocamento
+        local suporte = Nav.superficie(alvo,ctx,e,10)
+        if not suporte then return end
+        if math.abs(suporte.altura-pos.Y) > 6 then return end
+        local alto = suporte.pos+Vector3.new(0,Nav.alturaRoot(ctx),0)
+        local apoio = {
+            pos = suporte.pos,
+            normal = suporte.normal,
+            altura = suporte.altura,
+        }
+        if not Nav.cabecaLivre(apoio,ctx,e) then return end
+        return {
+            chao = suporte.pos,
+            root = alto,
+            suporte = suporte,
+        }
+    end
+
+    function Nav.andar(ctx,e,destino,pular,limite)
+        if not Nav.vivo(ctx) then return "cancelado" end
+        if flyAtivado then return "ainda_voando" end
+        if ctx.root.Anchored then return "ancorado" end
+        ctx.hum.PlatformStand = false
+        ctx.hum.WalkSpeed = CFG.caminhada
+        if pular then ctx.hum.Jump = true end
+        ctx.hum:MoveTo(destino)
+        local inicio = os.clock()
+        local ultimo = ctx.root.Position
+        local progresso = os.clock()
+        while Nav.vivo(ctx) and os.clock()-inicio < (limite or Nav.cfg.limitePe) do
+            local fim = Nav.terminou(ctx,e)
+            if fim then return fim end
+            if Nav.distanciaHorizontal(ctx.root.Position,destino) < 1 then
+                return "chegou"
+            end
+            local deslocamento = (ctx.root.Position-ultimo).Magnitude
+            if deslocamento > Nav.cfg.progressoPe then
+                ultimo = ctx.root.Position
+                progresso = os.clock()
+            elseif os.clock()-progresso > 0.8 then
+                ctx.hum.Jump = true
+                progresso = os.clock()
+                ctx.hum:MoveTo(destino)
+            end
+            local pos = Nav.posAlvo(e)
+            if pos and ctx.root.Position.Y < pos.Y-8 then
+                Nav.voo(ctx)
+                return "caiu"
+            end
             task.wait(0.08)
         end
-        return false
+        return Nav.terminou(ctx,e) or "tempo_pe"
     end
 
-    local function caminhoAte(e,g,a)
-        local _,hum,root = personagem()
-        local p = valido(e.obj) and parte(e.obj)
-        if not hum or not p then return end
-        local path = PathfindingService:CreatePath({AgentRadius=2,AgentHeight=5,AgentCanJump=true})
-        local ok = pcall(function() path:ComputeAsync(root.Position,p.Position) end)
-        if autoVivo(g,a) and ok and path.Status == Enum.PathStatus.Success then
-            for _,wp in ipairs(path:GetWaypoints()) do
-                if not autoVivo(g,a) or not valido(e.obj) then break end
-                if (root.Position-p.Position).Magnitude <= CFG.alcance then break end
-                if wp.Action == Enum.PathWaypointAction.Jump then hum.Jump=true end
-                if not andar(hum,root,wp.Position,g,a,2) then break end
+    function Nav.rotaPe(ctx,e)
+        local pos = Nav.posAlvo(e)
+        if not pos or not Nav.vivo(ctx) then return "cancelado" end
+        local path = PathfindingService:CreatePath({
+            AgentRadius = 1.6,
+            AgentHeight = 5,
+            AgentCanJump = true,
+            AgentCanClimb = true,
+            WaypointSpacing = 3,
+        })
+        local ok,erro = pcall(function()
+            path:ComputeAsync(ctx.root.Position,pos)
+        end)
+        if not Nav.vivo(ctx) then
+            path:Destroy()
+            return "cancelado"
+        end
+        if not ok or path.Status ~= Enum.PathStatus.Success then
+            path:Destroy()
+            if not ok then registrar("ROTA",tostring(erro)) end
+            return "sem_rota"
+        end
+        local fim = os.clock()+Nav.cfg.limiteRotaPe
+        local resultado = "tempo_rota"
+        for _,ponto in ipairs(path:GetWaypoints()) do
+            if not Nav.vivo(ctx) or os.clock()>fim then break end
+            local saiu = Nav.terminou(ctx,e)
+            if saiu then
+                resultado = saiu
+                break
+            end
+            resultado = Nav.andar(ctx,e,ponto.Position,
+                ponto.Action == Enum.PathWaypointAction.Jump,1.2)
+            if resultado ~= "chegou" then break end
+            local atual = Nav.posAlvo(e)
+            if atual and (ctx.root.Position-atual).Magnitude < CFG.alcance then
+                resultado = "chegou"
+                break
             end
         end
         path:Destroy()
+        return resultado
     end
 
-    local function interagir(e,g,a)
-        if not autoVivo(g,a) or not valido(e.obj) then return end
-        local _,_,root = personagem()
-        local p = parte(e.obj)
-        if not root or not p then return end
-        local distancia = (root.Position-p.Position).Magnitude
-        local prompt = e.obj:FindFirstChildWhichIsA("ProximityPrompt",true)
-        if prompt and prompt.Enabled and distancia <= math.min(prompt.MaxActivationDistance,CFG.alcance) then
-            if type(fireproximityprompt) == "function" then
-                pcall(fireproximityprompt,prompt)
-            else
-                pcall(function() prompt:InputHoldBegin() end)
-                local fim = os.clock()+prompt.HoldDuration
-                while autoVivo(g,a) and prompt.Parent and os.clock()<fim do task.wait(0.05) end
-                pcall(function() prompt:InputHoldEnd() end)
+    function Nav.toques(ctx,e)
+        local deslocamentos = {
+            Vector3.zero,
+            Vector3.new(1.2,0,0),
+            Vector3.new(-1.2,0,0),
+            Vector3.new(0,0,1.2),
+            Vector3.new(0,0,-1.2),
+            Vector3.new(0.8,0,0.8),
+            Vector3.new(-0.8,0,-0.8),
+        }
+        for i,delta in ipairs(deslocamentos) do
+            if not Nav.vivo(ctx) then return "cancelado" end
+            local fim = Nav.terminou(ctx,e)
+            if fim then return fim end
+            local ponto = Nav.pontoPe(ctx,e,delta)
+            if ponto then
+                Nav.fase("APROXIMAÇÃO A PÉ · TENTATIVA " .. i)
+                local pos = Nav.posAlvo(e)
+                local alto = pos and pos.Y-ctx.root.Position.Y > 2
+                local andou = Nav.andar(ctx,e,ponto.chao,alto or i%3==0,1)
+                if andou == "caiu" or andou == "cancelado" then
+                    return andou
+                end
+                local resultado = Nav.interagir(ctx,e)
+                if resultado == "inventario" or resultado == "retirado" then
+                    return resultado
+                end
+                local confirmado = Nav.confirmar(ctx,e)
+                if confirmado ~= "sem_confirmacao" then
+                    return confirmado
+                end
             end
         end
-        local click = e.obj:FindFirstChildWhichIsA("ClickDetector",true)
-        if click and distancia <= math.min(click.MaxActivationDistance,CFG.alcance)
-            and type(fireclickdetector)=="function" then
-            pcall(fireclickdetector,click)
+        return "sem_confirmacao"
+    end
+
+    function Nav.toqueAereo(ctx,e)
+        local pos = Nav.posAlvo(e)
+        if not pos then return "retirado" end
+        local pontos = {
+            Vector3.new(0,1,0),
+            Vector3.new(0,0,0),
+            Vector3.new(1.3,0,0),
+            Vector3.new(-1.3,0,0),
+            Vector3.new(0,0,1.3),
+            Vector3.new(0,0,-1.3),
+        }
+        for i,delta in ipairs(pontos) do
+            if not Nav.vivo(ctx) then return "cancelado" end
+            local atual = Nav.posAlvo(e)
+            if not atual then return "retirado" end
+            Nav.fase("AJUSTE AÉREO DE PRECISÃO · " .. i)
+            local resultado = Nav.moverVoo(ctx,atual+delta,{
+                alvo = e,
+                preciso = true,
+                tolerancia = 0.7,
+                limite = 3,
+            })
+            if resultado == "inventario" or resultado == "retirado" then
+                return resultado
+            end
+            if resultado == "chegou" then
+                Nav.interagir(ctx,e)
+                local confirmado = Nav.confirmar(ctx,e)
+                if confirmado ~= "sem_confirmacao" then return confirmado end
+            end
+        end
+        return "sem_confirmacao"
+    end
+
+    function Nav.coletarChegada(ctx,e,analise)
+        local fim = Nav.terminou(ctx,e)
+        if fim then return fim end
+        local resultado = Nav.interagir(ctx,e)
+        if resultado == "inventario" or resultado == "retirado" then
+            return resultado
+        end
+        local pouso = Nav.pousar(ctx,e,analise)
+        if pouso == "pousou" then
+            resultado = Nav.toques(ctx,e)
+            if resultado == "inventario" or resultado == "retirado" then
+                return resultado
+            end
+            if resultado == "sem_confirmacao" and Nav.vivo(ctx) then
+                Nav.fase("TENTANDO ROTA COM PULOS")
+                Nav.rotaPe(ctx,e)
+                resultado = Nav.toques(ctx,e)
+                if resultado == "inventario" or resultado == "retirado" then
+                    return resultado
+                end
+            end
+        elseif pouso == "inventario" or pouso == "retirado" or pouso == "cancelado" then
+            return pouso
+        end
+        if not Nav.vivo(ctx) then return "cancelado" end
+        return Nav.toqueAereo(ctx,e)
+    end
+
+    function Nav.recuar(ctx,e)
+        if not Nav.vivo(ctx) then return "cancelado" end
+        local pos = Nav.posAlvo(e)
+        if not pos then return "retirado" end
+        Nav.estado.recuperacoes = Nav.estado.recuperacoes+1
+        Nav.fase("RECUANDO PARA REPLANEJAR")
+        local destino = ctx.root.Position+Vector3.new(0,Nav.cfg.alturaExtra,0)
+        local resultado = Nav.moverVoo(ctx,destino,{
+            alvo = e,
+            limite = 4,
+            tolerancia = 2,
+        })
+        return resultado
+    end
+
+    function Nav.falhou(e,motivo)
+        if not e or not e.it then return end
+        local contagem = (Nav.estado.falhas[e.obj] or 0)+1
+        Nav.estado.falhas[e.obj] = contagem
+        local pausa = math.min(Nav.cfg.cooldownMaximo,
+            Nav.cfg.cooldownBase*(1.6^(contagem-1)))
+        e.it.tentarEm = os.clock()+pausa
+        registrar("REAGENDADO",string.format(
+            "%s: %s. Nova tentativa em %.0fs.",
+            e.obj.Name,motivo,pausa))
+    end
+
+    function Nav.concluir(ctx,e,resultado)
+        if not Nav.vivo(ctx) then return end
+        Nav.liberarPrompt()
+        Nav.zerar(ctx)
+        if resultado == "inventario" then
+            Nav.estado.falhas[e.obj] = nil
+            registrar("FINALIZADO","Frasco confirmado no inventário.")
+        elseif resultado == "retirado" then
+            registrar("FINALIZADO","Frasco saiu do mapa; pode ter sido coletado ou descarregado.")
+        else
+            Nav.falhou(e,resultado or "sem_confirmacao")
+        end
+        Nav.estado.alvo = nil
+        Nav.estado.rota = nil
+    end
+
+    function Nav.buscar(e,g,a)
+        local ctx = Nav.contexto(g,a)
+        if not ctx then return end
+        Nav.estado.alvo = e.obj
+        Nav.salvarSeguro(ctx)
+        local inicial = Nav.analise(ctx,e)
+        if not inicial then return end
+        local nomeSuporte = inicial.suporte and inicial.suporte.objeto.Name or "sem apoio"
+        registrar("ALVO",string.format(
+            "%s | diferença vertical %.1f | apoio %s",
+            e.obj.Name,inicial.deltaY,nomeSuporte))
+        local resultado = "sem_confirmacao"
+        local plano = Nav.rotas(ctx,e,inicial)
+        local indice = 1
+        local replanejamentos = 0
+        while Nav.vivo(ctx) and indice <= #plano do
+            local saiu = Nav.terminou(ctx,e)
+            if saiu then
+                resultado = saiu
+                break
+            end
+            if os.clock()-ctx.inicio > Nav.cfg.limiteAlvo then
+                resultado = "limite_do_alvo"
+                break
+            end
+            local analise = Nav.analise(ctx,e)
+            if not analise then
+                resultado = "retirado"
+                break
+            end
+            if (analise.pos-inicial.pos).Magnitude > Nav.cfg.distanciaReplanejar then
+                inicial = analise
+                plano = Nav.rotas(ctx,e,analise)
+                indice = 1
+                replanejamentos = replanejamentos+1
+                if replanejamentos > 3 then
+                    resultado = "alvo_movel"
+                    break
+                end
+            end
+            resultado = Nav.executarRota(ctx,e,plano[indice],analise)
+            if resultado == "chegou" then
+                local atual = Nav.analise(ctx,e)
+                if atual then
+                    resultado = Nav.coletarChegada(ctx,e,atual)
+                else
+                    resultado = "retirado"
+                end
+            end
+            if resultado == "inventario" or resultado == "retirado" then break end
+            if resultado == "cancelado" then break end
+            if resultado == "void" then
+                Nav.recuperar(ctx)
+            elseif resultado ~= "replanejar" then
+                Nav.recuar(ctx,e)
+            end
+            indice = indice+1
+        end
+        Nav.concluir(ctx,e,resultado)
+    end
+
+    function Nav.recuperar(ctx)
+        if not Nav.vivo(ctx) then return false end
+        Nav.liberarPrompt()
+        Nav.estado.recuperacoes = Nav.estado.recuperacoes+1
+        Nav.fase("RECUPERANDO ALTURA SEGURA")
+        if not Nav.voo(ctx) then return false end
+        local seguro = Nav.estado.seguro or Nav.estado.ancora
+        if not seguro then
+            seguro = ctx.root.Position+Vector3.new(0,20,0)
+        end
+        seguro = Vector3.new(seguro.X,
+            math.max(seguro.Y,workspace.FallenPartsDestroyHeight+30),
+            seguro.Z)
+        local resultado = Nav.moverVoo(ctx,seguro,{
+            limite = 6,
+            tolerancia = 3,
+            recuperacao = true,
+        })
+        return resultado == "chegou"
+    end
+
+    function Nav.inicializarPatrulha(ctx)
+        if Nav.estado.ancora then return end
+        Nav.estado.ancora = ctx.root.Position
+        Nav.estado.seguro = ctx.root.Position
+        Nav.estado.setor = 0
+        Nav.estado.anel = 1
+        Nav.salvarSeguro(ctx)
+    end
+
+    function Nav.proximoAnel()
+        Nav.estado.setor = Nav.estado.setor+1
+        if Nav.estado.setor >= Nav.cfg.setores then
+            Nav.estado.setor = 0
+            Nav.estado.anel = Nav.estado.anel+1
+            if Nav.estado.anel > Nav.cfg.maxAnel then
+                Nav.estado.anel = 1
+            end
+        end
+        Nav.estado.passos = Nav.estado.passos+1
+    end
+
+    function Nav.pontoAnel()
+        local ancora = Nav.estado.ancora
+        if not ancora then return end
+        local raio = Nav.cfg.raioPatrulha*Nav.estado.anel
+        local angulo = Nav.estado.setor*math.pi*2/Nav.cfg.setores
+        local deslocamento = Vector3.new(
+            math.cos(angulo)*raio,
+            Nav.cfg.alturaPatrulha,
+            math.sin(angulo)*raio)
+        local ponto = ancora+deslocamento
+        Nav.proximoAnel()
+        return ponto
+    end
+
+    function Nav.pontoConhecido(ctx)
+        local melhor
+        local custo
+        local agora = os.clock()
+        for chave,m in pairs(Nav.estado.memoria) do
+            local ultima = Nav.estado.visita[chave] or -math.huge
+            if agora-ultima >= Nav.cfg.tempoRevisita then
+                local d = (ctx.root.Position-m.pos).Magnitude
+                if not custo or d < custo then
+                    custo = d
+                    melhor = m.pos
+                end
+            end
+        end
+        return melhor
+    end
+
+    function Nav.sondarPatrulha(ctx,ponto)
+        if not Nav.vetorValido(ponto) then return end
+        local altura = math.max(ponto.Y,ctx.root.Position.Y)+100
+        local origem = Vector3.new(ponto.X,altura,ponto.Z)
+        local hit = Nav.raio(origem,Vector3.new(0,-500,0),ctx,nil)
+        if not hit then return end
+        if hit.Normal.Y < Nav.cfg.normalMinima then return end
+        if hit.Position.Y <= workspace.FallenPartsDestroyHeight+20 then return end
+        local destino = hit.Position+Vector3.new(0,Nav.cfg.alturaPatrulha,0)
+        return destino
+    end
+
+    function Nav.planoPatrulha(ctx)
+        Nav.inicializarPatrulha(ctx)
+        Nav.observarItens()
+        local conhecido = Nav.pontoConhecido(ctx)
+        if conhecido then
+            local destino = Nav.sondarPatrulha(ctx,conhecido)
+            if destino then return destino end
+        end
+        for _=1,Nav.cfg.maxTentativasPatrulha do
+            local bruto = Nav.pontoAnel()
+            local destino = bruto and Nav.sondarPatrulha(ctx,bruto)
+            if destino then
+                local chave = Nav.chave(destino)
+                local ultima = Nav.estado.visita[chave] or -math.huge
+                if os.clock()-ultima > 5 then return destino end
+            end
+        end
+        -- Uma area ainda nao carregada pode nao oferecer piso para a sonda.
+        -- Avanca em trechos curtos, preservando a altitude do personagem.
+        local angulo = Nav.estado.setor*math.pi*2/Nav.cfg.setores
+        local plano = ctx.root.Position+Vector3.new(
+            math.cos(angulo)*45,
+            6,
+            math.sin(angulo)*45)
+        local ancora = Nav.estado.ancora
+        plano = Vector3.new(plano.X,
+            math.min(plano.Y,ancora.Y+Nav.cfg.alturaMaxPatrulha),
+            plano.Z)
+        if Nav.distanciaHorizontal(plano,ancora)>Nav.cfg.raioPatrulha*Nav.cfg.maxAnel then
+            plano = ancora+Vector3.new(0,Nav.cfg.alturaPatrulha,0)
+        end
+        Nav.proximoAnel()
+        return plano
+    end
+
+    function Nav.patrulhar(g,a)
+        local ctx = Nav.contexto(g,a)
+        if not ctx then return end
+        Nav.inicializarPatrulha(ctx)
+        local e = Nav.escolher(ctx)
+        if e then return end
+        Nav.fase("PATRULHANDO · VOO 500 + NOCLIP")
+        local destino = Nav.planoPatrulha(ctx)
+        if not destino then
+            Nav.esperar(ctx,0.3)
+            return
+        end
+        local chave = Nav.chave(destino)
+        local resultado = Nav.moverVoo(ctx,destino,{
+            patrulha = true,
+            limite = Nav.cfg.limitePatrulha,
+            tolerancia = 4,
+        })
+        if not Nav.vivo(ctx) then return end
+        if resultado == "alvo_detectado" then
+            Nav.fase("FRASCO DETECTADO · INTERROMPENDO PATRULHA")
+            return
+        end
+        Nav.estado.visita[chave] = os.clock()
+        Nav.estado.patrulhas = Nav.estado.patrulhas+1
+        if resultado == "void" then
+            Nav.recuperar(ctx)
+        elseif resultado ~= "chegou" then
+            Nav.estado.recuperacoes = Nav.estado.recuperacoes+1
+            local acima = ctx.root.Position+Vector3.new(0,8,0)
+            Nav.moverVoo(ctx,acima,{
+                patrulha = true,
+                limite = 3,
+                tolerancia = 2,
+            })
+        end
+        if Nav.vivo(ctx) then
+            R.sujo = true
+            Nav.esperar(ctx,0.25)
         end
     end
 
-    local function coletar(e,g,a)
-        if not autoVivo(g,a) then return end
-        setVoo(false)
-        local _,hum,root = personagem()
-        if not hum then return end
-        hum.PlatformStand = false
-        hum.WalkSpeed = CFG.caminhada
-        R.fase = "CAMINHANDO ATÉ O FRASCO"
-        if valido(e.obj) then caminhoAte(e,g,a) end
-        if not autoVivo(g,a) then return end
-        local inicio = os.clock()
-        local recebidos = R.coletados
-        local tentativa = 0
-        while autoVivo(g,a) and os.clock()-inicio<CFG.limiteColeta do
-            if R.coletados>recebidos then return end
-            if not valido(e.obj) then
-                registrar("RETIRADO","Frasco saiu do mapa; coleta sem confirmação adicional.")
-                return
-            end
-            local char,atual,raiz = personagem()
-            local p = parte(e.obj)
-            if not char or atual~=hum or not p then return end
-            tentativa = tentativa+1
-            R.fase = "TENTANDO COLETAR · " .. tentativa
-            local angulo = tentativa*math.pi/2
-            local raio = tentativa%3==0 and 0 or 1.5
-            local pos = p.Position+Vector3.new(math.cos(angulo)*raio,0,math.sin(angulo)*raio)
-            andar(hum,raiz,pos,g,a,0.8)
-            if not autoVivo(g,a) then return end
-            interagir(e,g,a)
-            task.wait(0.2)
+    function Nav.passo(g,a)
+        local ctx = Nav.contexto(g,a)
+        if not ctx then
+            Nav.fase("AGUARDANDO PERSONAGEM")
+            return
         end
-        if autoVivo(g,a) and valido(e.obj) then
-            registrar("NOVA TENTATIVA","Sem confirmação; intervalo de " .. CFG.pausaErro .. "s para este frasco.")
+        if ctx.root.Anchored then
+            Nav.fase("AGUARDANDO PERSONAGEM DESANCORAR")
+            return
+        end
+        local e = Nav.escolher(ctx)
+        if e then
+            R.alvo = e.obj
+            Nav.buscar(e,g,a)
+        else
+            R.alvo = nil
+            Nav.patrulhar(g,a)
         end
     end
 
@@ -6749,6 +7821,7 @@ GS.iniciarFarma = function()
         R.auto = false
         R.cicloAuto = R.cicloAuto+1
         R.alvo = nil
+        Nav.parar()
         restaurarMovimento()
         if GS.noclipArquivo then GS.noclipArquivo.liberar("frascos") end
         autoBtn.Text = "AUTOMÁTICO: OFF"
@@ -6762,34 +7835,28 @@ GS.iniciarFarma = function()
         R.auto = true
         R.cicloAuto = R.cicloAuto+1
         local g,a = R.geracao,R.cicloAuto
+        Nav.reset()
         salvarMovimento()
         if GS.noclipArquivo then GS.noclipArquivo.ativar("frascos") end
         autoBtn.Text = "AUTOMÁTICO: ON · VOO 500"
-        registrar("AUTO","Voo 500 e noclip; chegada a pé e confirmação por inventário.")
+        registrar("AUTO","Patrulha em voo 500; rotas por altura, laterais, pouso e pulos.")
         task.spawn(function()
             while autoVivo(g,a) do
                 local ok,err = pcall(function()
-                    local _,hum,root = personagem()
-                    if not hum then R.fase="AGUARDANDO PERSONAGEM"; return end
-                    local e = selecionar(root)
-                    if not e then
-                        if flyAtivado then setVoo(false) end
-                        R.fase = "AGUARDANDO FRASCOS"
-                        return
-                    end
-                    R.alvo = e.obj
-                    registrar("ALVO",e.obj:GetFullName())
-                    voar(e,g,a)
-                    if autoVivo(g,a) then coletar(e,g,a) end
-                    if autoVivo(g,a) then e.it.tentarEm=os.clock()+CFG.pausaErro end
+                    Nav.passo(g,a)
                 end)
                 if not autoVivo(g,a) then break end
                 R.alvo = nil
                 if not ok then
                     warn("[DEBUG-BOT]: Farma:",err)
+                    Nav.liberarPrompt()
                     GS.farmaDirecao = Vector3.zero
-                    if flyAtivado then setVoo(false) end
-                    R.fase = "RECUPERANDO MOVIMENTO"
+                    local ctx = Nav.contexto(g,a)
+                    if ctx then
+                        local recuperou,erro = pcall(Nav.recuperar,ctx)
+                        if not recuperou then warn("[DEBUG-BOT]: Recuperação:",erro) end
+                    end
+                    R.fase = "REPLANEJANDO MOVIMENTO"
                 end
                 task.wait(0.3)
             end
@@ -6807,7 +7874,7 @@ GS.iniciarFarma = function()
         R.gui.Name = "FarmaMarcadores"
         R.gui.Parent = ScreenGui
         local g = R.geracao
-        monitorBtn.Text = "DETECÇÃO: ON · FILTRO EXATO V4"
+        monitorBtn.Text = "DETECÇÃO: ON · FILTRO EXATO V5"
         R.fase = "MONITORANDO"
         local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
         if backpack then
