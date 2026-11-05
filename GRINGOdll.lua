@@ -6468,6 +6468,7 @@ GS.iniciarFarma = function()
     end
 
     local function desligarAuto()
+        if not R.auto and not R.salvo then return end
         R.auto = false
         R.cicloAuto = R.cicloAuto+1
         R.alvo = nil
@@ -6478,6 +6479,7 @@ GS.iniciarFarma = function()
 
     local function iniciarAuto()
         if R.auto then return end
+        if GS.pararFarmaLucky then GS.pararFarmaLucky() end
         R.auto = true
         R.cicloAuto = R.cicloAuto+1
         local g,a = R.geracao,R.cicloAuto
@@ -6598,6 +6600,7 @@ GS.iniciarFarma = function()
         locais.Text = "Monitoramento desligado."
     end
 
+    GS.pararFarmaFrascos = desligarAuto
     monitorBtn.MouseButton1Click:Connect(function()
         if R.monitor then pararMonitor() else iniciarMonitor() end
     end)
@@ -6615,6 +6618,357 @@ GS.iniciarFarma = function()
     end)
 end
 GS.rodar("Farma Bot", GS.iniciarFarma, GS.painelFarma)
+
+-- Lucky Blocks: busca independente na mesma tela da farma de frascos.
+GS.iniciarFarmaLucky = function()
+    local U,painel = GS.ui,GS.painelFarma
+    if not U or not painel then return end
+    local Chat = game:GetService("TextChatService")
+    local L = {
+        ligado=false, auto=false, geracao=0, ciclo=0, itens={}, conns={},
+        espera=setmetatable({}, {__mode="k"}), salvo=nil, gui=nil,
+        aviso="Nenhum aviso observado.", candidatos={}, examinados=0,
+        scanEm=0, alvo=nil, fase="DESLIGADO",
+    }
+    U.sec(painel,"FARMA · LUCKY BLOCKS / REDFIRE","package",20)
+    local detectar = U.tog(painel,"PROCURAR LUCKY BLOCKS",21)
+    detectar:SetAttribute("Controlado",true)
+    detectar.Text="LUCKY BLOCKS: OFF"
+    local automatico = U.tog(painel,"IR ATÉ O LUCKY BLOCK · VOO 90",22)
+    automatico:SetAttribute("Controlado",true)
+    automatico.Text="AUTO LUCKY: OFF"
+    local busca = U.acao(painel,"REFAZER BUSCA COMPLETA","scan-search",23)
+    local info = Instance.new("TextLabel")
+    info.Size=UDim2.new(1,-16,0,210)
+    info.LayoutOrder=24
+    info.BackgroundTransparency=1
+    info.TextColor3=U.T.text
+    info.Font=Enum.Font.GothamMedium
+    info.TextSize=12
+    info.TextWrapped=true
+    info.TextXAlignment=Enum.TextXAlignment.Left
+    info.TextYAlignment=Enum.TextYAlignment.Top
+    info.Text="Busca separada dos frascos. Avisos do chat iniciam nova varredura."
+    info.Parent=painel
+
+    local function normalizar(s)
+        return string.lower(s):gsub("[^%w]","")
+    end
+    local function nomeLucky(s)
+        local n=normalizar(s)
+        return n:find("luckyblock",1,true)~=nil
+            or n:find("luckblock",1,true)~=nil
+            or n:find("lockblock",1,true)~=nil
+    end
+    local function personagem()
+        local char=LocalPlayer.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        if hum and root and hum.Health>0 then return char,hum,root end
+    end
+    local function parte(obj)
+        if obj:IsA("BasePart") then return obj end
+        return obj:FindFirstChildWhichIsA("BasePart",true)
+    end
+    local function dePersonagem(obj)
+        local p=obj
+        while p and p~=workspace do
+            if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then return true end
+            p=p.Parent
+        end
+        return false
+    end
+    local function vivo(g)
+        return L.ligado and L.geracao==g and ScreenGui.Parent~=nil
+    end
+    local function autoVivo(g,c)
+        return vivo(g) and L.auto and L.ciclo==c
+    end
+    local function avaliar(obj)
+        local alvo=obj
+        local corresponde=nomeLucky(obj.Name)
+        if obj:IsA("ProximityPrompt") then
+            corresponde=corresponde or nomeLucky(obj.ObjectText)
+            alvo=obj.Parent
+            if alvo and alvo:IsA("Attachment") then alvo=alvo.Parent end
+        elseif obj:IsA("ClickDetector") then
+            alvo=obj.Parent
+            corresponde=corresponde or (alvo and nomeLucky(alvo.Name))
+        elseif not (obj:IsA("BasePart") or obj:IsA("Model") or obj:IsA("Tool")) then
+            return
+        end
+        if not corresponde or not alvo or alvo==workspace then return end
+        if dePersonagem(alvo) then return end
+        local p=alvo.Parent
+        while p and p~=workspace do
+            if (p:IsA("Model") or p:IsA("Tool")) and nomeLucky(p.Name) then alvo=p end
+            p=p.Parent
+        end
+        if not (alvo:IsA("Model") or alvo:IsA("Tool") or alvo:IsA("BasePart")) then return end
+        local n=normalizar(alvo.Name)
+        -- Spawners e pastas de templates nao sao o bloco coletavel.
+        if n:find("spawner",1,true) or n:find("spawnpoint",1,true) then return end
+        local base=parte(alvo)
+        if not base then return end
+        if alvo:IsA("Model") and alvo:GetExtentsSize().Magnitude>60 then return end
+        return alvo,base
+    end
+    local function adicionar(obj,base)
+        if L.itens[obj] then return end
+        for outro,it in pairs(L.itens) do
+            if obj:IsDescendantOf(outro) then return end
+            if outro:IsDescendantOf(obj) then it.gui:Destroy(); L.itens[outro]=nil end
+        end
+        local gui=Instance.new("BillboardGui")
+        gui.Name="LuckyLocal"
+        gui.Adornee=base
+        gui.Size=UDim2.fromOffset(174,38)
+        gui.StudsOffsetWorldSpace=Vector3.new(0,3,0)
+        gui.AlwaysOnTop=true
+        gui.MaxDistance=0
+        gui.Enabled=false
+        gui.Parent=L.gui
+        local label=Instance.new("TextLabel")
+        label.Size=UDim2.fromScale(1,1)
+        label.BackgroundColor3=Color3.fromRGB(35,22,8)
+        label.BackgroundTransparency=0.2
+        label.TextColor3=Color3.fromRGB(255,211,118)
+        label.TextSize=12
+        label.Font=Enum.Font.GothamBold
+        label.TextWrapped=true
+        label.Parent=gui
+        Instance.new("UICorner",label).CornerRadius=UDim.new(0,8)
+        L.itens[obj]={base=base,gui=gui,label=label}
+        print("[DEBUG-LUCKY]: Encontrado",obj:GetFullName())
+    end
+    local function varrer(g)
+        L.examinados=0
+        L.candidatos={}
+        L.scanEm=os.clock()+5
+        local nomes={}
+        for i,obj in ipairs(workspace:GetDescendants()) do
+            if not vivo(g) then return end
+            L.examinados=i
+            local ok,alvo,base=pcall(avaliar,obj)
+            if ok and alvo then adicionar(alvo,base) end
+            local n=normalizar(obj.Name)
+            if #L.candidatos<5 and (n:find("redfire",1,true) or n:find("lucky",1,true))
+                and not nomes[obj.Name] and (obj:IsA("Model") or obj:IsA("BasePart")) then
+                nomes[obj.Name]=true
+                table.insert(L.candidatos,obj:GetFullName())
+            end
+            if i%300==0 then task.wait() end
+        end
+        print("[DEBUG-LUCKY]: Busca completa:",L.examinados,"objetos examinados")
+    end
+    local function listar()
+        local _,_,root=personagem()
+        local lista={}
+        for obj,it in pairs(L.itens) do
+            if not obj:IsDescendantOf(workspace) or dePersonagem(obj) then
+                it.gui:Destroy()
+                L.itens[obj]=nil
+            else
+                local base=parte(obj)
+                if base then
+                    it.base=base
+                    it.gui.Adornee=base
+                    table.insert(lista,{obj=obj,it=it,d=root and (root.Position-base.Position).Magnitude or math.huge})
+                end
+            end
+        end
+        table.sort(lista,function(a,b) return a.d<b.d end)
+        local linhas={L.fase.." | Examinados: "..L.examinados.." | Blocos: "..#lista,L.aviso}
+        local camera=workspace.CurrentCamera
+        local ocupados={}
+        for i,e in ipairs(lista) do
+            e.it.label.Text=string.format("%s\n%.0f studs",e.obj.Name,e.d)
+            local mostrar=false
+            if camera and #ocupados<6 then
+                local tela,visivel=camera:WorldToViewportPoint(e.it.base.Position+Vector3.new(0,3,0))
+                mostrar=visivel and tela.Z>0
+                if mostrar then
+                    for _,p in ipairs(ocupados) do
+                        if math.abs(tela.X-p.X)<184 and math.abs(tela.Y-p.Y)<44 then mostrar=false; break end
+                    end
+                    if mostrar then table.insert(ocupados,tela) end
+                end
+            end
+            e.it.gui.Enabled=mostrar
+            if i<=4 then table.insert(linhas,string.format("%s · %.0f studs",e.obj.Name,e.d)) end
+        end
+        if #lista==0 then
+            table.insert(linhas,"Nenhum bloco identificado entre os objetos carregados.")
+            if #L.candidatos>0 then
+                table.insert(linhas,"Nomes para diagnóstico (não são alvos confirmados):")
+                for _,s in ipairs(L.candidatos) do table.insert(linhas,s) end
+            end
+            if workspace.StreamingEnabled then table.insert(linhas,"Streaming: objetos distantes podem estar ausentes.") end
+        end
+        info.Text=table.concat(linhas,"\n")
+        return lista
+    end
+    local function restaurar()
+        if not L.salvo then return end
+        GS.farmaDirecao=nil
+        if flyAtivado then alternarFly() end
+        local salvo=L.salvo
+        velocidadeVoo=salvo.voo
+        if FlyLabel then FlyLabel.Text="VOO: "..velocidadeVoo end
+        if speedAtivado~=salvo.speed then alternarSpeed() end
+        if salvo.fly then alternarFly() end
+        local _,hum,root=personagem()
+        if hum then hum.WalkSpeed=salvo.walk; hum:MoveTo(root.Position) end
+        L.salvo=nil
+    end
+    local function pararAuto()
+        if not L.auto and not L.salvo then return end
+        L.auto=false
+        L.ciclo=L.ciclo+1
+        L.alvo=nil
+        restaurar()
+        automatico.Text="AUTO LUCKY: OFF"
+        L.fase="MONITORANDO LUCKY"
+    end
+    local function buscarAlvo(e,g,c)
+        local _,hum,root=personagem()
+        if not hum then return end
+        L.fase="INDO ATÉ "..e.obj.Name
+        velocidadeVoo=90
+        FlyLabel.Text="VOO: 90"
+        GS.farmaDirecao=Vector3.zero
+        if not flyAtivado then alternarFly() end
+        local inicio=os.clock()
+        while autoVivo(g,c) and e.obj:IsDescendantOf(workspace) and os.clock()-inicio<20 do
+            local _,atual,raiz=personagem()
+            local base=parte(e.obj)
+            if atual~=hum or not base or raiz.Anchored then break end
+            local delta=base.Position+Vector3.new(0,2,0)-raiz.Position
+            if delta.Magnitude<10 then break end
+            GS.farmaDirecao=delta.Unit*math.clamp(delta.Magnitude/10,0,1)
+            task.wait(0.05)
+        end
+        if not autoVivo(g,c) then return end
+        GS.farmaDirecao=nil
+        if flyAtivado then alternarFly() end
+        root.AssemblyLinearVelocity=Vector3.zero
+        hum.WalkSpeed=16
+        inicio=os.clock()
+        while autoVivo(g,c) and e.obj:IsDescendantOf(workspace) and os.clock()-inicio<12 do
+            local _,atual,raiz=personagem()
+            local base=parte(e.obj)
+            if atual~=hum or not base then return end
+            hum:MoveTo(base.Position)
+            local d=(raiz.Position-base.Position).Magnitude
+            if d<=8 then
+                local prompt=e.obj:FindFirstChildWhichIsA("ProximityPrompt",true)
+                if prompt and prompt.Enabled and d<=prompt.MaxActivationDistance
+                    and type(fireproximityprompt)=="function" then pcall(fireproximityprompt,prompt) end
+                local click=e.obj:FindFirstChildWhichIsA("ClickDetector",true)
+                if click and d<=click.MaxActivationDistance
+                    and type(fireclickdetector)=="function" then pcall(fireclickdetector,click) end
+            end
+            task.wait(0.5)
+        end
+        if autoVivo(g,c) then
+            L.espera[e.obj]=os.clock()+20
+            print("[DEBUG-LUCKY]: Visita encerrada; abertura/coleta depende do mecanismo do bloco.")
+        end
+    end
+    local function ligar()
+        if L.ligado then return end
+        L.ligado=true
+        L.geracao=L.geracao+1
+        L.scanEm=0
+        local g=L.geracao
+        L.gui=Instance.new("Folder")
+        L.gui.Name="FarmaLuckyMarcadores"
+        L.gui.Parent=ScreenGui
+        detectar.Text="LUCKY BLOCKS: ON"
+        L.fase="BUSCA COMPLETA"
+        table.insert(L.conns,workspace.DescendantAdded:Connect(function(obj)
+            if nomeLucky(obj.Name) or obj:IsA("ProximityPrompt") then L.scanEm=0 end
+        end))
+        table.insert(L.conns,Chat.MessageReceived:Connect(function(msg)
+            if nomeLucky(msg.Text) then
+                L.aviso="Chat: "..msg.Text:sub(1,160)
+                L.scanEm=0
+                print("[DEBUG-LUCKY]: Aviso observado; refazendo busca:",msg.Text)
+            end
+        end))
+        task.spawn(function()
+            while vivo(g) do
+                local ok,err=pcall(function()
+                    if os.clock()>=L.scanEm then varrer(g) end
+                    if vivo(g) then listar() end
+                end)
+                if not ok then warn("[DEBUG-LUCKY]: Busca:",err) end
+                task.wait(0.5)
+            end
+        end)
+    end
+    local function iniciarAuto()
+        if L.auto then return end
+        if GS.pararFarmaFrascos then GS.pararFarmaFrascos() end
+        ligar()
+        local _,hum=personagem()
+        L.salvo={fly=flyAtivado,voo=velocidadeVoo,speed=speedAtivado,walk=hum and hum.WalkSpeed or 16}
+        if speedAtivado then alternarSpeed() end
+        L.auto=true
+        L.ciclo=L.ciclo+1
+        local g,c=L.geracao,L.ciclo
+        automatico.Text="AUTO LUCKY: ON · 90"
+        task.spawn(function()
+            while autoVivo(g,c) do
+                local ok,err=pcall(function()
+                    local alvo
+                    for _,e in ipairs(listar()) do
+                        if (L.espera[e.obj] or 0)<=os.clock() then alvo=e; break end
+                    end
+                    if alvo then
+                        L.alvo=alvo.obj
+                        buscarAlvo(alvo,g,c)
+                    else L.fase="AGUARDANDO LUCKY BLOCK" end
+                end)
+                if not autoVivo(g,c) then break end
+                L.alvo=nil
+                if not ok then
+                    warn("[DEBUG-LUCKY]: Movimento:",err)
+                    GS.farmaDirecao=nil
+                    if flyAtivado then alternarFly() end
+                end
+                task.wait(0.5)
+            end
+        end)
+    end
+    local function desligar()
+        pararAuto()
+        L.ligado=false
+        L.geracao=L.geracao+1
+        for _,conn in ipairs(L.conns) do conn:Disconnect() end
+        table.clear(L.conns)
+        table.clear(L.itens)
+        if L.gui then L.gui:Destroy(); L.gui=nil end
+        detectar.Text="LUCKY BLOCKS: OFF"
+        L.fase="DESLIGADO"
+        info.Text="Busca Lucky Block desligada."
+    end
+    GS.pararFarmaLucky=pararAuto
+    detectar.MouseButton1Click:Connect(function()
+        if L.ligado then desligar() else ligar() end
+    end)
+    automatico.MouseButton1Click:Connect(function()
+        if L.auto then pararAuto() else iniciarAuto() end
+    end)
+    busca.MouseButton1Click:Connect(function()
+        ligar()
+        L.scanEm=0
+        L.fase="REFAZENDO BUSCA COMPLETA"
+    end)
+    ScreenGui.Destroying:Connect(desligar)
+end
+GS.rodar("Farma Lucky Block",GS.iniciarFarmaLucky,GS.painelFarma)
+
 
 -- ═══════════════════════════════════════════════════════════════
 --   ESCUDO ANTI-MONSTRO — NENHUM MONSTRO ENCOSTA EM VOCE
