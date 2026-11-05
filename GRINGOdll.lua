@@ -5959,9 +5959,63 @@ GS.rodar("Rastreio", GS.iniciarRastreio, GS.painelRastrear)
 -- ═══════════════════════════════════════════════════════════════
 --   FARMA BOT — coleta local para playtest
 -- ═══════════════════════════════════════════════════════════════
+GS.prepararTelaFarma = function()
+    local U,painel=GS.ui,GS.painelFarma
+    if not U or not painel then return end
+    local layout=painel:FindFirstChildOfClass("UIListLayout")
+    if layout then layout.Padding=UDim.new(0,6) end
+    local barra=Instance.new("Frame")
+    barra.Name="ModosFarma"
+    barra.Size=UDim2.new(1,0,0,36)
+    barra.LayoutOrder=-1
+    barra.BackgroundTransparency=1
+    barra.Parent=painel
+    local botoes,telas={},{}
+    local nomes={"Frascos","Lucky Blocks","Por nome"}
+    local function selecionar(indice)
+        for i,tela in ipairs(telas) do
+            tela.Visible=i==indice
+            botoes[i].BackgroundTransparency=i==indice and 0.2 or 0.8
+            botoes[i].TextColor3=i==indice and U.T.text or U.T.mute
+        end
+        local scroll=painel.Parent
+        if scroll and scroll:IsA("ScrollingFrame") then scroll.CanvasPosition=Vector2.zero end
+    end
+    for i,nome in ipairs(nomes) do
+        local tela=Instance.new("Frame")
+        tela.Name="Farma"..i
+        tela.BackgroundTransparency=1
+        tela.Size=UDim2.new(1,0,0,0)
+        tela.AutomaticSize=Enum.AutomaticSize.Y
+        tela.LayoutOrder=i
+        tela.Parent=painel
+        local lista=Instance.new("UIListLayout",tela)
+        lista.Padding=UDim.new(0,6)
+        lista.SortOrder=Enum.SortOrder.LayoutOrder
+        local botao=Instance.new("TextButton")
+        botao.Size=UDim2.new(1/3,-4,1,0)
+        botao.Position=UDim2.new((i-1)/3,2,0,0)
+        botao.BackgroundColor3=U.T.on
+        botao.BorderSizePixel=0
+        botao.Font=Enum.Font.GothamBold
+        botao.TextSize=13
+        botao.Text=nome
+        botao.Parent=barra
+        U.mkC(10,botao)
+        telas[i]=tela
+        botoes[i]=botao
+        botao.MouseButton1Click:Connect(function() selecionar(i) end)
+    end
+    GS.painelFarmaFrascos=telas[1]
+    GS.painelFarmaLucky=telas[2]
+    GS.painelFarmaNome=telas[3]
+    selecionar(1)
+end
+GS.rodar("Layout Farma",GS.prepararTelaFarma,GS.painelFarma)
+
 GS.iniciarFarma = function()
     local U = GS.ui
-    local painel = GS.painelFarma
+    local painel = GS.painelFarmaFrascos or GS.painelFarma
     if not U or not painel then return end
 
     -- Configuracao exclusiva dos frascos; nenhum filtro por cor ou brilho.
@@ -6039,9 +6093,15 @@ GS.iniciarFarma = function()
         return label
     end
 
-    local resumo = texto("ResumoFarma", 110, 5)
-    local locais = texto("LocaisFarma", 150, 6)
+    local resumo = texto("ResumoFarma", 60, 5)
+    local locais = texto("LocaisFarma", 76, 6)
     local historico = texto("HistoricoFarma", 140, 7)
+    historico.Visible=false
+    local detalhes=U.pequeno(painel,"MOSTRAR HISTÓRICO",nil,6.5,"info")
+    detalhes.MouseButton1Click:Connect(function()
+        historico.Visible=not historico.Visible
+        detalhes.Text=historico.Visible and "OCULTAR HISTÓRICO" or "MOSTRAR HISTÓRICO"
+    end)
     resumo.Text = "Monitorar registra aparições. Automático ativa voo 90 e aproximação a pé."
     locais.Text = "Filtro exclusivo: PotionTemplate."
     historico.Text = "Histórico: aguardando ativação."
@@ -6267,7 +6327,7 @@ GS.iniciarFarma = function()
                 end
             end
             it.gui.Enabled = mostrar
-            if i <= 7 then
+            if i <= 3 then
                 linhas[i] = string.format("%d. %.0f studs · X %.0f Y %.0f Z %.0f",
                     i,it.distancia,it.pos.X,it.pos.Y,it.pos.Z)
             end
@@ -6480,6 +6540,7 @@ GS.iniciarFarma = function()
     local function iniciarAuto()
         if R.auto then return end
         if GS.pararFarmaLucky then GS.pararFarmaLucky() end
+        if GS.pararFarmaNome then GS.pararFarmaNome() end
         R.auto = true
         R.cicloAuto = R.cicloAuto+1
         local g,a = R.geracao,R.cicloAuto
@@ -6621,16 +6682,17 @@ GS.rodar("Farma Bot", GS.iniciarFarma, GS.painelFarma)
 
 -- Lucky Blocks: busca independente na mesma tela da farma de frascos.
 GS.iniciarFarmaLucky = function()
-    local U,painel = GS.ui,GS.painelFarma
+    local U,painel = GS.ui,GS.painelFarmaLucky or GS.painelFarma
     if not U or not painel then return end
     local Chat = game:GetService("TextChatService")
     local L = {
         ligado=false, auto=false, geracao=0, ciclo=0, itens={}, conns={},
         espera=setmetatable({}, {__mode="k"}), salvo=nil, gui=nil,
         aviso="Nenhum aviso observado.", candidatos={}, examinados=0,
-        scanEm=0, alvo=nil, fase="DESLIGADO",
+        scanEm=0, alvo=nil, fase="DESLIGADO", segurando=nil,
+        tentativas=0, interacoes=0, sinais=setmetatable({}, {__mode="k"}),
     }
-    U.sec(painel,"FARMA · LUCKY BLOCKS / REDFIRE","package",20)
+    U.sec(painel,"FARMA · FIRE LUCKY BLOCK · V2","package",20)
     local detectar = U.tog(painel,"PROCURAR LUCKY BLOCKS",21)
     detectar:SetAttribute("Controlado",true)
     detectar.Text="LUCKY BLOCKS: OFF"
@@ -6639,7 +6701,7 @@ GS.iniciarFarmaLucky = function()
     automatico.Text="AUTO LUCKY: OFF"
     local busca = U.acao(painel,"REFAZER BUSCA COMPLETA","scan-search",23)
     local info = Instance.new("TextLabel")
-    info.Size=UDim2.new(1,-16,0,210)
+    info.Size=UDim2.new(1,-16,0,130)
     info.LayoutOrder=24
     info.BackgroundTransparency=1
     info.TextColor3=U.T.text
@@ -6659,6 +6721,18 @@ GS.iniciarFarmaLucky = function()
         return n:find("luckyblock",1,true)~=nil
             or n:find("luckblock",1,true)~=nil
             or n:find("lockblock",1,true)~=nil
+    end
+    local function promptDe(obj)
+        for _,desc in ipairs(obj:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") and nomeLucky(desc.ObjectText) then return desc end
+        end
+    end
+    local function posPrompt(prompt,base)
+        local pai=prompt and prompt.Parent
+        if pai and pai:IsA("Attachment") then return pai.WorldPosition end
+        if pai and pai:IsA("BasePart") then return pai.Position end
+        if pai and pai:IsA("Model") then return pai:GetPivot().Position end
+        return base.Position
     end
     local function personagem()
         local char=LocalPlayer.Character
@@ -6686,8 +6760,10 @@ GS.iniciarFarmaLucky = function()
     end
     local function avaliar(obj)
         local alvo=obj
+        local prompt
         local corresponde=nomeLucky(obj.Name)
         if obj:IsA("ProximityPrompt") then
+            prompt=obj
             corresponde=corresponde or nomeLucky(obj.ObjectText)
             alvo=obj.Parent
             if alvo and alvo:IsA("Attachment") then alvo=alvo.Parent end
@@ -6711,10 +6787,14 @@ GS.iniciarFarmaLucky = function()
         local base=parte(alvo)
         if not base then return end
         if alvo:IsA("Model") and alvo:GetExtentsSize().Magnitude>60 then return end
-        return alvo,base
+        prompt=prompt or promptDe(alvo)
+        return alvo,base,prompt
     end
-    local function adicionar(obj,base)
-        if L.itens[obj] then return end
+    local function adicionar(obj,base,prompt)
+        if L.itens[obj] then
+            if prompt then L.itens[obj].prompt=prompt end
+            return
+        end
         for outro,it in pairs(L.itens) do
             if obj:IsDescendantOf(outro) then return end
             if outro:IsDescendantOf(obj) then it.gui:Destroy(); L.itens[outro]=nil end
@@ -6738,7 +6818,7 @@ GS.iniciarFarmaLucky = function()
         label.TextWrapped=true
         label.Parent=gui
         Instance.new("UICorner",label).CornerRadius=UDim.new(0,8)
-        L.itens[obj]={base=base,gui=gui,label=label}
+        L.itens[obj]={base=base,gui=gui,label=label,prompt=prompt}
         print("[DEBUG-LUCKY]: Encontrado",obj:GetFullName())
     end
     local function varrer(g)
@@ -6749,8 +6829,8 @@ GS.iniciarFarmaLucky = function()
         for i,obj in ipairs(workspace:GetDescendants()) do
             if not vivo(g) then return end
             L.examinados=i
-            local ok,alvo,base=pcall(avaliar,obj)
-            if ok and alvo then adicionar(alvo,base) end
+            local ok,alvo,base,prompt=pcall(avaliar,obj)
+            if ok and alvo then adicionar(alvo,base,prompt) end
             local n=normalizar(obj.Name)
             if #L.candidatos<5 and (n:find("redfire",1,true) or n:find("lucky",1,true))
                 and not nomes[obj.Name] and (obj:IsA("Model") or obj:IsA("BasePart")) then
@@ -6760,6 +6840,7 @@ GS.iniciarFarmaLucky = function()
             if i%300==0 then task.wait() end
         end
         print("[DEBUG-LUCKY]: Busca completa:",L.examinados,"objetos examinados")
+        if vivo(g) then L.scanEm=os.clock()+5 end
     end
     local function listar()
         local _,_,root=personagem()
@@ -6773,16 +6854,20 @@ GS.iniciarFarmaLucky = function()
                 if base then
                     it.base=base
                     it.gui.Adornee=base
-                    table.insert(lista,{obj=obj,it=it,d=root and (root.Position-base.Position).Magnitude or math.huge})
+                    if not it.prompt or not it.prompt:IsDescendantOf(obj) then it.prompt=promptDe(obj) end
+                    it.nome=it.prompt and it.prompt.ObjectText~="" and it.prompt.ObjectText or obj.Name
+                    it.pos=posPrompt(it.prompt,base)
+                    table.insert(lista,{obj=obj,it=it,d=root and (root.Position-it.pos).Magnitude or math.huge})
                 end
             end
         end
         table.sort(lista,function(a,b) return a.d<b.d end)
-        local linhas={L.fase.." | Examinados: "..L.examinados.." | Blocos: "..#lista,L.aviso}
+        local linhas={L.fase.." | Examinados: "..L.examinados.." | Blocos: "..#lista,
+            "Tentativas: "..L.tentativas.." | Interações observadas: "..L.interacoes,L.aviso}
         local camera=workspace.CurrentCamera
         local ocupados={}
         for i,e in ipairs(lista) do
-            e.it.label.Text=string.format("%s\n%.0f studs",e.obj.Name,e.d)
+            e.it.label.Text=string.format("%s\n%.0f studs",e.it.nome,e.d)
             local mostrar=false
             if camera and #ocupados<6 then
                 local tela,visivel=camera:WorldToViewportPoint(e.it.base.Position+Vector3.new(0,3,0))
@@ -6795,7 +6880,7 @@ GS.iniciarFarmaLucky = function()
                 end
             end
             e.it.gui.Enabled=mostrar
-            if i<=4 then table.insert(linhas,string.format("%s · %.0f studs",e.obj.Name,e.d)) end
+            if i<=4 then table.insert(linhas,string.format("%s · %.0f studs",e.it.nome,e.d)) end
         end
         if #lista==0 then
             table.insert(linhas,"Nenhum bloco identificado entre os objetos carregados.")
@@ -6810,6 +6895,11 @@ GS.iniciarFarmaLucky = function()
     end
     local function restaurar()
         if not L.salvo then return end
+        if L.segurando then
+            pcall(function() L.segurando:InputHoldEnd() end)
+            L.segurando=nil
+        end
+        L.holdToken=nil
         GS.farmaDirecao=nil
         if flyAtivado then alternarFly() end
         local salvo=L.salvo
@@ -6830,21 +6920,100 @@ GS.iniciarFarmaLucky = function()
         automatico.Text="AUTO LUCKY: OFF"
         L.fase="MONITORANDO LUCKY"
     end
+    local function segurarPrompt(e,prompt,g,c)
+        local _,hum,root=personagem()
+        if not hum or not prompt.Enabled then return false end
+        if (root.Position-posPrompt(prompt,e.it.base)).Magnitude>prompt.MaxActivationDistance then return false end
+        local disparou=false
+        local conn=prompt.Triggered:Connect(function(player)
+            if player==LocalPlayer and autoVivo(g,c) then
+                disparou=true
+                L.interacoes=L.interacoes+1
+                print("[DEBUG-LUCKY]: Interação observada:",prompt.ObjectText)
+            end
+        end)
+        L.tentativas=L.tentativas+1
+        local token={}
+        L.holdToken=token
+        L.segurando=prompt
+        hum:MoveTo(root.Position)
+        local ok,err=pcall(function()
+            prompt:InputHoldBegin()
+            local duracao=prompt.HoldDuration
+            local inicio=os.clock()
+            while autoVivo(g,c) and prompt.Parent and prompt.Enabled do
+                local _,atual,raiz=personagem()
+                if atual~=hum then break end
+                if (raiz.Position-posPrompt(prompt,e.it.base)).Magnitude>prompt.MaxActivationDistance then break end
+                L.fase=string.format("ABRINDO %s · %.0f%%",prompt.ObjectText,
+                    math.min(100,100*(os.clock()-inicio)/math.max(duracao,0.05)))
+                if disparou or os.clock()-inicio>=duracao+0.3 then break end
+                task.wait(0.05)
+            end
+        end)
+        if L.holdToken==token then
+            pcall(function() prompt:InputHoldEnd() end)
+            L.segurando=nil
+            L.holdToken=nil
+        end
+        if ok and autoVivo(g,c) then
+            local fim=os.clock()+1
+            while autoVivo(g,c) and not disparou and prompt.Parent and os.clock()<fim do task.wait(0.05) end
+        end
+        conn:Disconnect()
+        if not ok then warn("[DEBUG-LUCKY]: Interação:",err) end
+        return disparou
+    end
+    local function aproximar(e,g,c)
+        local _,hum,root=personagem()
+        if not hum then return end
+        local destino=posPrompt(e.it.prompt,e.it.base)
+        if (root.Position-destino).Magnitude<=8 then return end
+        local path=game:GetService("PathfindingService"):CreatePath({
+            AgentRadius=2,AgentHeight=5,AgentCanJump=true,
+        })
+        local ok=pcall(function() path:ComputeAsync(root.Position,destino) end)
+        local fim=os.clock()+12
+        if ok and autoVivo(g,c) and path.Status==Enum.PathStatus.Success then
+            for _,ponto in ipairs(path:GetWaypoints()) do
+                if not autoVivo(g,c) or not e.obj:IsDescendantOf(workspace) or os.clock()>fim then break end
+                if (root.Position-destino).Magnitude<6 then break end
+                if ponto.Action==Enum.PathWaypointAction.Jump then hum.Jump=true end
+                hum:MoveTo(ponto.Position)
+                local prazo=os.clock()+1.5
+                while autoVivo(g,c) and root.Parent and os.clock()<math.min(prazo,fim) do
+                    if hum.Health<=0 or (root.Position-ponto.Position).Magnitude<3 then break end
+                    task.wait(0.08)
+                end
+                if not root.Parent or hum.Health<=0 then break end
+            end
+        end
+        path:Destroy()
+    end
     local function buscarAlvo(e,g,c)
         local _,hum,root=personagem()
         if not hum then return end
-        L.fase="INDO ATÉ "..e.obj.Name
+        L.fase="INDO ATÉ "..(e.it.nome or e.obj.Name)
         velocidadeVoo=90
         FlyLabel.Text="VOO: 90"
         GS.farmaDirecao=Vector3.zero
         if not flyAtivado then alternarFly() end
         local inicio=os.clock()
+        local ultimaDist=math.huge
+        local progresso=os.clock()
         while autoVivo(g,c) and e.obj:IsDescendantOf(workspace) and os.clock()-inicio<20 do
             local _,atual,raiz=personagem()
             local base=parte(e.obj)
             if atual~=hum or not base or raiz.Anchored then break end
-            local delta=base.Position+Vector3.new(0,2,0)-raiz.Position
+            local delta=posPrompt(e.it.prompt,base)+Vector3.new(0,2,0)-raiz.Position
             if delta.Magnitude<10 then break end
+            if delta.Magnitude<ultimaDist-1 then
+                ultimaDist=delta.Magnitude
+                progresso=os.clock()
+            elseif os.clock()-progresso>3 then
+                print("[DEBUG-LUCKY]: Obstáculo no voo; tentando rota a pé.")
+                break
+            end
             GS.farmaDirecao=delta.Unit*math.clamp(delta.Magnitude/10,0,1)
             task.wait(0.05)
         end
@@ -6853,17 +7022,31 @@ GS.iniciarFarmaLucky = function()
         if flyAtivado then alternarFly() end
         root.AssemblyLinearVelocity=Vector3.zero
         hum.WalkSpeed=16
+        aproximar(e,g,c)
+        if not autoVivo(g,c) then return end
         inicio=os.clock()
+        local confirmou=false
         while autoVivo(g,c) and e.obj:IsDescendantOf(workspace) and os.clock()-inicio<12 do
             local _,atual,raiz=personagem()
             local base=parte(e.obj)
             if atual~=hum or not base then return end
-            hum:MoveTo(base.Position)
-            local d=(raiz.Position-base.Position).Magnitude
+            local prompt=e.it.prompt
+            if not prompt or not prompt.Parent then
+                prompt=promptDe(e.obj)
+                e.it.prompt=prompt
+            end
+            local pos=posPrompt(prompt,base)
+            local d=(raiz.Position-pos).Magnitude
+            -- Pequenas mudanças de lado ajudam quando o personagem encosta no bloco.
+            local angulo=(os.clock()-inicio)*1.2
+            local deslocamento=Vector3.new(math.cos(angulo),0,math.sin(angulo))*1.5
+            hum:MoveTo(pos+deslocamento)
             if d<=8 then
-                local prompt=e.obj:FindFirstChildWhichIsA("ProximityPrompt",true)
-                if prompt and prompt.Enabled and d<=prompt.MaxActivationDistance
-                    and type(fireproximityprompt)=="function" then pcall(fireproximityprompt,prompt) end
+                if prompt and prompt.Enabled and d<=prompt.MaxActivationDistance then
+                    confirmou=segurarPrompt(e,prompt,g,c)
+                    if confirmou then break end
+                end
+                if not autoVivo(g,c) then return end
                 local click=e.obj:FindFirstChildWhichIsA("ClickDetector",true)
                 if click and d<=click.MaxActivationDistance
                     and type(fireclickdetector)=="function" then pcall(fireclickdetector,click) end
@@ -6871,8 +7054,9 @@ GS.iniciarFarmaLucky = function()
             task.wait(0.5)
         end
         if autoVivo(g,c) then
-            L.espera[e.obj]=os.clock()+20
-            print("[DEBUG-LUCKY]: Visita encerrada; abertura/coleta depende do mecanismo do bloco.")
+            L.espera[e.obj]=os.clock()+(confirmou and 45 or 15)
+            L.fase=confirmou and "INTERAÇÃO OBSERVADA · PRÓXIMO BLOCO" or "AGUARDANDO NOVA TENTATIVA"
+            print("[DEBUG-LUCKY]: Visita encerrada. Interação observada:",confirmou)
         end
     end
     local function ligar()
@@ -6887,7 +7071,14 @@ GS.iniciarFarmaLucky = function()
         detectar.Text="LUCKY BLOCKS: ON"
         L.fase="BUSCA COMPLETA"
         table.insert(L.conns,workspace.DescendantAdded:Connect(function(obj)
-            if nomeLucky(obj.Name) or obj:IsA("ProximityPrompt") then L.scanEm=0 end
+            if nomeLucky(obj.Name) or obj:IsA("ProximityPrompt") then
+                L.scanEm=0
+                task.defer(function()
+                    if not vivo(g) then return end
+                    local ok,alvo,base,prompt=pcall(avaliar,obj)
+                    if ok and alvo then adicionar(alvo,base,prompt) end
+                end)
+            end
         end))
         table.insert(L.conns,Chat.MessageReceived:Connect(function(msg)
             if nomeLucky(msg.Text) then
@@ -6910,6 +7101,7 @@ GS.iniciarFarmaLucky = function()
     local function iniciarAuto()
         if L.auto then return end
         if GS.pararFarmaFrascos then GS.pararFarmaFrascos() end
+        if GS.pararFarmaNome then GS.pararFarmaNome() end
         ligar()
         local _,hum=personagem()
         L.salvo={fly=flyAtivado,voo=velocidadeVoo,speed=speedAtivado,walk=hum and hum.WalkSpeed or 16}
@@ -6968,6 +7160,381 @@ GS.iniciarFarmaLucky = function()
     ScreenGui.Destroying:Connect(desligar)
 end
 GS.rodar("Farma Lucky Block",GS.iniciarFarmaLucky,GS.painelFarma)
+
+-- Navegacao por nome interno exato, independente das duas farmas.
+GS.iniciarFarmaNome=function()
+    local U,painel=GS.ui,GS.painelFarmaNome
+    if not U or not painel then return end
+    local N={mostrar=false,auto=false,geracao=0,ciclo=0,reg={},conns={},marcas={},salvo=nil,
+        alvo=nil,proxima=0,ultimoScan=0,sujo=true,segurando=nil,pagina=1,paginas=1,
+        espera=setmetatable({}, {__mode="k"})}
+    U.sec(painel,"EXPLORAR MODELOS E PEÇAS","scan-search",1)
+    local mostrar=U.tog(painel,"MOSTRAR NOMES NO MAPA",2)
+    mostrar:SetAttribute("Controlado",true)
+    mostrar.Text="NOMES: OFF"
+    local campo=U.inp(painel,"Nome interno exato · ex.: PotionTemplate",3)
+    local ir=U.tog(painel,"IR ATRÁS DO NOME EXATO",4)
+    ir:SetAttribute("Controlado",true)
+    ir.Text="SEGUIR NOME: OFF"
+    local estado=U.pequeno(painel,"Ative os nomes e clique em um resultado.",nil,5,"info")
+    estado.AutoButtonColor=false
+    local lista=Instance.new("ScrollingFrame")
+    lista.Name="ListaNomes"
+    lista.Size=UDim2.new(1,0,0,128)
+    lista.BackgroundColor3=U.T.bg
+    lista.BackgroundTransparency=0.35
+    lista.BorderSizePixel=0
+    lista.ScrollBarThickness=4
+    lista.ScrollBarImageColor3=U.T.strokeHi
+    lista.CanvasSize=UDim2.fromOffset(0,0)
+    lista.AutomaticCanvasSize=Enum.AutomaticSize.Y
+    lista.LayoutOrder=6
+    lista.Parent=painel
+    U.mkC(10,lista)
+    local layout=Instance.new("UIListLayout",lista)
+    layout.Padding=UDim.new(0,4)
+    layout.SortOrder=Enum.SortOrder.LayoutOrder
+    local linhas={}
+    local paginador=Instance.new("Frame")
+    paginador.Size=UDim2.new(1,0,0,30)
+    paginador.LayoutOrder=7
+    paginador.BackgroundTransparency=1
+    paginador.Parent=painel
+    for i,titulo in ipairs({"Anterior","Próxima"}) do
+        local b=Instance.new("TextButton")
+        b.Size=UDim2.new(0.5,-3,1,0)
+        b.Position=UDim2.new((i-1)*0.5,0,0,0)
+        b.BackgroundColor3=U.T.card
+        b.BackgroundTransparency=0.3
+        b.Font=Enum.Font.GothamMedium
+        b.TextSize=12
+        b.TextColor3=U.T.text
+        b.Text=titulo
+        b.Parent=paginador
+        U.mkC(6,b)
+        b.MouseButton1Click:Connect(function()
+            N.pagina=math.clamp(N.pagina+(i==1 and -1 or 1),1,N.paginas)
+        end)
+    end
+    for i=1,30 do
+        local b=Instance.new("TextButton")
+        b.Size=UDim2.new(1,-8,0,28)
+        b.BackgroundColor3=U.T.card
+        b.BackgroundTransparency=0.3
+        b.Font=Enum.Font.GothamMedium
+        b.TextSize=12
+        b.TextColor3=U.T.text
+        b.TextXAlignment=Enum.TextXAlignment.Left
+        b.TextTruncate=Enum.TextTruncate.AtEnd
+        b.LayoutOrder=i
+        b.Visible=false
+        b.Parent=lista
+        U.mkC(6,b)
+        b.MouseButton1Click:Connect(function()
+            if b:GetAttribute("NomeExato") then campo.Text=b:GetAttribute("NomeExato") end
+        end)
+        linhas[i]=b
+    end
+    local function personagem()
+        local char=LocalPlayer.Character
+        local h=char and char:FindFirstChildOfClass("Humanoid")
+        local r=char and char:FindFirstChild("HumanoidRootPart")
+        if h and r and h.Health>0 then return char,h,r end
+    end
+    local function parte(obj)
+        if obj:IsA("BasePart") then return obj end
+        if obj:IsA("Model") and obj.PrimaryPart then return obj.PrimaryPart end
+        return obj:FindFirstChildWhichIsA("BasePart",true)
+    end
+    local function jogador(obj)
+        local pai=obj
+        while pai and pai~=workspace do
+            if pai:IsA("Model") and pai:FindFirstChildOfClass("Humanoid") then return true end
+            pai=pai.Parent
+        end
+        return false
+    end
+    local function vivo(g)
+        return N.mostrar and N.geracao==g and ScreenGui.Parent~=nil
+    end
+    local function ativo(g,c)
+        return vivo(g) and N.auto and N.ciclo==c
+    end
+    local function scan(g)
+        N.sujo=false
+        N.ultimoScan=os.clock()
+        local atual={}
+        for i,obj in ipairs(workspace:GetDescendants()) do
+            if not vivo(g) then return end
+            if (obj:IsA("Model") or obj:IsA("Tool") or obj:IsA("BasePart")) and not jogador(obj) then
+                local p=parte(obj)
+                if p then atual[obj]={parte=p,nome=obj.Name} end
+            end
+            if i%300==0 then task.wait() end
+        end
+        if vivo(g) then N.reg=atual end
+    end
+    local function resultados()
+        local _,_,root=personagem()
+        local busca=string.lower(campo.Text)
+        local nomes,proximos={},{}
+        for obj,it in pairs(N.reg) do
+            if obj.Parent and obj:IsDescendantOf(workspace) and it.parte:IsDescendantOf(workspace)
+                and not jogador(obj) then
+                it.nome=obj.Name
+                if busca=="" or string.find(string.lower(it.nome),busca,1,true) then
+                    local d=root and (root.Position-it.parte.Position).Magnitude or math.huge
+                    local atual=nomes[it.nome]
+                    if not atual then nomes[it.nome]={nome=it.nome,n=1,d=d}
+                    else atual.n=atual.n+1; atual.d=math.min(atual.d,d) end
+                    if #proximos<10 or d<proximos[#proximos].d then
+                        table.insert(proximos,{obj=obj,it=it,d=d})
+                        table.sort(proximos,function(a,b) return a.d<b.d end)
+                        if #proximos>10 then table.remove(proximos) end
+                    end
+                end
+            end
+        end
+        local unicos={}
+        for _,nome in pairs(nomes) do table.insert(unicos,nome) end
+        table.sort(unicos,function(a,b)
+            if a.d==b.d then return a.nome<b.nome end
+            return a.d<b.d
+        end)
+        return unicos,proximos
+    end
+    local function marcador(e)
+        local m=N.marcas[e.obj]
+        if m then return m end
+        local gui=Instance.new("BillboardGui")
+        gui.Name="NomeModelo"
+        gui.Size=UDim2.fromOffset(186,34)
+        gui.StudsOffsetWorldSpace=Vector3.new(0,2.5,0)
+        gui.MaxDistance=0
+        gui.AlwaysOnTop=true
+        gui.Parent=ScreenGui
+        local l=Instance.new("TextLabel",gui)
+        l.Size=UDim2.fromScale(1,1)
+        l.BackgroundColor3=U.T.bg
+        l.BackgroundTransparency=0.2
+        l.Font=Enum.Font.GothamBold
+        l.TextSize=12
+        l.TextColor3=U.T.strokeHi
+        l.TextWrapped=true
+        U.mkC(8,l)
+        m={gui=gui,label=l}
+        N.marcas[e.obj]=m
+        return m
+    end
+    local function atualizar()
+        local nomes,proximos=resultados()
+        N.paginas=math.max(1,math.ceil(#nomes/30))
+        N.pagina=math.clamp(N.pagina,1,N.paginas)
+        for i,b in ipairs(linhas) do
+            local e=nomes[(N.pagina-1)*30+i]
+            b.Visible=e~=nil
+            if e then
+                b.Text=string.format("  %s · %d objetos · %.0f st",e.nome,e.n,e.d)
+                b:SetAttribute("NomeExato",e.nome)
+            end
+        end
+        local usados,ocupados={},{}
+        local cam=workspace.CurrentCamera
+        for _,e in ipairs(proximos) do
+            if cam then
+                local p,visivel=cam:WorldToViewportPoint(e.it.parte.Position+Vector3.new(0,2.5,0))
+                if visivel and p.Z>0 then
+                    for _,v in ipairs(ocupados) do
+                        if math.abs(p.X-v.X)<196 and math.abs(p.Y-v.Y)<40 then visivel=false; break end
+                    end
+                    if visivel then
+                        local m=marcador(e)
+                        m.gui.Adornee=e.it.parte
+                        m.label.Text=string.format("%s\n%.0f studs",e.obj.Name,e.d)
+                        usados[e.obj]=true
+                        table.insert(ocupados,p)
+                    end
+                end
+            end
+        end
+        for obj,m in pairs(N.marcas) do
+            if not usados[obj] then m.gui:Destroy(); N.marcas[obj]=nil end
+        end
+        if not N.auto then
+            estado.Text=string.format("%d nomes · página %d/%d. Digite para filtrar; clique para selecionar.",
+                #nomes,N.pagina,N.paginas)
+        end
+    end
+    local function pararAuto()
+        if not N.auto and not N.salvo then return end
+        N.auto=false
+        N.ciclo=N.ciclo+1
+        N.alvo=nil
+        if N.segurando then pcall(function() N.segurando:InputHoldEnd() end); N.segurando=nil end
+        GS.farmaDirecao=nil
+        if flyAtivado then alternarFly() end
+        if N.salvo then
+            velocidadeVoo=N.salvo.voo
+            FlyLabel.Text="VOO: "..velocidadeVoo
+            if speedAtivado~=N.salvo.speed then alternarSpeed() end
+            if N.salvo.fly then alternarFly() end
+            local _,h,r=personagem()
+            if h then h.WalkSpeed=N.salvo.walk; h:MoveTo(r.Position) end
+        end
+        N.salvo=nil
+        ir.Text="SEGUIR NOME: OFF"
+    end
+    local function ligar()
+        if N.mostrar then return end
+        N.mostrar=true
+        N.geracao=N.geracao+1
+        N.sujo=true
+        local g=N.geracao
+        mostrar.Text="NOMES: ON"
+        table.insert(N.conns,workspace.DescendantAdded:Connect(function() N.sujo=true end))
+        task.spawn(function()
+            while vivo(g) do
+                local ok,err=pcall(function()
+                    if os.clock()-N.ultimoScan>4 or (N.sujo and os.clock()-N.ultimoScan>1) then scan(g) end
+                    if vivo(g) then atualizar() end
+                end)
+                if not ok then warn("[DEBUG-NOMES]:",err) end
+                task.wait(0.5)
+            end
+        end)
+    end
+    local function selecionar(nome)
+        local _,_,root=personagem()
+        if not root then return end
+        local escolhido,distancia
+        for obj,it in pairs(N.reg) do
+            if obj.Name==nome and obj:IsDescendantOf(workspace) and not jogador(obj)
+                and it.parte:IsDescendantOf(workspace) and (N.espera[obj] or 0)<=os.clock() then
+                local d=(it.parte.Position-root.Position).Magnitude
+                if not distancia or d<distancia then escolhido={obj=obj,parte=it.parte}; distancia=d end
+            end
+        end
+        return escolhido
+    end
+    local function perseguir(e,g,c)
+        local _,hum,root=personagem()
+        if not hum then return end
+        velocidadeVoo=90
+        FlyLabel.Text="VOO: 90"
+        GS.farmaDirecao=Vector3.zero
+        if not flyAtivado then alternarFly() end
+        local inicio=os.clock()
+        while ativo(g,c) and e.obj:IsDescendantOf(workspace) and e.parte.Parent and os.clock()-inicio<20 do
+            local _,atual,raiz=personagem()
+            if atual~=hum or raiz.Anchored then break end
+            local delta=e.parte.Position+Vector3.new(0,2,0)-raiz.Position
+            if delta.Magnitude<9 then break end
+            estado.Text="INDO ATÉ "..e.obj.Name
+            GS.farmaDirecao=delta.Unit*math.clamp(delta.Magnitude/10,0,1)
+            task.wait(0.05)
+        end
+        if not ativo(g,c) then return end
+        GS.farmaDirecao=nil
+        if flyAtivado then alternarFly() end
+        local _,h,r=personagem()
+        if h~=hum then return end
+        r.AssemblyLinearVelocity=Vector3.zero
+        h.WalkSpeed=16
+        inicio=os.clock()
+        while ativo(g,c) and e.obj:IsDescendantOf(workspace) and e.parte.Parent and os.clock()-inicio<8 do
+            local _,atual,raiz=personagem()
+            if atual~=hum then return end
+            estado.Text="APROXIMANDO: "..e.obj.Name
+            hum:MoveTo(e.parte.Position)
+            local prompt=e.obj:FindFirstChildWhichIsA("ProximityPrompt",true)
+            if prompt and prompt.Enabled then
+                local p=prompt.Parent
+                local pos=p:IsA("Attachment") and p.WorldPosition or (p:IsA("BasePart") and p.Position or e.parte.Position)
+                if (raiz.Position-pos).Magnitude<=prompt.MaxActivationDistance then
+                    hum:MoveTo(raiz.Position)
+                    local ok,err=pcall(function()
+                        N.segurando=prompt
+                        prompt:InputHoldBegin()
+                        local fim=os.clock()+prompt.HoldDuration+0.2
+                        while ativo(g,c) and prompt.Parent and os.clock()<fim do task.wait(0.05) end
+                    end)
+                    if ativo(g,c) and N.segurando==prompt then
+                        pcall(function() prompt:InputHoldEnd() end)
+                        N.segurando=nil
+                    end
+                    if not ok then warn("[DEBUG-NOMES]: Interação:",err) end
+                    break
+                end
+            elseif (raiz.Position-e.parte.Position).Magnitude<4 then
+                break
+            end
+            task.wait(0.15)
+        end
+        if ativo(g,c) then N.espera[e.obj]=os.clock()+15 end
+    end
+    local function iniciarAuto()
+        local nome=campo.Text
+        if nome=="" then estado.Text="Digite ou selecione um nome exato antes de seguir."; return end
+        if N.auto then return end
+        if GS.pararFarmaFrascos then GS.pararFarmaFrascos() end
+        if GS.pararFarmaLucky then GS.pararFarmaLucky() end
+        ligar()
+        local _,h=personagem()
+        N.salvo={fly=flyAtivado,voo=velocidadeVoo,speed=speedAtivado,walk=h and h.WalkSpeed or 16}
+        if speedAtivado then alternarSpeed() end
+        N.auto=true
+        N.ciclo=N.ciclo+1
+        local g,c=N.geracao,N.ciclo
+        ir.Text="SEGUIR NOME: ON"
+        print("[DEBUG-NOMES]: Alvo exato:",nome)
+        task.spawn(function()
+            while ativo(g,c) do
+                local ok,err=pcall(function()
+                    local e=selecionar(nome)
+                    if e then
+                        N.alvo=e.obj
+                        perseguir(e,g,c)
+                    else estado.Text="AGUARDANDO NOME EXATO: "..nome end
+                end)
+                if not ativo(g,c) then break end
+                N.alvo=nil
+                if not ok then
+                    warn("[DEBUG-NOMES]: Movimento:",err)
+                    GS.farmaDirecao=nil
+                    if flyAtivado then alternarFly() end
+                end
+                task.wait(0.5)
+            end
+        end)
+    end
+    local function desligar()
+        pararAuto()
+        N.mostrar=false
+        N.geracao=N.geracao+1
+        for _,conn in ipairs(N.conns) do conn:Disconnect() end
+        table.clear(N.conns)
+        table.clear(N.reg)
+        for _,m in pairs(N.marcas) do m.gui:Destroy() end
+        table.clear(N.marcas)
+        for _,b in ipairs(linhas) do b.Visible=false end
+        mostrar.Text="NOMES: OFF"
+        estado.Text="Ative para explorar os nomes dos objetos carregados."
+    end
+    GS.pararFarmaNome=pararAuto
+    mostrar.MouseButton1Click:Connect(function()
+        if N.mostrar then desligar() else ligar() end
+    end)
+    ir.MouseButton1Click:Connect(function()
+        if N.auto then pararAuto() else iniciarAuto() end
+    end)
+    campo:GetPropertyChangedSignal("Text"):Connect(function()
+        N.pagina=1
+        if N.auto then pararAuto() end
+    end)
+    ScreenGui.Destroying:Connect(desligar)
+end
+GS.rodar("Farma por nome",GS.iniciarFarmaNome,GS.painelFarmaNome)
+
 
 
 -- ═══════════════════════════════════════════════════════════════
