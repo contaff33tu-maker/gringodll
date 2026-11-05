@@ -4977,13 +4977,6 @@ do
 -- ═══════════════════════════════════════════════════════════════
 --   REGENERAR / RENASCER + ANTI-VOID (CODIGO BRUTO)
 -- ═══════════════════════════════════════════════════════════════
--- REGENERAR (tecla K): mata o proprio boneco pra renascer no spawn,
---   tentando TODOS os jeitos em sequencia ate um funcionar:
---   0. desliga INVENCIVEL (os hooks dele bloqueiam a morte) e solta
---      costas/braco; reativa o estado Dead
---   1. Health = 0      2. ChangeState(Dead)     3. BreakJoints()
---   4. arranca o pescoco/cabeca                  5. replicatesignal(Kill)
---   Se ainda assim nao morrer (jogo bloqueia), joga voce pro ultimo chao.
 -- VOLTAR PRO ULTIMO CHAO (tecla L): a cada 0.5s o script grava a
 --   ultima posicao em que voce estava pisando em chao de verdade.
 -- ANTI-VOID: se voce cair abaixo do chao salvo (ou perto da altura
@@ -5033,53 +5026,82 @@ end
 
 local function regenerar()
     if R.morrendo then return end
+    local char, root, hum = _rootEHum()
+    if not (char and root and hum) then
+        GS.toast("Espere seu personagem aparecer", false)
+        return
+    end
     R.morrendo = true
-    RegenUI.regenerar.Text = "♻  REGENERANDO..."
-
-    -- 0. tira tudo que segura o boneco vivo/preso
+    local destino = GS.resetMesmoLugar and root.CFrame or nil
+    local function informar(texto)
+        if not ScreenGui.Parent then return end
+        RegenUI.regenerar.Text = texto
+        if GS.resetStatus then GS.resetStatus.Text = texto end
+    end
+    informar("RENASCENDO · aguardando o servidor")
     pcall(function() if ghostAtivado then alternarGhost() end end)
     pcall(function() if GS.limparCarregar then GS.limparCarregar() end end)
     pcall(function() if flyAtivado then alternarFly() end end)
-    bypassHealthBlock = true
 
-    local char, root, hum = _rootEHum()
-    local personagemAntigo = char
-    local metodos = {
-        function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, true) hum.Health = 0 end,
-        function() hum:ChangeState(Enum.HumanoidStateType.Dead) end,
-        function() char:BreakJoints() end,
-        function()
-            for _, j in ipairs(char:GetDescendants()) do
-                if j:IsA("Motor6D") and (j.Name == "Neck" or j.Name == "Root" or j.Name == "RootJoint") then j:Destroy() end
-            end
-            local head = char:FindFirstChild("Head")
-            if head then head:Destroy() end
-        end,
-        function() if replicatesignal then replicatesignal(LocalPlayer.Kill) end end,
-    }
     task.spawn(function()
-        for i, metodo in ipairs(metodos) do
-            if not (char and char.Parent and hum) then break end
-            pcall(metodo)
-            print("[GRINGO REGEN] metodo " .. i .. " executado")
-            task.wait(0.4)
-            if hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.Dead then break end
-        end
+        bypassHealthBlock = true
+        pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, true) end)
+        pcall(function() hum.BreakJointsOnDeath = true end)
+        pcall(function() hum.Health = 0 end)
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Dead) end)
         bypassHealthBlock = false
-        -- espera ate 10s pelo personagem novo (RespawnTime do jogo)
-        local t0 = tick()
-        while tick() - t0 < 10 and LocalPlayer.Character == personagemAntigo do task.wait(0.2) end
-        R.morrendo = false
-        if LocalPlayer.Character ~= personagemAntigo then
-            RegenUI.regenerar.Text = "♻  REGENERADO!"
-        else
-            -- jogo bloqueou a morte: pelo menos tira voce do void
-            local ok = voltarProChao()
-            RegenUI.regenerar.Text = ok and "♻  JOGO BLOQUEOU — VOLTEI PRO CHÃO" or "♻  FALHOU (VEJA F9)"
+
+        task.wait(0.15)
+        if LocalPlayer.Character == char and hum.Parent and hum.Health > 0
+            and hum:GetState() ~= Enum.HumanoidStateType.Dead then
+            pcall(function() char:BreakJoints() end)
         end
-        task.delay(2, function() pcall(function() RegenUI.regenerar.Text = "♻  REGENERAR / RENASCER (TECLA K)" end) end)
+
+        local limite = os.clock() + math.max(15, Players.RespawnTime + 10)
+        local novoChar, novoRoot, novoHum
+        while ScreenGui.Parent and os.clock() < limite do
+            local atual, raiz, humanoide = _rootEHum()
+            if atual and atual ~= char and raiz and humanoide and humanoide.Health > 0 then
+                novoChar, novoRoot, novoHum = atual, raiz, humanoide
+                break
+            end
+            task.wait(0.05)
+        end
+        if not ScreenGui.Parent then R.morrendo = false return end
+        if not novoChar then
+            informar("O servidor não confirmou o renascimento")
+            GS.toast("O jogo não confirmou o reset. Tente Redefinir personagem pelo menu Roblox", false)
+            R.morrendo = false
+            return
+        end
+        if destino then
+            local ok = pcall(function()
+                novoHum.Sit = false
+                novoRoot.CFrame = destino
+                novoRoot.AssemblyLinearVelocity = Vector3.zero
+                novoRoot.AssemblyAngularVelocity = Vector3.zero
+            end)
+            task.wait(0.5)
+            if not ScreenGui.Parent then R.morrendo = false return end
+            if LocalPlayer.Character ~= novoChar or not novoRoot.Parent then
+                informar("O personagem mudou durante o retorno")
+            elseif ok and (novoRoot.Position - destino.Position).Magnitude < 8 then
+                informar("RENASCIDO · de volta ao mesmo lugar")
+            else
+                informar("RENASCIDO · o jogo bloqueou a volta ao lugar")
+            end
+        else
+            informar("RENASCIDO · no ponto de spawn")
+        end
+        R.morrendo = false
+        task.delay(2, function()
+            if ScreenGui.Parent and not R.morrendo then
+                RegenUI.regenerar.Text = "RENASCER (TECLA K)"
+            end
+        end)
     end)
 end
+GS.renascer = regenerar
 
 -- Grava o ultimo chao seguro + anti-void
 task.spawn(function()
@@ -5113,7 +5135,8 @@ RegenUI.antiVoid.MouseButton1Click:Connect(function()
     RegenUI.antiVoid.Text = R.antiVoid and "ANTI-VOID: ON" or "ANTI-VOID: OFF"
 end)
 UserInputService.InputBegan:Connect(function(input, gp)
-    if gp or escutandoTecla then return end
+    if gp or escutandoTecla or UserInputService:GetFocusedTextBox()
+        or (GS.retornoSeguro and GS.retornoSeguro.escolhendo) then return end
     if input.KeyCode == Enum.KeyCode.K then regenerar()
     elseif input.KeyCode == Enum.KeyCode.L then voltarProChao() end
 end)
@@ -10322,6 +10345,22 @@ GS.iniciarRetorno = function()
     local painel = GS.painelRetorno
     if not U or not painel then error("Painel de retorno indisponivel") end
 
+    GS.resetMesmoLugar = true
+    local resetGrupo = U.grupo(painel, "Renascer no mesmo lugar", "Tecla K · aguarda renascer e tenta voltar à posição anterior", "refresh-cw", 1.5)
+    local resetModo = U.tog(resetGrupo, "Voltar ao mesmo lugar após renascer", 1, "map-pin")
+    resetModo.Text = "MESMO LUGAR: ON"
+    local resetBotao = U.acao(resetGrupo, "MORRER / RENASCER AGORA (K)", "refresh-cw", 2)
+    GS.resetStatus = U.pequeno(resetGrupo, "Pronto · o tempo de renascer depende do jogo", nil, 3, "info")
+    GS.resetStatus.Active = false
+    GS.resetStatus.AutoButtonColor = false
+    resetModo.MouseButton1Click:Connect(function()
+        GS.resetMesmoLugar = not GS.resetMesmoLugar
+        resetModo.Text = GS.resetMesmoLugar and "MESMO LUGAR: ON" or "MESMO LUGAR: OFF"
+    end)
+    resetBotao.MouseButton1Click:Connect(function()
+        if GS.renascer then GS.renascer() end
+    end)
+
     local estado = { ativo = false, escolhendo = false, tecla = nil, destino = nil, ultimoUso = -math.huge, conns = {} }
     GS.retornoSeguro = estado
     local grupo = U.grupo(painel, "Retorno seguro", "Escolha a tecla e ative para salvar seu lugar atual", "map-pin", 2)
@@ -10436,8 +10475,8 @@ GS.iniciarRetorno = function()
                 teclaBtn.Text = estado.tecla and ("TECLA: " .. estado.tecla.Name) or "1. DEFINIR TECLA"
                 return
             end
-            if input.KeyCode == Enum.KeyCode.Unknown or input.KeyCode == teclaMenu then
-                GS.toast("Escolha uma tecla diferente da tecla do menu", false)
+            if input.KeyCode == Enum.KeyCode.Unknown or input.KeyCode == teclaMenu or input.KeyCode == Enum.KeyCode.K then
+                GS.toast("K é renascer. Escolha outra tecla para o retorno", false)
                 return
             end
             estado.tecla = input.KeyCode
