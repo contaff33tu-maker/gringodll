@@ -1,4 +1,4 @@
--- GRINGOdll V50.1 · Feito pelo @henrique_system
+-- GRINGOdll V50.3 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +29,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.1"
+GS.versao = "V50.3"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -6254,7 +6254,7 @@ GS.iniciarFarma = function()
         pausaErro = 12,
         correlacao = 8,
         intervaloScan = 3,
-        intervaloUI = 0.25,
+        intervaloUI = 0.15,
         maxHistorico = 60,
         maxMarcadores = 10,
     }
@@ -6565,7 +6565,8 @@ GS.iniciarFarma = function()
             or "Streaming desligado: novas aparições são observações locais."
         resumo.Text = string.format(
             "Iniciais: %d | Aparições: %d | Recebidos: %d | Retirados: %d\nApós coleta: %d | Durante movimento: %d\n%s",
-            R.carregados,R.nascimentos,R.coletados,R.retirados,R.depois,R.perto,limite)
+            R.carregados,R.nascimentos,R.coletados,R.retirados,R.depois,R.perto,
+            limite .. " | " .. (R.atividadeTexto or "Atividade: OFF"))
         local linhas = {}
         for i=1,math.min(6,#R.log) do linhas[i] = R.log[i] end
         historico.Text = table.concat(linhas,"\n")
@@ -6625,13 +6626,13 @@ GS.iniciarFarma = function()
     local Nav = {}
     Nav.cfg = {
         velocidade = 500,
-        velocidadePerto = 18,
-        freioSegundos = 0.18,
+        velocidadePerto = 65,
+        freioSegundos = 0.12,
         intervalo = 0.05,
         chegada = 1.5,
         raioVertical = 1.5,
         alturaElevada = 5,
-        alturaSobrevoo = 14,
+        alturaSobrevoo = 8,
         alturaExtra = 8,
         alturaPatrulha = 18,
         distanciaPouso = 2.5,
@@ -6650,9 +6651,9 @@ GS.iniciarFarma = function()
         distanciaReplanejar = 3,
         alturaSalto = 6,
         raioToque = 1.8,
-        cooldownBase = 6,
+        cooldownBase = 3,
         cooldownMaximo = 45,
-        pausaConfirmacao = 0.7,
+        pausaConfirmacao = 0.18,
         limiteMemoria = 64,
         idadeMemoria = 180,
         raioCelula = 30,
@@ -6689,6 +6690,148 @@ GS.iniciarFarma = function()
         ultimoDestino = nil,
         ultimamente = {},
     }
+
+    -- Atividade periodica limitada ao mesmo ciclo da coleta automatica.
+    Nav.atividade = {
+        intervalo = 2,
+        ativo = false,
+        conn = nil,
+        servico = nil,
+        proxima = 0,
+        ultimaTentativa = -math.huge,
+        enviados = 0,
+        erros = 0,
+        avisou = false,
+        token = 0,
+        g = 0,
+        a = 0,
+    }
+
+    function Nav.pararAtividade()
+        local s = Nav.atividade
+        s.ativo = false
+        s.token = s.token+1
+        if s.conn then
+            s.conn:Disconnect()
+            s.conn = nil
+        end
+        R.atividadeTexto = "Autoclique: OFF"
+    end
+
+    function Nav.pontoClique(camera)
+        local tamanho = camera.ViewportSize
+        local candidatos = {
+            Vector2.new(tamanho.X*0.98,tamanho.Y*0.85),
+            Vector2.new(tamanho.X*0.02,tamanho.Y*0.5),
+            Vector2.new(tamanho.X*0.5,tamanho.Y*0.98),
+            Vector2.new(tamanho.X*0.98,tamanho.Y*0.25),
+        }
+        local superficies = {}
+        local ok,playerGui = pcall(function()
+            return LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        end)
+        if ok and playerGui then table.insert(superficies,playerGui) end
+        if GS.pai and GS.pai ~= playerGui then table.insert(superficies,GS.pai) end
+        for _,ponto in ipairs(candidatos) do
+            local livre = true
+            for _,janela in ipairs({MainFrame,ConfigFrame}) do
+                if janela and janela.Visible then
+                    local pos,tam = janela.AbsolutePosition,janela.AbsoluteSize
+                    if ponto.X>=pos.X and ponto.X<=pos.X+tam.X
+                        and ponto.Y>=pos.Y and ponto.Y<=pos.Y+tam.Y then
+                        livre = false
+                        break
+                    end
+                end
+            end
+            if livre then
+                for _,superficie in ipairs(superficies) do
+                    local sucesso,objetos = pcall(function()
+                        return superficie:GetGuiObjectsAtPosition(ponto.X,ponto.Y)
+                    end)
+                    if sucesso then
+                        for _,obj in ipairs(objetos) do
+                            if obj.Visible and (obj:IsA("GuiButton") or obj:IsA("TextBox") or obj.Active) then
+                                livre = false
+                                break
+                            end
+                        end
+                    end
+                    if not livre then break end
+                end
+            end
+            if livre then return ponto end
+        end
+    end
+
+    function Nav.pulsoAtividade(g,a,motivo)
+        local s = Nav.atividade
+        if not s.ativo or s.g ~= g or s.a ~= a then return false,"desligado" end
+        if not autoVivo(g,a) then return false,"cancelado" end
+        if Nav.estado.prompt then return false,"interagindo" end
+        if UserInputService:GetFocusedTextBox() then return false,"digitando" end
+        local okMenu,menu = pcall(function()
+            return game:GetService("GuiService").MenuIsOpen
+        end)
+        if okMenu and menu then return false,"menu" end
+        local agora = os.clock()
+        if agora-s.ultimaTentativa < s.intervalo then return false,"intervalo" end
+        local camera = workspace.CurrentCamera
+        if not camera then return false,"sem_camera" end
+        local ponto = Nav.pontoClique(camera)
+        if not ponto then
+            R.atividadeTexto = "Autoclique pausado · tela ocupada"
+            return false,"tela_ocupada"
+        end
+        s.ultimaTentativa = agora
+        s.proxima = agora+s.intervalo
+        local ok,erro = pcall(function()
+            if not s.servico then error("VirtualUser indisponivel neste ambiente") end
+            s.servico:CaptureController()
+            s.servico:ClickButton1(ponto,camera.CFrame)
+        end)
+        if ok then
+            s.enviados = s.enviados+1
+            R.atividadeTexto = "Autoclique 2s: ON · enviados " .. s.enviados
+            return true,"enviado"
+        end
+        s.erros = s.erros+1
+        R.atividadeTexto = "Atividade indisponível · verificar Output"
+        if not s.avisou then
+            s.avisou = true
+            warn("[DEBUG-BOT]: Autoclique indisponível:",erro,"Motivo:",motivo)
+        end
+        return false,"erro"
+    end
+
+    function Nav.iniciarAtividade(g,a)
+        Nav.pararAtividade()
+        local s = Nav.atividade
+        s.ativo = true
+        s.g = g
+        s.a = a
+        s.avisou = false
+        s.ultimaTentativa = -math.huge
+        s.proxima = os.clock()+s.intervalo
+        local token = s.token
+        local ok,servico = pcall(function()
+            return game:GetService("VirtualUser")
+        end)
+        s.servico = ok and servico or nil
+        R.atividadeTexto = "Autoclique 2s: ON"
+        s.conn = LocalPlayer.Idled:Connect(function()
+            if s.token == token then Nav.pulsoAtividade(g,a,"Idled") end
+        end)
+        task.spawn(function()
+            while s.ativo and s.token == token and autoVivo(g,a) do
+                if os.clock() >= s.proxima then
+                    Nav.pulsoAtividade(g,a,"periodico")
+                end
+                task.wait(0.25)
+            end
+        end)
+        registrar("ATIVIDADE","Clique esquerdo a cada 2s enquanto coleta; pausa em menus e prompts.")
+    end
 
     function Nav.fase(nome)
         R.fase = nome
@@ -7502,9 +7645,47 @@ GS.iniciarFarma = function()
         return "sem_confirmacao"
     end
 
+    function Nav.toqueRapido(ctx,e)
+        if not Nav.vivo(ctx) then return "cancelado" end
+        -- Prompts seguem o tempo de segurar definido pelo proprio jogo.
+        if e.obj:FindFirstChildWhichIsA("ProximityPrompt",true) then
+            return "sem_confirmacao"
+        end
+        Nav.fase("COLETA RÁPIDA · AJUSTE DE TOQUE")
+        local pontos = {
+            Vector3.new(0,0.4,0),
+            Vector3.new(0.7,0,0),
+            Vector3.new(-0.7,0,0),
+        }
+        local inicio = os.clock()
+        for _,delta in ipairs(pontos) do
+            local fim = Nav.terminou(ctx,e)
+            if fim then return fim end
+            if os.clock()-inicio > 2.8 then break end
+            local pos = Nav.posAlvo(e)
+            if not pos then return "retirado" end
+            local resultado = Nav.moverVoo(ctx,pos+delta,{
+                alvo = e,
+                preciso = true,
+                tolerancia = 0.45,
+                limite = 0.8,
+            })
+            if resultado == "inventario" or resultado == "retirado" or resultado == "cancelado" then
+                return resultado
+            end
+            local confirmado = Nav.confirmar(ctx,e)
+            if confirmado ~= "sem_confirmacao" then return confirmado end
+        end
+        return "sem_confirmacao"
+    end
+
     function Nav.coletarChegada(ctx,e,analise)
         local fim = Nav.terminou(ctx,e)
         if fim then return fim end
+        local rapido = Nav.toqueRapido(ctx,e)
+        if rapido == "inventario" or rapido == "retirado" or rapido == "cancelado" then
+            return rapido
+        end
         local resultado = Nav.interagir(ctx,e)
         if resultado == "inventario" or resultado == "retirado" then
             return resultado
@@ -7821,6 +8002,7 @@ GS.iniciarFarma = function()
         R.auto = false
         R.cicloAuto = R.cicloAuto+1
         R.alvo = nil
+        Nav.pararAtividade()
         Nav.parar()
         restaurarMovimento()
         if GS.noclipArquivo then GS.noclipArquivo.liberar("frascos") end
@@ -7836,6 +8018,7 @@ GS.iniciarFarma = function()
         R.cicloAuto = R.cicloAuto+1
         local g,a = R.geracao,R.cicloAuto
         Nav.reset()
+        Nav.iniciarAtividade(g,a)
         salvarMovimento()
         if GS.noclipArquivo then GS.noclipArquivo.ativar("frascos") end
         autoBtn.Text = "AUTOMÁTICO: ON · VOO 500"
@@ -7858,7 +8041,7 @@ GS.iniciarFarma = function()
                     end
                     R.fase = "REPLANEJANDO MOVIMENTO"
                 end
-                task.wait(0.3)
+                task.wait(0.05)
             end
         end)
     end
