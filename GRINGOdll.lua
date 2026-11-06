@@ -1,4 +1,4 @@
--- GRINGOdll V50.3 · Feito pelo @henrique_system
+-- GRINGOdll V50.4 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +29,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.3"
+GS.versao = "V50.4"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -5983,7 +5983,7 @@ GS.prepararTelaFarma = function()
     barra.BackgroundTransparency=1
     barra.Parent=painel
     local botoes,telas={},{}
-    local nomes={"Frascos","Lucky Blocks","Por nome"}
+    local nomes={"Frascos","Lucky Blocks","Por nome","Tesouro"}
     local function selecionar(indice)
         for i,tela in ipairs(telas) do
             tela.Visible=i==indice
@@ -6005,8 +6005,8 @@ GS.prepararTelaFarma = function()
         lista.Padding=UDim.new(0,6)
         lista.SortOrder=Enum.SortOrder.LayoutOrder
         local botao=Instance.new("TextButton")
-        botao.Size=UDim2.new(1/3,-4,1,0)
-        botao.Position=UDim2.new((i-1)/3,2,0,0)
+        botao.Size=UDim2.new(1/#nomes,-4,1,0)
+        botao.Position=UDim2.new((i-1)/#nomes,2,0,0)
         botao.BackgroundColor3=U.T.on
         botao.BorderSizePixel=0
         botao.Font=Enum.Font.GothamBold
@@ -6021,6 +6021,7 @@ GS.prepararTelaFarma = function()
     GS.painelFarmaFrascos=telas[1]
     GS.painelFarmaLucky=telas[2]
     GS.painelFarmaNome=telas[3]
+    GS.painelFarmaTesouro=telas[4]
     selecionar(1)
 end
 GS.rodar("Layout Farma",GS.prepararTelaFarma,GS.painelFarma)
@@ -8014,6 +8015,7 @@ GS.iniciarFarma = function()
         if R.auto then return end
         if GS.pararFarmaLucky then GS.pararFarmaLucky() end
         if GS.pararFarmaNome then GS.pararFarmaNome() end
+        if GS.pararFarmaTesouro then GS.pararFarmaTesouro() end
         R.auto = true
         R.cicloAuto = R.cicloAuto+1
         local g,a = R.geracao,R.cicloAuto
@@ -8574,6 +8576,7 @@ GS.iniciarFarmaLucky = function()
         if L.auto then return end
         if GS.pararFarmaFrascos then GS.pararFarmaFrascos() end
         if GS.pararFarmaNome then GS.pararFarmaNome() end
+        if GS.pararFarmaTesouro then GS.pararFarmaTesouro() end
         ligar()
         local _,hum=personagem()
         L.salvo={fly=flyAtivado,voo=velocidadeVoo,speed=speedAtivado,walk=hum and hum.WalkSpeed or 16}
@@ -8633,6 +8636,501 @@ GS.iniciarFarmaLucky = function()
     ScreenGui.Destroying:Connect(desligar)
 end
 GS.rodar("Farma Lucky Block",GS.iniciarFarmaLucky,GS.painelFarma)
+
+GS.iniciarFarmaTesouro = function()
+    local U,painel = GS.ui,GS.painelFarmaTesouro or GS.painelFarma
+    if not U or not painel then return end
+    local Chat = game:GetService("TextChatService")
+    local L = {
+        ligado=false, auto=false, geracao=0, ciclo=0, itens={}, conns={},
+        espera=setmetatable({}, {__mode="k"}), salvo=nil, gui=nil,
+        aviso="Nenhum aviso observado.", candidatos={}, examinados=0,
+        scanEm=0, alvo=nil, fase="DESLIGADO", segurando=nil,
+        tentativas=0, interacoes=0, sinais=setmetatable({}, {__mode="k"}),
+    }
+    U.sec(painel,"FARMA · TREASURE CHEST","package",20)
+    local detectar = U.tog(painel,"PROCURAR BAÚ DO TESOURO",21)
+    detectar:SetAttribute("Controlado",true)
+    detectar.Text="TESOURO: OFF"
+    local automatico = U.tog(painel,"IR ATÉ O TESOURO · VOO 90",22)
+    automatico:SetAttribute("Controlado",true)
+    automatico.Text="AUTO TESOURO: OFF"
+    local busca = U.acao(painel,"REFAZER BUSCA COMPLETA","scan-search",23)
+    local info = Instance.new("TextLabel")
+    info.Size=UDim2.new(1,-16,0,130)
+    info.LayoutOrder=24
+    info.BackgroundTransparency=1
+    info.TextColor3=U.T.text
+    info.Font=Enum.Font.GothamMedium
+    info.TextSize=12
+    info.TextWrapped=true
+    info.TextXAlignment=Enum.TextXAlignment.Left
+    info.TextYAlignment=Enum.TextYAlignment.Top
+    info.Text="Procura Treasure Chest e prompts de abrir baú; aviso do chat refaz a busca."
+    info.Parent=painel
+
+    local function normalizar(s)
+        return string.lower(s):gsub("ú","u"):gsub("Ú","u"):gsub("ã","a"):gsub("[^%w]","")
+    end
+    local function nomeTesouro(s)
+        local n=normalizar(s)
+        return n:find("treasurechest",1,true)~=nil
+            or n:find("chesttreasure",1,true)~=nil
+            or n:find("baudotesouro",1,true)~=nil
+            or n:find("bautesouro",1,true)~=nil
+    end
+    local function promptTesouro(prompt)
+        if not prompt:IsA("ProximityPrompt") then return false end
+        if nomeTesouro(prompt.ObjectText) then return true end
+        local nome=normalizar(prompt.ObjectText)
+        local acao=normalizar(prompt.ActionText)
+        local generico=nome=="chest" or nome=="treasure" or nome=="bau"
+        local abrir=acao:find("open",1,true)~=nil or acao:find("abrir",1,true)~=nil
+        return generico and abrir
+    end
+    local function promptDe(obj)
+        for _,desc in ipairs(obj:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") and promptTesouro(desc) then return desc end
+        end
+    end
+    local function posPrompt(prompt,base)
+        local pai=prompt and prompt.Parent
+        if pai and pai:IsA("Attachment") then return pai.WorldPosition end
+        if pai and pai:IsA("BasePart") then return pai.Position end
+        if pai and pai:IsA("Model") then return pai:GetPivot().Position end
+        return base.Position
+    end
+    local function personagem()
+        local char=LocalPlayer.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        if hum and root and hum.Health>0 then return char,hum,root end
+    end
+    local function parte(obj)
+        if obj:IsA("BasePart") then return obj end
+        return obj:FindFirstChildWhichIsA("BasePart",true)
+    end
+    local function dePersonagem(obj)
+        local p=obj
+        while p and p~=workspace do
+            if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then return true end
+            p=p.Parent
+        end
+        return false
+    end
+    local function vivo(g)
+        return L.ligado and L.geracao==g and ScreenGui.Parent~=nil
+    end
+    local function autoVivo(g,c)
+        return vivo(g) and L.auto and L.ciclo==c
+    end
+    local function avaliar(obj)
+        local alvo=obj
+        local prompt
+        local corresponde=nomeTesouro(obj.Name)
+        if obj:IsA("ProximityPrompt") then
+            prompt=obj
+            corresponde=corresponde or promptTesouro(obj)
+            alvo=obj.Parent
+            if alvo and alvo:IsA("Attachment") then alvo=alvo.Parent end
+        elseif obj:IsA("ClickDetector") then
+            alvo=obj.Parent
+            corresponde=corresponde or (alvo and nomeTesouro(alvo.Name))
+        elseif not (obj:IsA("BasePart") or obj:IsA("Model") or obj:IsA("Tool")) then
+            return
+        end
+        if not corresponde or not alvo or alvo==workspace then return end
+        if dePersonagem(alvo) then return end
+        local p=alvo.Parent
+        while p and p~=workspace do
+            if (p:IsA("Model") or p:IsA("Tool")) and nomeTesouro(p.Name) then alvo=p end
+            p=p.Parent
+        end
+        if not (alvo:IsA("Model") or alvo:IsA("Tool") or alvo:IsA("BasePart")) then return end
+        local n=normalizar(alvo.Name)
+        -- Spawners e pastas de templates nao sao o bloco coletavel.
+        if n:find("spawner",1,true) or n:find("spawnpoint",1,true) then return end
+        local base=parte(alvo)
+        if not base then return end
+        if alvo:IsA("Model") and alvo:GetExtentsSize().Magnitude>60 then return end
+        prompt=prompt or promptDe(alvo)
+        return alvo,base,prompt
+    end
+    local function adicionar(obj,base,prompt)
+        if L.itens[obj] then
+            if prompt then L.itens[obj].prompt=prompt end
+            return
+        end
+        for outro,it in pairs(L.itens) do
+            if obj:IsDescendantOf(outro) then return end
+            if outro:IsDescendantOf(obj) then it.gui:Destroy(); L.itens[outro]=nil end
+        end
+        local gui=Instance.new("BillboardGui")
+        gui.Name="TesouroLocal"
+        gui.Adornee=base
+        gui.Size=UDim2.fromOffset(174,38)
+        gui.StudsOffsetWorldSpace=Vector3.new(0,3,0)
+        gui.AlwaysOnTop=true
+        gui.MaxDistance=0
+        gui.Enabled=false
+        gui.Parent=L.gui
+        local label=Instance.new("TextLabel")
+        label.Size=UDim2.fromScale(1,1)
+        label.BackgroundColor3=Color3.fromRGB(35,22,8)
+        label.BackgroundTransparency=0.2
+        label.TextColor3=Color3.fromRGB(255,211,118)
+        label.TextSize=12
+        label.Font=Enum.Font.GothamBold
+        label.TextWrapped=true
+        label.Parent=gui
+        Instance.new("UICorner",label).CornerRadius=UDim.new(0,8)
+        L.itens[obj]={base=base,gui=gui,label=label,prompt=prompt}
+        print("[DEBUG-TESOURO]: Encontrado",obj:GetFullName())
+    end
+    local function varrer(g)
+        L.examinados=0
+        L.candidatos={}
+        L.scanEm=os.clock()+5
+        local nomes={}
+        for i,obj in ipairs(workspace:GetDescendants()) do
+            if not vivo(g) then return end
+            L.examinados=i
+            local ok,alvo,base,prompt=pcall(avaliar,obj)
+            if ok and alvo then adicionar(alvo,base,prompt) end
+            local n=normalizar(obj.Name)
+            if #L.candidatos<5 and (n:find("treasure",1,true) or n:find("chest",1,true) or n:find("tesouro",1,true))
+                and not nomes[obj.Name] and (obj:IsA("Model") or obj:IsA("BasePart")) then
+                nomes[obj.Name]=true
+                table.insert(L.candidatos,obj:GetFullName())
+            end
+            if i%300==0 then task.wait() end
+        end
+        print("[DEBUG-TESOURO]: Busca completa:",L.examinados,"objetos examinados")
+        if vivo(g) then L.scanEm=os.clock()+5 end
+    end
+    local function listar()
+        local _,_,root=personagem()
+        local lista={}
+        for obj,it in pairs(L.itens) do
+            if not obj:IsDescendantOf(workspace) or dePersonagem(obj) then
+                it.gui:Destroy()
+                L.itens[obj]=nil
+            else
+                local base=parte(obj)
+                if base then
+                    it.base=base
+                    it.gui.Adornee=base
+                    if not it.prompt or not it.prompt:IsDescendantOf(obj) then it.prompt=promptDe(obj) end
+                    it.nome=it.prompt and it.prompt.ObjectText~="" and it.prompt.ObjectText or obj.Name
+                    it.pos=posPrompt(it.prompt,base)
+                    table.insert(lista,{obj=obj,it=it,d=root and (root.Position-it.pos).Magnitude or math.huge})
+                end
+            end
+        end
+        table.sort(lista,function(a,b) return a.d<b.d end)
+        local linhas={L.fase.." | Examinados: "..L.examinados.." | Blocos: "..#lista,
+            "Tentativas: "..L.tentativas.." | Interações observadas: "..L.interacoes,L.aviso}
+        local camera=workspace.CurrentCamera
+        local ocupados={}
+        for i,e in ipairs(lista) do
+            e.it.label.Text=string.format("%s\n%.0f studs",e.it.nome,e.d)
+            local mostrar=false
+            if camera and #ocupados<6 then
+                local tela,visivel=camera:WorldToViewportPoint(e.it.base.Position+Vector3.new(0,3,0))
+                mostrar=visivel and tela.Z>0
+                if mostrar then
+                    for _,p in ipairs(ocupados) do
+                        if math.abs(tela.X-p.X)<184 and math.abs(tela.Y-p.Y)<44 then mostrar=false; break end
+                    end
+                    if mostrar then table.insert(ocupados,tela) end
+                end
+            end
+            e.it.gui.Enabled=mostrar
+            if i<=4 then table.insert(linhas,string.format("%s · %.0f studs",e.it.nome,e.d)) end
+        end
+        if #lista==0 then
+            table.insert(linhas,"Nenhum bloco identificado entre os objetos carregados.")
+            if #L.candidatos>0 then
+                table.insert(linhas,"Nomes para diagnóstico (não são alvos confirmados):")
+                for _,s in ipairs(L.candidatos) do table.insert(linhas,s) end
+            end
+            if workspace.StreamingEnabled then table.insert(linhas,"Streaming: objetos distantes podem estar ausentes.") end
+        end
+        info.Text=table.concat(linhas,"\n")
+        return lista
+    end
+    local function restaurar()
+        if not L.salvo then return end
+        if L.segurando then
+            pcall(function() L.segurando:InputHoldEnd() end)
+            L.segurando=nil
+        end
+        L.holdToken=nil
+        GS.farmaDirecao=nil
+        if flyAtivado then alternarFly() end
+        local salvo=L.salvo
+        velocidadeVoo=salvo.voo
+        if FlyLabel then FlyLabel.Text="VOO: "..velocidadeVoo end
+        if speedAtivado~=salvo.speed then alternarSpeed() end
+        if salvo.fly then alternarFly() end
+        local _,hum,root=personagem()
+        if hum then hum.WalkSpeed=salvo.walk; hum:MoveTo(root.Position) end
+        L.salvo=nil
+    end
+    local function pararAuto()
+        if not L.auto and not L.salvo then return end
+        L.auto=false
+        L.ciclo=L.ciclo+1
+        L.alvo=nil
+        restaurar()
+        if GS.noclipArquivo then GS.noclipArquivo.liberar("tesouro") end
+        automatico.Text="AUTO TESOURO: OFF"
+        L.fase="MONITORANDO TESOURO"
+    end
+    local function segurarPrompt(e,prompt,g,c)
+        local _,hum,root=personagem()
+        if not hum or not prompt.Enabled then return false end
+        if (root.Position-posPrompt(prompt,e.it.base)).Magnitude>prompt.MaxActivationDistance then return false end
+        local disparou=false
+        local conn=prompt.Triggered:Connect(function(player)
+            if player==LocalPlayer and autoVivo(g,c) then
+                disparou=true
+                L.interacoes=L.interacoes+1
+                print("[DEBUG-TESOURO]: Interação observada:",prompt.ObjectText)
+            end
+        end)
+        L.tentativas=L.tentativas+1
+        local token={}
+        L.holdToken=token
+        L.segurando=prompt
+        hum:MoveTo(root.Position)
+        local ok,err=pcall(function()
+            prompt:InputHoldBegin()
+            local duracao=prompt.HoldDuration
+            local inicio=os.clock()
+            while autoVivo(g,c) and prompt.Parent and prompt.Enabled do
+                local _,atual,raiz=personagem()
+                if atual~=hum then break end
+                if (raiz.Position-posPrompt(prompt,e.it.base)).Magnitude>prompt.MaxActivationDistance then break end
+                L.fase=string.format("ABRINDO %s · %.0f%%",prompt.ObjectText,
+                    math.min(100,100*(os.clock()-inicio)/math.max(duracao,0.05)))
+                if disparou or os.clock()-inicio>=duracao+0.3 then break end
+                task.wait(0.05)
+            end
+        end)
+        if L.holdToken==token then
+            pcall(function() prompt:InputHoldEnd() end)
+            L.segurando=nil
+            L.holdToken=nil
+        end
+        if ok and autoVivo(g,c) then
+            local fim=os.clock()+1
+            while autoVivo(g,c) and not disparou and prompt.Parent and os.clock()<fim do task.wait(0.05) end
+        end
+        conn:Disconnect()
+        if not ok then warn("[DEBUG-TESOURO]: Interação:",err) end
+        return disparou
+    end
+    local function aproximar(e,g,c)
+        local _,hum,root=personagem()
+        if not hum then return end
+        local destino=posPrompt(e.it.prompt,e.it.base)
+        if (root.Position-destino).Magnitude<=8 then return end
+        local path=game:GetService("PathfindingService"):CreatePath({
+            AgentRadius=2,AgentHeight=5,AgentCanJump=true,
+        })
+        local ok=pcall(function() path:ComputeAsync(root.Position,destino) end)
+        local fim=os.clock()+12
+        if ok and autoVivo(g,c) and path.Status==Enum.PathStatus.Success then
+            for _,ponto in ipairs(path:GetWaypoints()) do
+                if not autoVivo(g,c) or not e.obj:IsDescendantOf(workspace) or os.clock()>fim then break end
+                if (root.Position-destino).Magnitude<6 then break end
+                if ponto.Action==Enum.PathWaypointAction.Jump then hum.Jump=true end
+                hum:MoveTo(ponto.Position)
+                local prazo=os.clock()+1.5
+                while autoVivo(g,c) and root.Parent and os.clock()<math.min(prazo,fim) do
+                    if hum.Health<=0 or (root.Position-ponto.Position).Magnitude<3 then break end
+                    task.wait(0.08)
+                end
+                if not root.Parent or hum.Health<=0 then break end
+            end
+        end
+        path:Destroy()
+    end
+    local function buscarAlvo(e,g,c)
+        local _,hum,root=personagem()
+        if not hum then return end
+        if GS.noclipArquivo then GS.noclipArquivo.ativar("tesouro") end
+        L.fase="INDO ATÉ "..(e.it.nome or e.obj.Name)
+        velocidadeVoo=90
+        FlyLabel.Text="VOO: 90"
+        GS.farmaDirecao=Vector3.zero
+        if not flyAtivado then alternarFly() end
+        local inicio=os.clock()
+        local ultimaDist=math.huge
+        local progresso=os.clock()
+        while autoVivo(g,c) and e.obj:IsDescendantOf(workspace) and os.clock()-inicio<20 do
+            local _,atual,raiz=personagem()
+            local base=parte(e.obj)
+            if atual~=hum or not base or raiz.Anchored then break end
+            local delta=posPrompt(e.it.prompt,base)+Vector3.new(0,2,0)-raiz.Position
+            if delta.Magnitude<10 then break end
+            if delta.Magnitude<ultimaDist-1 then
+                ultimaDist=delta.Magnitude
+                progresso=os.clock()
+            elseif os.clock()-progresso>3 then
+                print("[DEBUG-TESOURO]: Obstáculo no voo; tentando rota a pé.")
+                break
+            end
+            GS.farmaDirecao=delta.Unit*math.clamp(delta.Magnitude/10,0,1)
+            task.wait(0.05)
+        end
+        if not autoVivo(g,c) then return end
+        GS.farmaDirecao=nil
+        if flyAtivado then alternarFly() end
+        root.AssemblyLinearVelocity=Vector3.zero
+        if GS.noclipArquivo then GS.noclipArquivo.liberar("tesouro") end
+        hum.WalkSpeed=16
+        aproximar(e,g,c)
+        if not autoVivo(g,c) then return end
+        inicio=os.clock()
+        local confirmou=false
+        while autoVivo(g,c) and e.obj:IsDescendantOf(workspace) and os.clock()-inicio<12 do
+            local _,atual,raiz=personagem()
+            local base=parte(e.obj)
+            if atual~=hum or not base then return end
+            local prompt=e.it.prompt
+            if not prompt or not prompt.Parent then
+                prompt=promptDe(e.obj)
+                e.it.prompt=prompt
+            end
+            local pos=posPrompt(prompt,base)
+            local d=(raiz.Position-pos).Magnitude
+            -- Pequenas mudanças de lado ajudam quando o personagem encosta no bloco.
+            local angulo=(os.clock()-inicio)*1.2
+            local deslocamento=Vector3.new(math.cos(angulo),0,math.sin(angulo))*1.5
+            hum:MoveTo(pos+deslocamento)
+            if d<=8 then
+                if prompt and prompt.Enabled and d<=prompt.MaxActivationDistance then
+                    confirmou=segurarPrompt(e,prompt,g,c)
+                    if confirmou then break end
+                end
+                if not autoVivo(g,c) then return end
+                local click=e.obj:FindFirstChildWhichIsA("ClickDetector",true)
+                if click and d<=click.MaxActivationDistance
+                    and type(fireclickdetector)=="function" then pcall(fireclickdetector,click) end
+            end
+            task.wait(0.5)
+        end
+        if autoVivo(g,c) then
+            L.espera[e.obj]=os.clock()+(confirmou and 45 or 15)
+            L.fase=confirmou and "INTERAÇÃO OBSERVADA · PRÓXIMO BLOCO" or "AGUARDANDO NOVA TENTATIVA"
+            print("[DEBUG-TESOURO]: Visita encerrada. Interação observada:",confirmou)
+        end
+    end
+    local function ligar()
+        if L.ligado then return end
+        L.ligado=true
+        L.geracao=L.geracao+1
+        L.scanEm=0
+        local g=L.geracao
+        L.gui=Instance.new("Folder")
+        L.gui.Name="FarmaTesouroMarcadores"
+        L.gui.Parent=ScreenGui
+        detectar.Text="TESOURO: ON"
+        L.fase="BUSCA COMPLETA"
+        table.insert(L.conns,workspace.DescendantAdded:Connect(function(obj)
+            if nomeTesouro(obj.Name) or obj:IsA("ProximityPrompt") then
+                L.scanEm=0
+                task.defer(function()
+                    if not vivo(g) then return end
+                    local ok,alvo,base,prompt=pcall(avaliar,obj)
+                    if ok and alvo then adicionar(alvo,base,prompt) end
+                end)
+            end
+        end))
+        table.insert(L.conns,Chat.MessageReceived:Connect(function(msg)
+            if nomeTesouro(msg.Text) then
+                L.aviso="Chat: "..msg.Text:sub(1,160)
+                L.scanEm=0
+                print("[DEBUG-TESOURO]: Aviso observado; refazendo busca:",msg.Text)
+            end
+        end))
+        task.spawn(function()
+            while vivo(g) do
+                local ok,err=pcall(function()
+                    if os.clock()>=L.scanEm then varrer(g) end
+                    if vivo(g) then listar() end
+                end)
+                if not ok then warn("[DEBUG-TESOURO]: Busca:",err) end
+                task.wait(0.5)
+            end
+        end)
+    end
+    local function iniciarAuto()
+        if L.auto then return end
+        if GS.pararFarmaLucky then GS.pararFarmaLucky() end
+        if GS.pararFarmaFrascos then GS.pararFarmaFrascos() end
+        if GS.pararFarmaNome then GS.pararFarmaNome() end
+        ligar()
+        local _,hum=personagem()
+        L.salvo={fly=flyAtivado,voo=velocidadeVoo,speed=speedAtivado,walk=hum and hum.WalkSpeed or 16}
+        if speedAtivado then alternarSpeed() end
+        L.auto=true
+        if GS.noclipArquivo then GS.noclipArquivo.ativar("tesouro") end
+        L.ciclo=L.ciclo+1
+        local g,c=L.geracao,L.ciclo
+        automatico.Text="AUTO TESOURO: ON · 90"
+        task.spawn(function()
+            while autoVivo(g,c) do
+                local ok,err=pcall(function()
+                    local alvo
+                    for _,e in ipairs(listar()) do
+                        if (L.espera[e.obj] or 0)<=os.clock() then alvo=e; break end
+                    end
+                    if alvo then
+                        L.alvo=alvo.obj
+                        buscarAlvo(alvo,g,c)
+                    else L.fase="AGUARDANDO BAÚ DO TESOURO" end
+                end)
+                if not autoVivo(g,c) then break end
+                L.alvo=nil
+                if not ok then
+                    warn("[DEBUG-TESOURO]: Movimento:",err)
+                    GS.farmaDirecao=nil
+                    if flyAtivado then alternarFly() end
+                end
+                task.wait(0.5)
+            end
+        end)
+    end
+    local function desligar()
+        pararAuto()
+        L.ligado=false
+        L.geracao=L.geracao+1
+        for _,conn in ipairs(L.conns) do conn:Disconnect() end
+        table.clear(L.conns)
+        table.clear(L.itens)
+        if L.gui then L.gui:Destroy(); L.gui=nil end
+        detectar.Text="TESOURO: OFF"
+        L.fase="DESLIGADO"
+        info.Text="Busca do tesouro desligada."
+    end
+    GS.pararFarmaTesouro=pararAuto
+    detectar.MouseButton1Click:Connect(function()
+        if L.ligado then desligar() else ligar() end
+    end)
+    automatico.MouseButton1Click:Connect(function()
+        if L.auto then pararAuto() else iniciarAuto() end
+    end)
+    busca.MouseButton1Click:Connect(function()
+        ligar()
+        L.scanEm=0
+        L.fase="REFAZENDO BUSCA COMPLETA"
+    end)
+    ScreenGui.Destroying:Connect(desligar)
+end
+GS.rodar("Farma Treasure Chest",GS.iniciarFarmaTesouro,GS.painelFarmaTesouro)
 
 -- Navegacao por nome interno exato, independente das duas farmas.
 GS.iniciarFarmaNome=function()
@@ -8951,6 +9449,7 @@ GS.iniciarFarmaNome=function()
         if N.auto then return end
         if GS.pararFarmaFrascos then GS.pararFarmaFrascos() end
         if GS.pararFarmaLucky then GS.pararFarmaLucky() end
+        if GS.pararFarmaTesouro then GS.pararFarmaTesouro() end
         ligar()
         local _,h=personagem()
         N.salvo={fly=flyAtivado,voo=velocidadeVoo,speed=speedAtivado,walk=h and h.WalkSpeed or 16}
