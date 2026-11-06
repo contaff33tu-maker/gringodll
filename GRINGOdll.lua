@@ -1,4 +1,4 @@
--- GRINGOdll V50.7 · Feito pelo @henrique_system
+-- GRINGOdll V50.9 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +29,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.7"
+GS.versao = "V50.9"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -6804,6 +6804,8 @@ GS.iniciarFarma = function()
             s.conn:Disconnect()
             s.conn = nil
         end
+        if s.vigiaConn then s.vigiaConn:Disconnect(); s.vigiaConn=nil end
+        if Nav.liberarAtividade then Nav.liberarAtividade() end
         R.atividadeTexto = "Autoclique: OFF"
     end
 
@@ -6846,7 +6848,10 @@ GS.iniciarFarma = function()
     end
 
     function Nav.pixelLivre(ponto,superficies)
-        for _,janela in ipairs({MainFrame,ConfigFrame}) do
+        local janelas={}
+        if MainFrame then table.insert(janelas,MainFrame) end
+        if ConfigFrame then table.insert(janelas,ConfigFrame) end
+        for _,janela in ipairs(janelas) do
             if janela and janela.Visible then
                 local pos,tam = janela.AbsolutePosition,janela.AbsoluteSize
                 if ponto.X>=pos.X and ponto.X<=pos.X+tam.X
@@ -6877,6 +6882,12 @@ GS.iniciarFarma = function()
             Vector2.new(tamanho.X*0.02,tamanho.Y*0.5),
             Vector2.new(tamanho.X*0.5,tamanho.Y*0.98),
             Vector2.new(tamanho.X*0.98,tamanho.Y*0.25),
+            Vector2.new(tamanho.X*0.12,tamanho.Y*0.76),
+            Vector2.new(tamanho.X*0.88,tamanho.Y*0.76),
+            Vector2.new(tamanho.X*0.34,tamanho.Y*0.88),
+            Vector2.new(tamanho.X*0.66,tamanho.Y*0.88),
+            Vector2.new(tamanho.X*0.12,tamanho.Y*0.32),
+            Vector2.new(tamanho.X*0.88,tamanho.Y*0.32),
         }
         local superficies = {}
         local ok,playerGui = pcall(function()
@@ -6896,101 +6907,314 @@ GS.iniciarFarma = function()
         return nil
     end
 
-    function Nav.pulsoAtividade(g,a,motivo)
-        local s = Nav.atividade
-        if not s.ativo or s.g ~= g or s.a ~= a then return false,"desligado" end
+    function Nav.liberarAtividade()
+        local s=Nav.atividade
+        local preso=s.pressionado
+        if not preso then return true end
+        local ok=pcall(function()
+            if preso.tipo=="VirtualUser" then
+                preso.vi:Button1Up(preso.ponto,preso.camera)
+            else
+                preso.vi:SendMouseButton(preso.ponto,Enum.UserInputType.MouseButton1,false,0)
+            end
+        end)
+        if ok then s.pressionado=nil end
+        return ok
+    end
+
+    function Nav.estadoAtividade(motivo)
+        local s=Nav.atividade
+        local agora=os.clock()
+        s.ultimoMotivo=motivo
+        if s.motivoAnterior~=motivo then
+            s.motivoAnterior=motivo
+            s.pausaDesde=agora
+        end
+        if agora<(s.proximaUI or 0) then return end
+        s.proximaUI=agora+1
+        local semEnvio=math.max(0,agora-(s.ultimoSucesso or s.inicio))
+        if motivo~="enviado" then
+            R.atividadeTexto=string.format("Atividade: %s · %.0fs sem envio local",motivo,semEnvio)
+        elseif s.idleObservado then
+            R.atividadeTexto=string.format("ALERTA: motor sinalizou AFK · %d envios locais · roda %d",s.enviados,s.rodas)
+        else
+            R.atividadeTexto=string.format("Envio local: %s · %d cliques · roda %d%s",
+                s.canal or "nenhum",s.enviados,s.rodas,s.rodaIndisponivel and " (indisponivel)" or "")
+        end
+        if semEnvio>=60 and agora>=(s.proximoAviso or 0) then
+            s.proximoAviso=agora+60
+            warn("[DEBUG-BOT]: Atividade sem envio local ha",math.floor(semEnvio),"s. Motivo:",motivo)
+        end
+    end
+
+    function Nav.buscarEntradaModerna()
+        local s=Nav.atividade
+        if s.virtual then return s.virtual end
+        if os.clock()<(s.proximaVI or 0) then return nil end
+        s.proximaVI=os.clock()+60
+        local ok,vi=pcall(function() return UserInputService:CreateVirtualInput() end)
+        if ok and vi then s.virtual=vi end
+        return s.virtual
+    end
+
+    function Nav.enviarClique(ponto,camera)
+        local s=Nav.atividade
+        if not Nav.liberarAtividade() then return false,"botao_pendente" end
+        local vi=Nav.buscarEntradaModerna()
+        if vi then
+            local segurou
+            local ok,erro=pcall(function()
+                vi:SendMousePosition(ponto)
+                vi:SendMouseButton(ponto,Enum.UserInputType.MouseButton1,true,0)
+                segurou={vi=vi,ponto=ponto}
+                s.pressionado=segurou
+                task.wait(0.04)
+            end)
+            local soltou=s.pressionado~=segurou or Nav.liberarAtividade()
+            if ok and soltou then
+                s.canal="VirtualInput"
+                return true
+            end
+            s.virtual=nil
+            s.proximaVI=os.clock()+60
+            s.erroCanal=tostring(erro or "Nao foi possivel soltar o botao")
+            return false,soltou and "entrada_moderna_recusada" or "botao_pendente"
+        end
+        local agora=os.clock()
+        if not s.servico and agora>=(s.proximaBusca or 0) then
+            s.proximaBusca=agora+math.min(30,2^(math.min(s.seguidos,4)))
+            local ok,servico=pcall(function() return game:GetService("VirtualUser") end)
+            s.servico=ok and servico or nil
+        end
+        local pareado=false
+        local ok,erro=pcall(function()
+            if not s.servico then error("VirtualUser indisponivel neste ambiente") end
+            s.servico:CaptureController()
+            pareado=type(s.servico.Button1Down)=="function" and type(s.servico.Button1Up)=="function"
+            if pareado then
+                s.servico:Button1Down(ponto,camera.CFrame)
+                local segurou={vi=s.servico,ponto=ponto,camera=camera.CFrame,tipo="VirtualUser"}
+                s.pressionado=segurou
+                task.wait(0.04)
+                if s.pressionado==segurou and not Nav.liberarAtividade() then
+                    error("Nao foi possivel soltar o botao legado")
+                end
+            else
+                s.servico:ClickButton1(ponto,camera.CFrame)
+            end
+        end)
+        if ok then
+            s.canal=pareado and "VirtualUser pareado" or "VirtualUser legado"
+            return true
+        end
+        s.servico=nil
+        s.erroCanal=tostring(erro)
+        return false,"entrada_legada_recusada"
+    end
+
+    function Nav.rolarAtividade(ponto)
+        local s=Nav.atividade
+        if os.clock()<(s.proximaRoda or 0) then return false,"intervalo" end
+        s.proximaRoda=os.clock()+30
+        local ok,erro=pcall(function()
+            if s.virtual then
+                s.virtual:SendPointerAction(ponto,{Wheel=s.sentidoRoda})
+            else
+                if not s.gerenciador then s.gerenciador=game:GetService("VirtualInputManager") end
+                s.gerenciador:SendMouseWheelEvent(ponto.X,ponto.Y,s.sentidoRoda>0,game)
+            end
+        end)
+        if ok then
+            s.rodas=s.rodas+1
+            s.sentidoRoda=-s.sentidoRoda
+            s.rodaIndisponivel=false
+            return true,"enviado"
+        end
+        s.proximaRoda=os.clock()+60
+        s.rodaIndisponivel=true
+        s.gerenciador=nil
+        if not s.avisouRoda then
+            s.avisouRoda=true
+            warn("[DEBUG-BOT]: Rolagem indisponivel; cliques continuam:",erro)
+        end
+        return false,"indisponivel"
+    end
+
+    function Nav.executarPulso(g,a,motivo)
+        local s=Nav.atividade
+        if not s.ativo or s.g~=g or s.a~=a then return false,"desligado" end
         if not autoVivo(g,a) then return false,"cancelado" end
         if Nav.estado.prompt then return false,"interagindo" end
         if UserInputService:GetFocusedTextBox() then return false,"digitando" end
-        local okMenu,menu = pcall(function()
-            return game:GetService("GuiService").MenuIsOpen
-        end)
-        if okMenu and menu then return false,"menu" end
-        local agora = os.clock()
-        if agora-s.ultimaTentativa < s.intervalo then return false,"intervalo" end
-        local camera = workspace.CurrentCamera
+        local okMenu,menu=pcall(function() return game:GetService("GuiService").MenuIsOpen end)
+        if not okMenu then return false,"menu_indisponivel" end
+        if menu then return false,"menu" end
+        local agora=os.clock()
+        if agora-s.ultimaTentativa<s.intervalo then return false,"intervalo" end
+        local camera=workspace.CurrentCamera
         if not camera then return false,"sem_camera" end
-        local ponto = Nav.pontoClique(camera)
-        if not ponto then
-            R.atividadeTexto = "Autoclique pausado · tela ocupada"
-            return false,"tela_ocupada"
-        end
-        s.ultimaTentativa = agora
-        s.intervalo = Nav.intervaloAtividade()
-        s.proxima = agora+s.intervalo
-        if not s.servico and agora >= s.proximaBusca then
-            s.proximaBusca = agora+math.min(30,2^(math.min(s.seguidos,4)))
-            local disponivel,servico = pcall(function()
-                return game:GetService("VirtualUser")
-            end)
-            s.servico = disponivel and servico or nil
-        end
-        local ok,erro = pcall(function()
-            if not s.servico then error("VirtualUser indisponivel neste ambiente") end
-            s.servico:CaptureController()
-            s.servico:ClickButton1(ponto,camera.CFrame)
-        end)
+        if camera.ViewportSize.X<40 or camera.ViewportSize.Y<40 then return false,"janela_sem_area" end
+        local ponto=Nav.pontoClique(camera)
+        if not ponto then return false,"tela_ocupada" end
+        s.ultimaTentativa=agora
+        s.intervalo=Nav.intervaloAtividade()
+        s.proxima=agora+s.intervalo
+        local token=s.token
+        local ok,erro=Nav.enviarClique(ponto,camera)
+        if s.token~=token or not s.ativo or not autoVivo(g,a) then return false,"cancelado" end
         if ok then
-            s.enviados = s.enviados+1
-            s.ultimoPonto = ponto
-            s.seguidos = 0
-            s.ultimoSucesso = agora
-            s.avisou = false
-            R.atividadeTexto = string.format("Autoclique ~2s: ON · %d cliques · proximo %.2fs",s.enviados,s.intervalo)
+            s.enviados=s.enviados+1
+            s.ultimoPonto=ponto
+            s.seguidos=0
+            s.ultimoSucesso=os.clock()
+            s.avisou=false
+            -- Revalida o estado apos o pequeno tempo de pressionar o botao.
+            local seguro=not Nav.estado.prompt and not UserInputService:GetFocusedTextBox()
+            local menuOK,aberto=pcall(function() return game:GetService("GuiService").MenuIsOpen end)
+            if seguro and menuOK and not aberto and os.clock()>=(s.proximaRoda or 0) then
+                local atual=Nav.pontoClique(camera)
+                if atual then Nav.rolarAtividade(atual) end
+            end
             return true,"enviado"
         end
-        s.erros = s.erros+1
-        s.seguidos = s.seguidos+1
-        s.servico = nil
-        R.atividadeTexto = "Atividade indisponível · verificar Output"
+        s.erros=s.erros+1
+        s.seguidos=s.seguidos+1
         if not s.avisou then
-            s.avisou = true
-            warn("[DEBUG-BOT]: Autoclique indisponível:",erro,"Motivo:",motivo)
+            s.avisou=true
+            s.proximoAviso=os.clock()+60
+            warn("[DEBUG-BOT]: Entrada recusada:",s.erroCanal or erro,"Motivo:",motivo)
         end
-        return false,"erro"
+        return false,erro
+    end
+
+    function Nav.pulsoAtividade(g,a,motivo)
+        local s=Nav.atividade
+        if s.emPulso then return false,"entrada_pendente" end
+        local operacao={}
+        s.emPulso=operacao
+        local ok,enviou,estado=pcall(Nav.executarPulso,g,a,motivo)
+        if s.emPulso==operacao then s.emPulso=nil end
+        if not ok then
+            s.erros=s.erros+1
+            s.proxima=os.clock()+s.intervalo
+            s.erroCanal=tostring(enviou)
+            Nav.liberarAtividade()
+            Nav.estadoAtividade("erro_no_agendador")
+            return false,"erro"
+        end
+        if estado~="intervalo" and estado~="cancelado" and estado~="desligado" then
+            Nav.estadoAtividade(estado)
+            if not enviou then s.proxima=os.clock()+0.5 end
+        end
+        return enviou,estado
+    end
+
+    function Nav.loopAtividade(g,a,token,worker)
+        local s=Nav.atividade
+        while s.ativo and s.token==token and s.worker==worker and autoVivo(g,a) do
+            s.batida=os.clock()
+            if os.clock()>=s.proxima then
+                Nav.pulsoAtividade(g,a,"periodico")
+            end
+            task.wait(0.05)
+        end
+    end
+    function Nav.criarWorkerAtividade(g,a)
+        local s=Nav.atividade
+        s.worker=(s.worker or 0)+1
+        local worker,token=s.worker,s.token
+        s.batida=os.clock()
+        s.workerPendente=true
+        task.spawn(function()
+            if s.worker==worker and s.token==token then s.workerPendente=false end
+            Nav.loopAtividade(g,a,token,worker)
+        end)
+    end
+    function Nav.vigiarAtividade(g,a,token)
+        local s=Nav.atividade
+        if not s.ativo or s.token~=token then return end
+        if not autoVivo(g,a) then Nav.pararAtividade(); return end
+        local agora=os.clock()
+        if agora>=(s.proximaVigia or 0) then
+            s.proximaVigia=agora+1
+            if agora-(s.batida or agora)>10 then
+                if s.workerPendente then
+                    Nav.estadoAtividade("agendador_sem_execucao")
+                elseif s.emPulso then
+                    Nav.estadoAtividade("entrada_pendente")
+                else
+                    s.reinicios=s.reinicios+1
+                    s.proxima=agora
+                    Nav.criarWorkerAtividade(g,a)
+                    registrar("ATIVIDADE","Agendador retomado; periodo sem executar nao conta como atividade.")
+                end
+            end
+            if agora-(s.ultimoSucesso or s.inicio)>60 then
+                Nav.estadoAtividade(s.ultimoMotivo or "sem_envio")
+            end
+        end
     end
 
     function Nav.iniciarAtividade(g,a)
         Nav.pararAtividade()
-        local s = Nav.atividade
-        s.ativo = true
-        s.g = g
-        s.a = a
-        s.avisou = false
-        s.ultimaTentativa = -math.huge
-        s.seguidos = 0
-        s.proximaBusca = 0
-        s.gaussReserva = nil
-        s.intervalo = Nav.intervaloAtividade()
-        s.ultimoPonto = nil
-        s.proxima = os.clock()+s.intervalo
-        local token = s.token
-        local ok,servico = pcall(function()
-            return game:GetService("VirtualUser")
+        local s=Nav.atividade
+        s.ativo=true
+        s.g=g
+        s.a=a
+        s.avisou=false
+        s.avisouRoda=false
+        s.ultimaTentativa=-math.huge
+        s.seguidos=0
+        s.proximaBusca=0
+        s.gaussReserva=nil
+        s.intervalo=Nav.intervaloAtividade()
+        s.ultimoPonto=nil
+        s.proxima=os.clock()+s.intervalo
+        s.inicio=os.clock()
+        s.ultimoSucesso=s.inicio
+        s.proximaUI=0
+        s.proximoAviso=0
+        s.proximaVigia=0
+        s.proximaRoda=os.clock()+30
+        s.sentidoRoda=1
+        s.rodas=0
+        s.reinicios=0
+        s.idleObservado=false
+        s.idleEventos=0
+        s.ultimoIdle=nil
+        s.proximoLogIdle=0
+        s.emPulso=nil
+        s.ultimoMotivo="iniciando"
+        local token=s.token
+        local ok,servico=pcall(function() return game:GetService("VirtualUser") end)
+        s.servico=ok and servico or nil
+        R.atividadeTexto="Entrada local iniciada · nao confirma aceitacao pelo motor"
+        s.conn=LocalPlayer.Idled:Connect(function(tempo)
+            if not s.ativo or s.token~=token then return end
+            s.idleEventos=s.idleEventos+1
+            s.ultimoIdle=os.clock()
+            s.idleSegundos=type(tempo)=="number" and tempo or 0
+            s.idleObservado=true
+            s.proximaUI=0
+            if os.clock()>=s.proximoLogIdle then
+                s.proximoLogIdle=os.clock()+60
+                registrar("AFK","Motor ainda informa inatividade; envios locais nao confirmam aceitacao. Tempo: "..tostring(s.idleSegundos).."s")
+            end
+            Nav.estadoAtividade("motor_sinalizou_AFK")
+            Nav.pulsoAtividade(g,a,"Idled")
         end)
-        s.servico = ok and servico or nil
-        R.atividadeTexto = "Autoclique ~2s: ON · variacao gaussiana"
-        s.conn = LocalPlayer.Idled:Connect(function()
-            if s.token == token then Nav.pulsoAtividade(g,a,"Idled") end
-        end)
-        task.spawn(function()
-            while s.ativo and s.token == token and autoVivo(g,a) do
-                if os.clock() >= s.proxima then
-                    local sucesso,erro = pcall(Nav.pulsoAtividade,g,a,"periodico")
-                    if not sucesso then
-                        s.proxima = os.clock()+s.intervalo
-                        s.erros = s.erros+1
-                        R.atividadeTexto = "Autoclique em recuperação"
-                        if not s.avisou then
-                            s.avisou = true
-                            warn("[DEBUG-BOT]: Recuperando autoclique:",erro)
-                        end
-                    end
+        s.vigiaConn=RunService.Heartbeat:Connect(function()
+            local ok,erro=pcall(Nav.vigiarAtividade,g,a,token)
+            if not ok then
+                s.erroCanal=tostring(erro)
+                if os.clock()>=(s.proximoAviso or 0) then
+                    s.proximoAviso=os.clock()+60
+                    warn("[DEBUG-BOT]: Monitor de atividade:",erro)
                 end
-                task.wait(0.05)
             end
         end)
-        registrar("ATIVIDADE","Clique esquerdo ~2s (normal limitada); raio 5-15px validado fora da interface.")
+        Nav.criarWorkerAtividade(g,a)
+        registrar("ATIVIDADE","Clique ~2s; rolagem alternada 30s se permitida; monitor de envios e sinal AFK.")
     end
 
     function Nav.fase(nome)
@@ -8673,7 +8897,7 @@ GS.iniciarFarmaLucky = function()
     local detectar = U.tog(painel,"PROCURAR LUCKY BLOCKS",21)
     detectar:SetAttribute("Controlado",true)
     detectar.Text="LUCKY BLOCKS: OFF"
-    local automatico = U.tog(painel,"IR ATÉ O LUCKY BLOCK · VOO 90",22)
+    local automatico = U.tog(painel,"IR ATÉ O LUCKY BLOCK · TELEPORTE",22)
     automatico:SetAttribute("Controlado",true)
     automatico.Text="AUTO LUCKY: OFF"
     local busca = U.acao(painel,"REFAZER BUSCA COMPLETA","scan-search",23)
@@ -8942,69 +9166,95 @@ GS.iniciarFarmaLucky = function()
         if not ok then warn("[DEBUG-LUCKY]: Interação:",err) end
         return disparou
     end
-    local function aproximar(e,g,c)
-        local _,hum,root=personagem()
-        if not hum then return end
-        local destino=posPrompt(e.it.prompt,e.it.base)
-        if (root.Position-destino).Magnitude<=8 then return end
-        local path=game:GetService("PathfindingService"):CreatePath({
-            AgentRadius=2,AgentHeight=5,AgentCanJump=true,
-        })
-        local ok=pcall(function() path:ComputeAsync(root.Position,destino) end)
-        local fim=os.clock()+12
-        if ok and autoVivo(g,c) and path.Status==Enum.PathStatus.Success then
-            for _,ponto in ipairs(path:GetWaypoints()) do
-                if not autoVivo(g,c) or not e.obj:IsDescendantOf(workspace) or os.clock()>fim then break end
-                if (root.Position-destino).Magnitude<6 then break end
-                if ponto.Action==Enum.PathWaypointAction.Jump then hum.Jump=true end
-                hum:MoveTo(ponto.Position)
-                local prazo=os.clock()+1.5
-                while autoVivo(g,c) and root.Parent and os.clock()<math.min(prazo,fim) do
-                    if hum.Health<=0 or (root.Position-ponto.Position).Magnitude<3 then break end
-                    task.wait(0.08)
-                end
-                if not root.Parent or hum.Health<=0 then break end
+    -- Chegada direta ao Lucky Block; nao substitui o tempo de abrir do prompt.
+    local function teleportarLucky(e,g,c)
+        local char,hum,root=personagem()
+        if not char or not hum or not root or hum.Health<=0 then return false,"sem_personagem" end
+        if root.Anchored then return false,"ancorado" end
+        local function finito(v)
+            return v and v.X==v.X and v.Y==v.Y and v.Z==v.Z
+                and math.abs(v.X)<10000000 and math.abs(v.Y)<10000000 and math.abs(v.Z)<10000000
+        end
+        local parametros=RaycastParams.new()
+        parametros.FilterType=Enum.RaycastFilterType.Exclude
+        parametros.FilterDescendantsInstances={char,e.obj}
+        parametros.IgnoreWater=true
+        parametros.RespectCanCollide=true
+        for tentativa=1,3 do
+            if not autoVivo(g,c) or LocalPlayer.Character~=char then return false,"cancelado" end
+            if not e.obj:IsDescendantOf(workspace) then return false,"retirado" end
+            local base=parte(e.obj)
+            if not base then return false,"sem_base" end
+            local pos=posPrompt(e.it.prompt,base)
+            if not finito(pos) or pos.Y<=workspace.FallenPartsDestroyHeight+20 then
+                return false,"destino_invalido"
+            end
+            local alcance=e.it.prompt and e.it.prompt.MaxActivationDistance or 8
+            if type(alcance)~="number" or alcance<=0 then return false,"sem_alcance" end
+            local afastamento=math.min(3,math.max(0.5,alcance*0.4))
+            local cf=base.CFrame
+            local frente=cf and cf.LookVector or Vector3.new(0,0,-1)
+            local direita=cf and cf.RightVector or Vector3.new(1,0,0)
+            local direcao=tentativa==1 and frente or (tentativa==2 and direita or direita*-1)
+            direcao=Vector3.new(direcao.X,0,direcao.Z)
+            if direcao.Magnitude<0.01 then direcao=Vector3.new(0,0,-1) end
+            local destino=pos+direcao.Unit*afastamento
+            local hit=workspace:Raycast(destino+Vector3.new(0,12,0),Vector3.new(0,-64,0),parametros)
+            if hit and hit.Normal.Y>0.45 then
+                local altura=math.max(3,hum.HipHeight+root.Size.Y*0.5)
+                local apoiado=Vector3.new(destino.X,hit.Position.Y+altura,destino.Z)
+                -- Um piso muito abaixo do bloco nao e uma chegada utilizavel.
+                if (apoiado-pos).Magnitude<=alcance*0.9 then destino=apoiado end
+            end
+            if (destino-pos).Magnitude>=alcance then return false,"fora_do_alcance" end
+            L.fase="TELEPORTANDO ATÉ "..(e.it.nome or e.obj.Name)
+            GS.farmaDirecao=Vector3.zero
+            local ok,erro=pcall(function()
+                hum.Sit=false
+                hum.PlatformStand=false
+                root.AssemblyLinearVelocity=Vector3.zero
+                root.AssemblyAngularVelocity=Vector3.zero
+                root.CFrame=root.CFrame+(destino-root.Position)
+            end)
+            if not ok then return false,tostring(erro) end
+            task.wait(0.15)
+            if not autoVivo(g,c) or LocalPlayer.Character~=char then return false,"cancelado" end
+            if not e.obj:IsDescendantOf(workspace) then return false,"retirado" end
+            local atual,humAtual,raiz=personagem()
+            if atual~=char or humAtual~=hum or raiz~=root or hum.Health<=0 then return false,"personagem_mudou" end
+            local atualBase=parte(e.obj)
+            if not atualBase then return false,"retirado" end
+            local atualPos=posPrompt(e.it.prompt,atualBase)
+            if finito(atualPos) and (raiz.Position-atualPos).Magnitude<alcance
+                and (raiz.Position-destino).Magnitude<5 then
+                raiz.AssemblyLinearVelocity=Vector3.zero
+                raiz.AssemblyAngularVelocity=Vector3.zero
+                return true,"chegou"
             end
         end
-        path:Destroy()
+        return false,"servidor_corrigiu_posicao"
     end
+
     local function buscarAlvo(e,g,c)
         local _,hum,root=personagem()
         if not hum then return end
         if GS.noclipArquivo then GS.noclipArquivo.ativar("lucky") end
-        L.fase="INDO ATÉ "..(e.it.nome or e.obj.Name)
-        velocidadeVoo=90
-        FlyLabel.Text="VOO: 90"
         GS.farmaDirecao=Vector3.zero
         if not flyAtivado then alternarFly() end
-        local inicio=os.clock()
-        local ultimaDist=math.huge
-        local progresso=os.clock()
-        while autoVivo(g,c) and e.obj:IsDescendantOf(workspace) and os.clock()-inicio<20 do
-            local _,atual,raiz=personagem()
-            local base=parte(e.obj)
-            if atual~=hum or not base or raiz.Anchored then break end
-            local delta=posPrompt(e.it.prompt,base)+Vector3.new(0,2,0)-raiz.Position
-            if delta.Magnitude<10 then break end
-            if delta.Magnitude<ultimaDist-1 then
-                ultimaDist=delta.Magnitude
-                progresso=os.clock()
-            elseif os.clock()-progresso>3 then
-                print("[DEBUG-LUCKY]: Obstáculo no voo; tentando rota a pé.")
-                break
-            end
-            GS.farmaDirecao=delta.Unit*math.clamp(delta.Magnitude/10,0,1)
-            task.wait(0.05)
-        end
-        if not autoVivo(g,c) then return end
+        local chegou,motivo=teleportarLucky(e,g,c)
         GS.farmaDirecao=nil
         if flyAtivado then alternarFly() end
-        root.AssemblyLinearVelocity=Vector3.zero
         if GS.noclipArquivo then GS.noclipArquivo.liberar("lucky") end
-        hum.WalkSpeed=16
-        aproximar(e,g,c)
         if not autoVivo(g,c) then return end
-        inicio=os.clock()
+        if not chegou then
+            L.espera[e.obj]=os.clock()+15
+            L.fase="TELEPORTE NÃO CONFIRMADO · PRÓXIMO BLOCO"
+            print("[DEBUG-LUCKY]: Teleporte:",motivo)
+            return
+        end
+        root.AssemblyLinearVelocity=Vector3.zero
+        hum.WalkSpeed=16
+        local inicio=os.clock()
         local confirmou=false
         while autoVivo(g,c) and e.obj:IsDescendantOf(workspace) and os.clock()-inicio<12 do
             local _,atual,raiz=personagem()
@@ -9091,7 +9341,7 @@ GS.iniciarFarmaLucky = function()
         if GS.noclipArquivo then GS.noclipArquivo.ativar("lucky") end
         L.ciclo=L.ciclo+1
         local g,c=L.geracao,L.ciclo
-        automatico.Text="AUTO LUCKY: ON · 90"
+        automatico.Text="AUTO LUCKY: ON · TELEPORTE"
         task.spawn(function()
             while autoVivo(g,c) do
                 local ok,err=pcall(function()
