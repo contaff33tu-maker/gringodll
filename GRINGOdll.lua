@@ -1,4 +1,4 @@
--- GRINGOdll V50.7 · Feito pelo @henrique_system
+-- GRINGOdll V50.8 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +29,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.7"
+GS.versao = "V50.8"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -7197,6 +7197,9 @@ GS.iniciarFarma = function()
     end
 
     function Nav.reset()
+        Nav.guardaParar()
+        Nav.guarda.ultimo=nil
+        Nav.guarda.char=nil
         Nav.mundoNovo()
         R.sujo = true
         Nav.estado.ancora = nil
@@ -7227,6 +7230,7 @@ GS.iniciarFarma = function()
     end
 
     function Nav.parar()
+        Nav.guardaParar()
         Nav.liberarPrompt()
         Nav.estado.alvo = nil
         Nav.estado.rota = nil
@@ -7343,7 +7347,20 @@ GS.iniciarFarma = function()
                     return "replanejar"
                 end
             end
-            GS.farmaDirecao = Nav.velocidadePara(delta,opcoes.preciso)
+            local direcao=Nav.velocidadePara(delta,opcoes.preciso)
+            local sobeSeguro=opcoes.recuperacao and delta.Y>0
+                and Nav.distanciaHorizontal(ctx.root.Position,destino)<0.1
+            if not sobeSeguro then
+                local alcance=math.min(delta.Magnitude,direcao.Magnitude*Nav.cfg.velocidade*Nav.guardaCfg.previsao)
+                local frente=ctx.root.Position+delta.Unit*alcance
+                if not Nav.guardaRota(ctx,ctx.root.Position,frente) then
+                    Nav.zerar(ctx)
+                    Nav.guardaConter(ctx)
+                    return "borda"
+                end
+                Nav.guardaSalvar(ctx)
+            end
+            GS.farmaDirecao = direcao
             task.wait(Nav.cfg.intervalo)
         end
         if autoVivo(ctx.g,ctx.a) then Nav.zerar(ctx) end
@@ -7662,6 +7679,7 @@ GS.iniciarFarma = function()
         if not Nav.vivo(ctx) then return "cancelado" end
         if flyAtivado then return "ainda_voando" end
         if ctx.root.Anchored then return "ancorado" end
+        if not Nav.guardaRota(ctx,ctx.root.Position,destino) then return "borda" end
         ctx.hum.PlatformStand = false
         ctx.hum.WalkSpeed = CFG.caminhada
         if pular then ctx.hum.Jump = true end
@@ -7873,6 +7891,11 @@ GS.iniciarFarma = function()
             if ponto.Y <= workspace.FallenPartsDestroyHeight+Nav.cfg.minAltura then
                 return "destino_inseguro"
             end
+            if not Nav.guardaRota(ctx,ctx.root.Position,ponto) then
+                Nav.zerar(ctx)
+                return "borda"
+            end
+            Nav.guardaSalvar(ctx)
             Nav.zerar(ctx)
             local ok = pcall(function()
                 ctx.root.CFrame = ctx.root.CFrame+(ponto-ctx.root.Position)
@@ -7988,6 +8011,10 @@ GS.iniciarFarma = function()
         Nav.estado.alvo = e.obj
         Nav.salvarSeguro(ctx)
         local rapido = Nav.encadearRapido(ctx,e)
+        if rapido=="borda" then
+            Nav.concluir(ctx,e,"borda")
+            return
+        end
         if rapido == "inventario" or rapido == "retirado" or rapido == "cancelado" then
             Nav.concluir(ctx,e,rapido)
             return
@@ -8038,6 +8065,7 @@ GS.iniciarFarma = function()
             end
             if resultado == "inventario" or resultado == "retirado" then break end
             if resultado == "cancelado" then break end
+            if resultado == "borda" then break end
             if resultado == "reagendar" or os.clock()>ctx.prazo then
                 resultado = "reagendar"
                 break
@@ -8330,11 +8358,18 @@ GS.iniciarFarma = function()
         if distancia<0.01 then return meta end
         local bruto=ctx.root.Position+delta.Unit*math.min(distancia,Nav.mundoCfg.trecho)
         local sondado=Nav.sondarPatrulha(ctx,bruto)
-        if sondado then return sondado end
-        local y=math.clamp(ctx.root.Position.Y,
-            workspace.FallenPartsDestroyHeight+Nav.cfg.minAltura+5,
-            Nav.estado.ancora.Y+Nav.cfg.alturaMaxPatrulha)
-        return Vector3.new(bruto.X,y,bruto.Z)
+        local candidato=sondado or bruto
+        local seguro,ultimo=Nav.guardaRota(ctx,ctx.root.Position,candidato)
+        if seguro then return candidato end
+        Nav.mundoRegistrar(meta,true)
+        Nav.mundoEstado().alvo=nil
+        Nav.mundoPedirCarga(ctx,bruto)
+        Nav.fase("BORDA OU REGIAO SEM CHAO · REPLANEJANDO POR DENTRO")
+        if ultimo and Nav.distanciaHorizontal(ctx.root.Position,ultimo)>8 then
+            return Nav.sondarPatrulha(ctx,ultimo)
+        end
+        Nav.zerar(ctx)
+        return nil
     end
     function Nav.mundoConcluir(ctx,resultado)
         local m=Nav.mundoEstado()
@@ -8355,6 +8390,128 @@ GS.iniciarFarma = function()
             visitados=m.total,voltas=m.voltas,cargas=m.cargas,
             errosCarga=m.errosCarga,carregando=m.carregando,
             fronteiraX=m.espiral.x,fronteiraZ=m.espiral.z}
+    end
+    -- Borda desconhecida e tratada como bloqueada, nunca como terreno livre.
+    Nav.guardaCfg={margem=3,passo=6,previsao=0.12,intervalo=0.05}
+    Nav.guarda={ultimo=nil,char=nil,conn=nil,proximo=0,bloqueios=0,retornos=0}
+    function Nav.guardaDentro(pos)
+        if not Nav.vetorValido(pos) then return false end
+        local m=Nav.mundoEstado()
+        local b=m.limites
+        if b and b.explicito then
+            local r=Nav.guardaCfg.margem
+            if pos.X<b.minX+r or pos.X>b.maxX-r
+                or pos.Z<b.minZ+r or pos.Z>b.maxZ-r then return false end
+        end
+        return pos.Y>workspace.FallenPartsDestroyHeight+Nav.cfg.minAltura
+    end
+    function Nav.guardaPiso(ctx,pos)
+        if not Nav.guardaDentro(pos) then return false end
+        local r=Nav.guardaCfg.margem
+        local offsets={
+            Vector3.zero,Vector3.new(r,0,0),Vector3.new(-r,0,0),
+            Vector3.new(0,0,r),Vector3.new(0,0,-r),
+        }
+        for _,offset in ipairs(offsets) do
+            local apoio=Nav.sondarPatrulha(ctx,pos+offset)
+            if not apoio then return false end
+        end
+        return true
+    end
+    function Nav.guardaRota(ctx,origem,destino)
+        if not Nav.vetorValido(origem) or not Nav.vetorValido(destino) then return false,nil end
+        if not Nav.guardaPiso(ctx,origem) then return false,nil end
+        local delta=destino-origem
+        local horizontal=Nav.distanciaHorizontal(origem,destino)
+        local passos=math.max(1,math.ceil(horizontal/Nav.guardaCfg.passo))
+        -- Nao permite uma sonda excepcionalmente longa travar um frame.
+        if passos>512 then return false,origem end
+        local ultimo=origem
+        for i=1,passos do
+            local ponto=origem+delta*(i/passos)
+            if not Nav.guardaPiso(ctx,ponto) then return false,ultimo end
+            ultimo=ponto
+        end
+        return true,ultimo
+    end
+    function Nav.guardaSalvar(ctx)
+        if not Nav.vivo(ctx) or not Nav.guardaPiso(ctx,ctx.root.Position) then return false end
+        Nav.guarda.ultimo={pos=ctx.root.Position,char=ctx.char}
+        Nav.guarda.char=ctx.char
+        return true
+    end
+    function Nav.guardaParar()
+        local s=Nav.guarda
+        if s.conn then s.conn:Disconnect(); s.conn=nil end
+        s.proximo=0
+    end
+    function Nav.guardaConter(ctx)
+        if not Nav.vivo(ctx) then return false end
+        Nav.zerar(ctx)
+        pcall(function() ctx.hum:MoveTo(ctx.root.Position) end)
+        local ultimo=Nav.guarda.ultimo
+        if not ultimo or ultimo.char~=ctx.char then return false end
+        if not Nav.guardaPiso(ctx,ultimo.pos) then return false end
+        local ok=pcall(function()
+            ctx.root.CFrame=ctx.root.CFrame+(ultimo.pos-ctx.root.Position)
+            ctx.root.AssemblyLinearVelocity=Vector3.zero
+            ctx.root.AssemblyAngularVelocity=Vector3.zero
+            ctx.hum:MoveTo(ultimo.pos)
+        end)
+        if ok then Nav.guarda.retornos=Nav.guarda.retornos+1 end
+        return ok
+    end
+    function Nav.guardaPasso(g,a)
+        local s=Nav.guarda
+        local ctx=Nav.contexto(g,a)
+        if not ctx then return end
+        if s.char~=ctx.char then s.ultimo=nil; s.char=ctx.char end
+        if not Nav.guardaPiso(ctx,ctx.root.Position) then
+            s.bloqueios=s.bloqueios+1
+            Nav.guardaConter(ctx)
+            Nav.fase("BORDA BLOQUEADA · MANTENDO AREA SEGURA")
+            return
+        end
+        Nav.guardaSalvar(ctx)
+        local direcao=GS.farmaDirecao
+        local velocidade=ctx.root.AssemblyLinearVelocity
+        local deslocamento=Vector3.zero
+        if Nav.vetorValido(velocidade) then deslocamento=velocidade*Nav.guardaCfg.previsao end
+        if direcao and Nav.vetorValido(direcao) and direcao.Magnitude>0 then
+            deslocamento=direcao*Nav.cfg.velocidade*Nav.guardaCfg.previsao
+        end
+        if deslocamento.Magnitude>0.1 then
+            local seguro=Nav.guardaRota(ctx,ctx.root.Position,ctx.root.Position+deslocamento)
+            if not seguro then
+                s.bloqueios=s.bloqueios+1
+                Nav.zerar(ctx)
+                pcall(function() ctx.hum:MoveTo(ctx.root.Position) end)
+            end
+        end
+    end
+    function Nav.guardaIniciar(g,a)
+        Nav.guardaParar()
+        Nav.guarda.char=nil
+        Nav.guarda.ultimo=nil
+        local ok,erro=pcall(Nav.guardaPasso,g,a)
+        if not ok then
+            GS.farmaDirecao=Vector3.zero
+            warn("[DEBUG-BOT]: Iniciando protecao de borda:",erro)
+        end
+        Nav.guarda.conn=RunService.Heartbeat:Connect(function()
+            if not autoVivo(g,a) then Nav.guardaParar(); return end
+            if os.clock()<Nav.guarda.proximo then return end
+            Nav.guarda.proximo=os.clock()+Nav.guardaCfg.intervalo
+            local ok,erro=pcall(Nav.guardaPasso,g,a)
+            if not ok then
+                GS.farmaDirecao=Vector3.zero
+                if bodyVelocity and bodyVelocity.Parent then bodyVelocity.Velocity=Vector3.zero end
+                if os.clock()>=(Nav.guarda.proximoErro or 0) then
+                    Nav.guarda.proximoErro=os.clock()+5
+                    warn("[DEBUG-BOT]: Protecao de borda:",erro)
+                end
+            end
+        end)
     end
     R.observarMapa=Nav.mundoObservar
     function Nav.inicializarPatrulha(ctx)
@@ -8420,6 +8577,14 @@ GS.iniciarFarma = function()
         local profundidade = limites and math.clamp(altura-limites.minY+128,500,8192) or 500
         local hit = Nav.raio(origem,Vector3.new(0,-profundidade,0),ctx,nil)
         if not hit then return end
+        local apoio=hit.Instance
+        if not apoio or not apoio.Parent then return end
+        if apoio:IsA("BasePart") and (not apoio.Anchored or not apoio.CanCollide) then return end
+        local modelo=apoio:FindFirstAncestorOfClass("Model")
+        while modelo do
+            if modelo:FindFirstChildOfClass("Humanoid") then return end
+            modelo=modelo:FindFirstAncestorOfClass("Model")
+        end
         if hit.Normal.Y < Nav.cfg.normalMinima then return end
         if hit.Position.Y <= workspace.FallenPartsDestroyHeight+20 then return end
         local destino = hit.Position+Vector3.new(0,Nav.cfg.alturaPatrulha,0)
@@ -8448,6 +8613,7 @@ GS.iniciarFarma = function()
         Nav.fase("VARRENDO MAPA · SETORES, BORDAS E CANTOS")
         local destino = Nav.planoPatrulha(ctx)
         if not destino then
+            Nav.zerar(ctx)
             Nav.esperar(ctx,0.3)
             return
         end
@@ -8468,6 +8634,8 @@ GS.iniciarFarma = function()
         Nav.estado.patrulhas = Nav.estado.patrulhas+1
         if resultado == "void" then
             Nav.recuperar(ctx)
+        elseif resultado=="borda" then
+            Nav.guardaConter(ctx)
         elseif resultado ~= "chegou" then
             Nav.estado.recuperacoes = Nav.estado.recuperacoes+1
             local acima = ctx.root.Position+Vector3.new(0,8,0)
@@ -8528,6 +8696,7 @@ GS.iniciarFarma = function()
         Nav.iniciarAtividade(g,a)
         salvarMovimento()
         if GS.noclipArquivo then GS.noclipArquivo.ativar("frascos") end
+        Nav.guardaIniciar(g,a)
         autoBtn.Text = "AUTOMÁTICO: ON · VOO 500"
         registrar("AUTO","Patrulha em voo 500; rotas por altura, laterais, pouso e pulos.")
         task.spawn(function()
