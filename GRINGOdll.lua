@@ -1,4 +1,4 @@
--- GRINGOdll V50.6 · Feito pelo @henrique_system
+-- GRINGOdll V50.7 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +29,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.6"
+GS.versao = "V50.7"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -6324,7 +6324,7 @@ GS.iniciarFarma = function()
         limiteColeta = 18,
         pausaErro = 12,
         correlacao = 8,
-        intervaloScan = 3,
+        intervaloScan = 2,
         intervaloUI = 0.15,
         maxHistorico = 60,
         maxMarcadores = 10,
@@ -6568,6 +6568,7 @@ GS.iniciarFarma = function()
         local inicial = R.inicial
         for i,obj in ipairs(workspace:GetDescendants()) do
             if not mesmoCiclo(g) then return end
+            if R.observarMapa then R.observarMapa(obj) end
             if obj.Name == CFG.nome then adicionar(obj,inicial) end
             if i % 300 == 0 then task.wait() end
         end
@@ -7196,6 +7197,8 @@ GS.iniciarFarma = function()
     end
 
     function Nav.reset()
+        Nav.mundoNovo()
+        R.sujo = true
         Nav.estado.ancora = nil
         Nav.estado.seguro = nil
         Nav.estado.alvo = nil
@@ -8076,6 +8079,284 @@ GS.iniciarFarma = function()
         return resultado == "chegou"
     end
 
+    -- Cobertura global: limites observados, bordas, grade e fronteira expansiva.
+    -- Sem reiniciar a busca no raio local de oito aneis.
+    Nav.mundoCfg = {
+        celula=220, trecho=280, maxRaio=32768,
+        maxVisitados=2048, revisita=180, pausaFalha=25,
+        intervaloCarga=2, timeoutCarga=1.5, intervaloCantos=20,
+        candidatosPorPasso=128, margem=12,
+    }
+    function Nav.mundoNovo()
+        Nav.mundo = {
+            limites=nil, origem=nil, alvo=nil, versao=0, fila={},
+            cantosVersao=-1, ultCantos=-math.huge, visitados={}, total=0,
+            ix=nil, iz=nil, sentido=1, voltas=0, planos=0,
+            espiral={x=0,z=0,dx=1,dz=0,tamanho=1,andou=0,viradas=0},
+            carregando=false, proximaCarga=0, cargas=0, errosCarga=0,
+            token={}, ultimaLimpeza=0, proximaFronteira=0, fonte="exploracao",
+        }
+        return Nav.mundo
+    end
+    function Nav.mundoEstado()
+        return Nav.mundo or Nav.mundoNovo()
+    end
+    function Nav.mundoLimites(minimo,maximo,fonte)
+        if not Nav.vetorValido(minimo) or not Nav.vetorValido(maximo) then return false end
+        if minimo.X>maximo.X or minimo.Y>maximo.Y or minimo.Z>maximo.Z then return false end
+        if maximo.X-minimo.X>Nav.mundoCfg.maxRaio*2
+            or maximo.Z-minimo.Z>Nav.mundoCfg.maxRaio*2 then return false end
+        local m = Nav.mundoEstado()
+        local b = m.limites
+        if b and b.explicito and fonte~="atributos" then return false end
+        if b and b.explicito and fonte=="atributos"
+            and b.minX==minimo.X and b.maxX==maximo.X
+            and b.minY==minimo.Y and b.maxY==maximo.Y
+            and b.minZ==minimo.Z and b.maxZ==maximo.Z then return true end
+        if not b or fonte=="atributos" then
+            b={minX=minimo.X,maxX=maximo.X,minZ=minimo.Z,maxZ=maximo.Z,
+                minY=minimo.Y,maxY=maximo.Y,explicito=fonte=="atributos"}
+            m.limites=b
+            m.versao=m.versao+1
+        else
+            local x1,x2,z1,z2=b.minX,b.maxX,b.minZ,b.maxZ
+            b.minX=math.min(b.minX,minimo.X)
+            b.maxX=math.max(b.maxX,maximo.X)
+            b.minZ=math.min(b.minZ,minimo.Z)
+            b.maxZ=math.max(b.maxZ,maximo.Z)
+            b.minY=math.min(b.minY,minimo.Y)
+            b.maxY=math.max(b.maxY,maximo.Y)
+            if x1~=b.minX or x2~=b.maxX or z1~=b.minZ or z2~=b.maxZ then
+                m.versao=m.versao+1
+            end
+        end
+        m.fonte=fonte or "geometria carregada"
+        return true
+    end
+    function Nav.mundoObservar(obj)
+        local ok = pcall(function()
+            if not obj:IsA("BasePart") or not obj.Anchored or not obj.CanCollide then return end
+            if not obj:IsDescendantOf(workspace) then return end
+            local modelo = obj:FindFirstAncestorOfClass("Model")
+            while modelo do
+                if modelo:FindFirstChildOfClass("Humanoid") then return end
+                modelo = modelo:FindFirstAncestorOfClass("Model")
+            end
+            local pos,tam = obj.Position,obj.Size
+            if not Nav.vetorValido(pos) or not Nav.vetorValido(tam) then return end
+            if tam.Magnitude<4 or tam.Magnitude>Nav.mundoCfg.maxRaio*2 then return end
+            if pos.Y<=workspace.FallenPartsDestroyHeight+20 then return end
+            local cf = obj.CFrame
+            local rx,uy,lz = cf.RightVector,cf.UpVector,cf.LookVector
+            local ext
+            if rx and uy and lz then
+                ext=Vector3.new(
+                    (math.abs(rx.X)*tam.X+math.abs(uy.X)*tam.Y+math.abs(lz.X)*tam.Z)/2,
+                    (math.abs(rx.Y)*tam.X+math.abs(uy.Y)*tam.Y+math.abs(lz.Y)*tam.Z)/2,
+                    (math.abs(rx.Z)*tam.X+math.abs(uy.Z)*tam.Y+math.abs(lz.Z)*tam.Z)/2)
+            else
+                ext=tam*0.5
+            end
+            Nav.mundoLimites(pos-ext,pos+ext,"geometria carregada")
+        end)
+        return ok
+    end
+    function Nav.mundoAtributos()
+        local ok,mi,ma = pcall(function()
+            return workspace:GetAttribute("FarmMapMin"),workspace:GetAttribute("FarmMapMax")
+        end)
+        if ok and mi and ma then return Nav.mundoLimites(mi,ma,"atributos") end
+        return false
+    end
+    function Nav.mundoChave(pos)
+        local c=Nav.mundoCfg.celula
+        return math.floor(pos.X/c)..":"..math.floor(pos.Z/c)
+    end
+    function Nav.mundoRegistrar(pos,falha)
+        local m=Nav.mundoEstado()
+        local chave=Nav.mundoChave(pos)
+        if not m.visitados[chave] then m.total=m.total+1 end
+        m.visitados[chave]={hora=os.clock(),falha=falha==true,pos=pos}
+        if m.total>Nav.mundoCfg.maxVisitados then
+            local lista={}
+            for k,v in pairs(m.visitados) do table.insert(lista,{chave=k,hora=v.hora}) end
+            table.sort(lista,function(a,b) return a.hora<b.hora end)
+            for i=1,#lista-Nav.mundoCfg.maxVisitados do
+                m.visitados[lista[i].chave]=nil
+                m.total=m.total-1
+            end
+        end
+    end
+    function Nav.mundoDisponivel(pos)
+        if not Nav.vetorValido(pos) then return false end
+        local m=Nav.mundoEstado()
+        local antigo=m.visitados[Nav.mundoChave(pos)]
+        if not antigo then return true end
+        local prazo=antigo.falha and Nav.mundoCfg.pausaFalha or Nav.mundoCfg.revisita
+        return os.clock()-antigo.hora>=prazo
+    end
+    function Nav.mundoCantos()
+        local m=Nav.mundoEstado()
+        local b=m.limites
+        if not b then return end
+        if m.cantosVersao==m.versao then return end
+        if os.clock()-m.ultCantos<Nav.mundoCfg.intervaloCantos then return end
+        m.cantosVersao=m.versao
+        m.ultCantos=os.clock()
+        local margem=Nav.mundoCfg.margem
+        local x1=math.min(b.minX+margem,(b.minX+b.maxX)/2)
+        local x2=math.max(b.maxX-margem,(b.minX+b.maxX)/2)
+        local z1=math.min(b.minZ+margem,(b.minZ+b.maxZ)/2)
+        local z2=math.max(b.maxZ-margem,(b.minZ+b.maxZ)/2)
+        local cx,cz=(x1+x2)/2,(z1+z2)/2
+        local y=m.origem.Y+Nav.cfg.alturaPatrulha
+        m.fila={
+            Vector3.new(x2,y,z2),Vector3.new(x1,y,z1),
+            Vector3.new(x2,y,z1),Vector3.new(x1,y,z2),
+            Vector3.new(cx,y,z2),Vector3.new(cx,y,z1),
+            Vector3.new(x2,y,cz),Vector3.new(x1,y,cz),
+        }
+    end
+    function Nav.mundoGrade()
+        local m=Nav.mundoEstado()
+        local b=m.limites
+        if not b then return nil end
+        local c=Nav.mundoCfg.celula
+        local x1,x2=math.floor(b.minX/c),math.ceil(b.maxX/c)
+        local z1,z2=math.floor(b.minZ/c),math.ceil(b.maxZ/c)
+        if not m.ix or not m.iz or m.iz<z1 or m.iz>z2 or m.ix<x1 or m.ix>x2 then
+            m.ix=x1
+            m.iz=z1
+            m.sentido=1
+        end
+        local ix,iz=m.ix,m.iz
+        m.ix=m.ix+m.sentido
+        if m.ix>x2 or m.ix<x1 then
+            m.iz=m.iz+1
+            m.sentido=-m.sentido
+            m.ix=m.sentido>0 and x1 or x2
+            if m.iz>z2 then
+                m.iz=z1
+                m.ix=x1
+                m.sentido=1
+                m.voltas=m.voltas+1
+            end
+        end
+        return Vector3.new(
+            math.clamp(ix*c,b.minX+math.min(12,(b.maxX-b.minX)/2),b.maxX-math.min(12,(b.maxX-b.minX)/2)),
+            m.origem.Y+Nav.cfg.alturaPatrulha,
+            math.clamp(iz*c,b.minZ+math.min(12,(b.maxZ-b.minZ)/2),b.maxZ-math.min(12,(b.maxZ-b.minZ)/2)))
+    end
+    function Nav.mundoFronteira()
+        local m=Nav.mundoEstado()
+        local e=m.espiral
+        local pos=m.origem+Vector3.new(e.x*Nav.mundoCfg.celula,Nav.cfg.alturaPatrulha,e.z*Nav.mundoCfg.celula)
+        e.x=e.x+e.dx
+        e.z=e.z+e.dz
+        e.andou=e.andou+1
+        if e.andou>=e.tamanho then
+            e.andou=0
+            e.dx,e.dz=-e.dz,e.dx
+            e.viradas=e.viradas+1
+            if e.viradas%2==0 then e.tamanho=e.tamanho+1 end
+        end
+        if math.max(math.abs(e.x),math.abs(e.z))*Nav.mundoCfg.celula>Nav.mundoCfg.maxRaio then
+            -- Limite numerico configuravel, nao o antigo limite local de 720.
+            m.espiral={x=0,z=0,dx=1,dz=0,tamanho=1,andou=0,viradas=0}
+        end
+        return pos
+    end
+    function Nav.mundoEscolher(ctx)
+        local m=Nav.mundoEstado()
+        if m.alvo then return m.alvo end
+        m.origem=m.origem or Nav.estado.ancora or ctx.root.Position
+        Nav.mundoCantos()
+        for _=1,Nav.mundoCfg.candidatosPorPasso do
+            local pos
+            if #m.fila>0 then
+                pos=table.remove(m.fila,1)
+            else
+                m.planos=m.planos+1
+                -- Em streaming, sair dos limites conhecidos revela novas regioes.
+                -- Limites explicitos do proprio mapa dispensam essa extrapolacao.
+                local b=m.limites
+                local fronteira=not b or (workspace.StreamingEnabled and not b.explicito and m.planos%4==0)
+                pos=fronteira and Nav.mundoFronteira() or Nav.mundoGrade()
+            end
+            if pos and Nav.mundoDisponivel(pos) then
+                if Nav.distanciaHorizontal(ctx.root.Position,pos)<12 then
+                    Nav.mundoRegistrar(pos,false)
+                else
+                    m.alvo=pos
+                    return pos
+                end
+            end
+        end
+        return nil
+    end
+    function Nav.mundoPedirCarga(ctx,pos)
+        if not workspace.StreamingEnabled then return false end
+        local m=Nav.mundoEstado()
+        if m.carregando or os.clock()<m.proximaCarga then return false end
+        if not Nav.vetorValido(pos) or not Nav.vivo(ctx) then return false end
+        m.proximaCarga=os.clock()+Nav.mundoCfg.intervaloCarga
+        m.carregando=true
+        local token=m.token
+        task.spawn(function()
+            if Nav.mundo~=m or m.token~=token or not Nav.vivo(ctx) then
+                m.carregando=false
+                return
+            end
+            local ok,erro=pcall(function()
+                LocalPlayer:RequestStreamAroundAsync(pos,Nav.mundoCfg.timeoutCarga)
+            end)
+            m.carregando=false
+            if Nav.mundo~=m or m.token~=token or not Nav.vivo(ctx) then return end
+            if ok then
+                m.cargas=m.cargas+1
+                R.sujo=true
+            else
+                m.errosCarga=m.errosCarga+1
+                if m.errosCarga==1 then
+                    registrar("CARREGAMENTO","Pedido indisponivel; patrulha continua pelo carregamento normal: "..tostring(erro))
+                end
+            end
+        end)
+        return true
+    end
+    function Nav.mundoTrecho(ctx,meta)
+        local delta=meta-ctx.root.Position
+        local distancia=delta.Magnitude
+        if distancia<0.01 then return meta end
+        local bruto=ctx.root.Position+delta.Unit*math.min(distancia,Nav.mundoCfg.trecho)
+        local sondado=Nav.sondarPatrulha(ctx,bruto)
+        if sondado then return sondado end
+        local y=math.clamp(ctx.root.Position.Y,
+            workspace.FallenPartsDestroyHeight+Nav.cfg.minAltura+5,
+            Nav.estado.ancora.Y+Nav.cfg.alturaMaxPatrulha)
+        return Vector3.new(bruto.X,y,bruto.Z)
+    end
+    function Nav.mundoConcluir(ctx,resultado)
+        local m=Nav.mundoEstado()
+        if not m.alvo or resultado=="alvo_detectado" or resultado=="cancelado" then return end
+        if resultado=="chegou" then
+            if Nav.distanciaHorizontal(ctx.root.Position,m.alvo)<=16 then
+                Nav.mundoRegistrar(m.alvo,false)
+                m.alvo=nil
+            end
+        else
+            Nav.mundoRegistrar(m.alvo,true)
+            m.alvo=nil
+        end
+    end
+    function Nav.mundoInspecionar()
+        local m=Nav.mundoEstado()
+        return {alvo=m.alvo,limites=m.limites,fonte=m.fonte,
+            visitados=m.total,voltas=m.voltas,cargas=m.cargas,
+            errosCarga=m.errosCarga,carregando=m.carregando,
+            fronteiraX=m.espiral.x,fronteiraZ=m.espiral.z}
+    end
+    R.observarMapa=Nav.mundoObservar
     function Nav.inicializarPatrulha(ctx)
         if Nav.estado.ancora then return end
         Nav.estado.ancora = ctx.root.Position
@@ -8083,6 +8364,8 @@ GS.iniciarFarma = function()
         Nav.estado.setor = 0
         Nav.estado.anel = 1
         Nav.salvarSeguro(ctx)
+        Nav.mundoEstado().origem = ctx.root.Position
+        Nav.mundoAtributos()
     end
 
     function Nav.proximoAnel()
@@ -8131,8 +8414,11 @@ GS.iniciarFarma = function()
     function Nav.sondarPatrulha(ctx,ponto)
         if not Nav.vetorValido(ponto) then return end
         local altura = math.max(ponto.Y,ctx.root.Position.Y)+100
+        local limites = Nav.mundoEstado().limites
+        if limites then altura=math.max(altura,limites.maxY+64) end
         local origem = Vector3.new(ponto.X,altura,ponto.Z)
-        local hit = Nav.raio(origem,Vector3.new(0,-500,0),ctx,nil)
+        local profundidade = limites and math.clamp(altura-limites.minY+128,500,8192) or 500
+        local hit = Nav.raio(origem,Vector3.new(0,-profundidade,0),ctx,nil)
         if not hit then return end
         if hit.Normal.Y < Nav.cfg.normalMinima then return end
         if hit.Position.Y <= workspace.FallenPartsDestroyHeight+20 then return end
@@ -8143,36 +8429,14 @@ GS.iniciarFarma = function()
     function Nav.planoPatrulha(ctx)
         Nav.inicializarPatrulha(ctx)
         Nav.observarItens()
-        local conhecido = Nav.pontoConhecido(ctx)
-        if conhecido then
-            local destino = Nav.sondarPatrulha(ctx,conhecido)
-            if destino then return destino end
+        local mundo=Nav.mundoEstado()
+        if os.clock()>=(mundo.proximoAtributo or 0) then
+            mundo.proximoAtributo=os.clock()+10
+            Nav.mundoAtributos()
         end
-        for _=1,Nav.cfg.maxTentativasPatrulha do
-            local bruto = Nav.pontoAnel()
-            local destino = bruto and Nav.sondarPatrulha(ctx,bruto)
-            if destino then
-                local chave = Nav.chave(destino)
-                local ultima = Nav.estado.visita[chave] or -math.huge
-                if os.clock()-ultima > 5 then return destino end
-            end
-        end
-        -- Uma area ainda nao carregada pode nao oferecer piso para a sonda.
-        -- Avanca em trechos curtos, preservando a altitude do personagem.
-        local angulo = Nav.estado.setor*math.pi*2/Nav.cfg.setores
-        local plano = ctx.root.Position+Vector3.new(
-            math.cos(angulo)*45,
-            6,
-            math.sin(angulo)*45)
-        local ancora = Nav.estado.ancora
-        plano = Vector3.new(plano.X,
-            math.min(plano.Y,ancora.Y+Nav.cfg.alturaMaxPatrulha),
-            plano.Z)
-        if Nav.distanciaHorizontal(plano,ancora)>Nav.cfg.raioPatrulha*Nav.cfg.maxAnel then
-            plano = ancora+Vector3.new(0,Nav.cfg.alturaPatrulha,0)
-        end
-        Nav.proximoAnel()
-        return plano
+        local meta=Nav.mundoEscolher(ctx)
+        if not meta then return nil end
+        return Nav.mundoTrecho(ctx,meta)
     end
 
     function Nav.patrulhar(g,a)
@@ -8181,12 +8445,13 @@ GS.iniciarFarma = function()
         Nav.inicializarPatrulha(ctx)
         local e = Nav.escolher(ctx)
         if e then return end
-        Nav.fase("PATRULHANDO · VOO 500 + NOCLIP")
+        Nav.fase("VARRENDO MAPA · SETORES, BORDAS E CANTOS")
         local destino = Nav.planoPatrulha(ctx)
         if not destino then
             Nav.esperar(ctx,0.3)
             return
         end
+        Nav.mundoPedirCarga(ctx,destino)
         local chave = Nav.chave(destino)
         local resultado = Nav.moverVoo(ctx,destino,{
             patrulha = true,
@@ -8198,6 +8463,7 @@ GS.iniciarFarma = function()
             Nav.fase("FRASCO DETECTADO · INTERROMPENDO PATRULHA")
             return
         end
+        Nav.mundoConcluir(ctx,resultado)
         Nav.estado.visita[chave] = os.clock()
         Nav.estado.patrulhas = Nav.estado.patrulhas+1
         if resultado == "void" then
@@ -8213,7 +8479,7 @@ GS.iniciarFarma = function()
         end
         if Nav.vivo(ctx) then
             R.sujo = true
-            Nav.esperar(ctx,0.25)
+            Nav.esperar(ctx,workspace.StreamingEnabled and 0.4 or 0.1)
         end
     end
 
@@ -8313,6 +8579,7 @@ GS.iniciarFarma = function()
         end))
         table.insert(R.conns,workspace.DescendantAdded:Connect(function(obj)
             if not mesmoCiclo(g) then return end
+            if R.observarMapa then R.observarMapa(obj) end
             R.sujo = true
             R.pendentes[obj] = os.clock()+1
             task.defer(function()
@@ -8333,7 +8600,7 @@ GS.iniciarFarma = function()
                             examinar(obj,g,R.inicial)
                         end
                     end
-                    if R.sujo or os.clock()-ultima >= CFG.intervaloScan then
+                    if (R.sujo and os.clock()-ultima>=0.75) or os.clock()-ultima >= CFG.intervaloScan then
                         varrer(g)
                         ultima = os.clock()
                     end
