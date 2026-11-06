@@ -1,4 +1,4 @@
--- GRINGOdll V50.4 · Feito pelo @henrique_system
+-- GRINGOdll V50.5 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +29,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.4"
+GS.versao = "V50.5"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -52,7 +52,7 @@ local teclaMenu, escutandoTecla
 
 do
 -- ═══════════════════════════════════════════════════════════════
---   VISUAL v6 — VIDRO ROXO (ESTILO VISIONOS) + ICONES REAIS (LUCIDE)
+--   VISUAL V50.5 — VIDRO AZUL CLARO, BISEL VERDE-AGUA + ICONES LUCIDE
 -- ═══════════════════════════════════════════════════════════════
 --   SO VISUAL: nenhuma funcao foi mexida. Os botoes que a logica usa
 --   continuam sendo os mesmos objetos (TextButton/TextBox/TextLabel)
@@ -70,37 +70,40 @@ do
     local LP = game:GetService("Players").LocalPlayer
     local BRANCO = Color3.new(1, 1, 1)
     local T = {
-        -- v9.1.2: roxo bem mais escuro (o destaque "ligado" continua vivo)
-        bg        = Color3.fromRGB(5, 14, 14),
-        header    = Color3.fromRGB(8, 31, 29),
-        side      = Color3.fromRGB(6, 24, 23),
-        card      = Color3.fromRGB(10, 43, 39),
-        cardHover = Color3.fromRGB(15, 75, 63),
-        ctrl      = Color3.fromRGB(10, 54, 47),
-        stroke    = Color3.fromRGB(34, 119, 99),
-        strokeHi  = Color3.fromRGB(110, 255, 204),
-        text      = Color3.fromRGB(248, 245, 255),
-        dim       = Color3.fromRGB(218, 209, 239),
-        mute      = Color3.fromRGB(139, 190, 177),
-        on        = Color3.fromRGB(27, 181, 126),
-        off       = Color3.fromRGB(20, 58, 52),
-        knobOn    = Color3.fromRGB(255, 255, 255),
-        knobOff   = Color3.fromRGB(205, 194, 228),
-        perigo    = Color3.fromRGB(112, 42, 58),
-        perigoTxt = Color3.fromRGB(255, 205, 210),
-        roxoA     = Color3.fromRGB(12, 55, 48),   -- topo do vidro verde
-        roxoB     = Color3.fromRGB(3, 18, 18),    -- fundo do vidro verde
-        vidro     = Color3.fromRGB(24, 105, 85),  -- tom dos cards de vidro
+        -- V50.5: vidro claro; tons da borda amostrados da foto de referencia.
+        bg        = Color3.fromRGB(185, 219, 230),
+        header    = Color3.fromRGB(211, 237, 241),
+        side      = Color3.fromRGB(139, 205, 202),
+        card      = Color3.fromRGB(191, 231, 231),
+        cardHover = Color3.fromRGB(146, 217, 209),
+        ctrl      = Color3.fromRGB(169, 218, 218),
+        stroke    = Color3.fromRGB(35, 167, 154),
+        strokeHi  = Color3.fromRGB(173, 255, 235),
+        text      = Color3.fromRGB(5, 28, 31),
+        dim       = Color3.fromRGB(7, 34, 37),
+        mute      = Color3.fromRGB(9, 39, 42),
+        on        = Color3.fromRGB(4, 95, 92),
+        onText    = Color3.fromRGB(234, 255, 250),
+        off       = Color3.fromRGB(120, 174, 175),
+        knobOn    = Color3.fromRGB(234, 255, 250),
+        knobOff   = Color3.fromRGB(34, 91, 94),
+        perigo    = Color3.fromRGB(132, 43, 66),
+        perigoTxt = Color3.fromRGB(255, 237, 240),
+        roxoA     = Color3.fromRGB(221, 240, 250),
+        roxoB     = Color3.fromRGB(145, 208, 210),
+        vidro     = Color3.fromRGB(181, 229, 225),
+        bordaFunda= Color3.fromRGB(4, 95, 92),
+        bordaLuz  = Color3.fromRGB(99, 229, 215),
     }
     -- Transparencia do vidro (0 = solido, 1 = invisivel).
     -- Quer a janela mais transparente? aumenta "janela" (ex: 0.35).
     local V = {
-        janela = 0.22,  -- fundo escuro e translucido da janela
-        campo  = 0.78,  -- barra lateral, busca, campos de texto
-        linha  = 0.84,  -- cards das funcoes
-        grupo  = 0.9,   -- caixa que agrupa varias funcoes
-        borda  = 0.72,  -- contorno dos cards
-        card   = 0.42,  -- botoes de selecao dos modulos (modos, dancas...)
+        janela = 0.30,
+        campo  = 0.46,
+        linha  = 0.34,
+        grupo  = 0.60,
+        borda  = 0.48,
+        card   = 0.24,
     }
 
     -- ── Icones Lucide (48px, spritesheet publico no Roblox) ──
@@ -294,9 +297,15 @@ do
         end)
     end
     local function vidroRoxo(o, rot)
-        o.BackgroundColor3 = T.roxoB
+        -- UIGradient multiplica a cor de fundo: branco preserva a paleta exata.
+        o.BackgroundColor3 = BRANCO
         local g = Instance.new("UIGradient", o)
-        g.Color = ColorSequence.new(T.roxoA, T.roxoB); g.Rotation = rot or 60
+        g.Color = ColorSequence.new{
+            ColorSequenceKeypoint.new(0,T.roxoA),
+            ColorSequenceKeypoint.new(0.52,Color3.fromRGB(187,225,234)),
+            ColorSequenceKeypoint.new(1,T.roxoB),
+        }
+        g.Rotation = rot or 60
         return g
     end
 
@@ -374,66 +383,127 @@ do
     MainFrame.Active = true; MainFrame.Parent = ScreenGui
     MainFrame.ClipsDescendants = true
     vidroRoxo(MainFrame, 60)
-    mkC(28, MainFrame)
-    -- borda de vidro com brilho lilas passando
+    mkC(14, MainFrame)
+    -- V50.5: chapa de vidro com espessura, bisel e reflexo em movimento.
     do
-        local ms = mkS(1.2, BRANCO, MainFrame, 0.45)
-        local g = Instance.new("UIGradient", ms)
-        g.Color=ColorSequence.new{
-            ColorSequenceKeypoint.new(0,   Color3.fromRGB(110, 110, 110)),
-            ColorSequenceKeypoint.new(0.45,Color3.fromRGB(110, 110, 110)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 240, 240)),
-            ColorSequenceKeypoint.new(0.55,Color3.fromRGB(110, 110, 110)),
-            ColorSequenceKeypoint.new(1,   Color3.fromRGB(110, 110, 110)),
-        }
-        local giro = TweenService:Create(g,TweenInfo.new(7,Enum.EasingStyle.Linear,Enum.EasingDirection.InOut,-1),{Rotation=360})
-        giro:Play(); table.insert(GS.animsInfinitas, giro)
-        -- reflexo suave no topo (vidro)
-        local reflexo = Instance.new("Frame", MainFrame)
-        reflexo.Size = UDim2.new(1, 0, 0, 140); reflexo.BackgroundColor3 = BRANCO
-        reflexo.BackgroundTransparency = 0.94; reflexo.BorderSizePixel = 0; reflexo.ZIndex = 0
-        local rg = Instance.new("UIGradient", reflexo); rg.Rotation = 90
-        rg.Transparency = NumberSequence.new{NumberSequenceKeypoint.new(0,0), NumberSequenceKeypoint.new(1,1)}
-        mkC(28, reflexo)
-    end
+        local laminas = {}
+        local function lamina(nome,dx,dy,margem,cor,transparencia)
+            local f = Instance.new("Frame")
+            f.Name = nome
+            f.BorderSizePixel = 0
+            f.BackgroundColor3 = cor
+            f.BackgroundTransparency = transparencia
+            f.ZIndex = 0
+            f.Active = false
+            f.Parent = ScreenGui
+            mkC(14+margem,f)
+            local sc = Instance.new("UIScale",f)
+            local item = {obj=f,dx=dx,dy=dy,margem=margem,scale=sc}
+            table.insert(laminas,item)
+            return f
+        end
+        -- Sombra deslocada, suave em camadas, abaixo das faces do vidro.
+        for i=4,1,-1 do
+            lamina("SombraVidro"..i,3,7+i,i*2,Color3.fromRGB(3,39,42),0.94)
+        end
+        for i=2,1,-1 do
+            local f = lamina("EspessuraVidro"..i,i*3,i*4,0,T.bordaFunda,0.80)
+            local st = mkS(2,T.bordaFunda,f,0.25)
+            local g = Instance.new("UIGradient",st)
+            g.Rotation = 55
+            g.Color = ColorSequence.new{
+                ColorSequenceKeypoint.new(0,T.bordaLuz),
+                ColorSequenceKeypoint.new(0.45,T.stroke),
+                ColorSequenceKeypoint.new(1,T.bordaFunda),
+            }
+        end
+        local function atualizarLaminas()
+            for _,item in ipairs(laminas) do
+                local f = item.obj
+                f.Position = MainFrame.Position+UDim2.fromOffset(
+                    item.dx-item.margem,item.dy-item.margem)
+                f.Size = MainFrame.Size+UDim2.fromOffset(item.margem*2,item.margem*2)
+                f.Visible = MainFrame.Visible
+            end
+        end
+        local function acompanharEscala(obj)
+            if not obj:IsA("UIScale") then return end
+            local function copiar()
+                for _,item in ipairs(laminas) do item.scale.Scale=obj.Scale end
+            end
+            obj:GetPropertyChangedSignal("Scale"):Connect(copiar)
+            copiar()
+        end
+        MainFrame:GetPropertyChangedSignal("Position"):Connect(atualizarLaminas)
+        MainFrame:GetPropertyChangedSignal("Size"):Connect(atualizarLaminas)
+        MainFrame:GetPropertyChangedSignal("Visible"):Connect(atualizarLaminas)
+        MainFrame.ChildAdded:Connect(acompanharEscala)
+        for _,obj in ipairs(MainFrame:GetChildren()) do acompanharEscala(obj) end
+        MainFrame.Destroying:Connect(function()
+            for _,item in ipairs(laminas) do item.obj:Destroy() end
+        end)
+        atualizarLaminas()
 
-    -- ═══════════ FUNDO VIVO: aurora + estrelinhas ═══════════
-    -- Tudo atras do conteudo (ZIndex 0) e pausa no MODO LEVE.
-    do
-        local fundoVivo = Instance.new("Frame", MainFrame)
-        fundoVivo.Name = "FundoVivo"; fundoVivo.Size = UDim2.fromScale(1, 1)
-        fundoVivo.BackgroundTransparency = 1; fundoVivo.ZIndex = 0
-        -- aurora: manchas de luz roxa passeando devagar
-        local MANCHAS = {
-            { cor = Color3.fromRGB(255, 255, 255), tam = 420, de = UDim2.new(0, -120, 0, -160), para = UDim2.new(0.45, 0, 0, -60), tempo = 11 },
-            { cor = Color3.fromRGB(200, 200, 200), tam = 360, de = UDim2.new(0.7, 0, 0.55, 0),  para = UDim2.new(0.25, 0, 0.7, 0), tempo = 14 },
-            { cor = Color3.fromRGB(150, 150, 150), tam = 300, de = UDim2.new(0.35, 0, 0.3, 0),  para = UDim2.new(0.8, 0, -0.1, 0), tempo = 9 },
+        local borda = mkS(4,BRANCO,MainFrame,0.12)
+        borda.Name = "BordaVidroPolida"
+        local bisel = Instance.new("UIGradient",borda)
+        bisel.Rotation = 55
+        bisel.Color = ColorSequence.new{
+            ColorSequenceKeypoint.new(0,T.bordaLuz),
+            ColorSequenceKeypoint.new(0.18,T.stroke),
+            ColorSequenceKeypoint.new(0.50,T.bordaFunda),
+            ColorSequenceKeypoint.new(0.78,T.stroke),
+            ColorSequenceKeypoint.new(1,T.bordaLuz),
         }
-        for _, m in ipairs(MANCHAS) do
-            local f = Instance.new("Frame", fundoVivo)
-            f.Size = UDim2.fromOffset(m.tam, m.tam); f.Position = m.de
-            f.BackgroundColor3 = m.cor; f.BackgroundTransparency = 0.82; f.BorderSizePixel = 0; f.ZIndex = 0
-            redondo(f)
-            local g = Instance.new("UIGradient", f)
-            g.Transparency = NumberSequence.new{ NumberSequenceKeypoint.new(0, 0.1), NumberSequenceKeypoint.new(0.5, 0.55), NumberSequenceKeypoint.new(1, 1) }
-            g.Rotation = math.random(0, 359)
-            local passeio = TweenService:Create(f, TweenInfo.new(m.tempo, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Position = m.para })
-            passeio:Play(); table.insert(GS.animsInfinitas, passeio)
-            local giro = TweenService:Create(g, TweenInfo.new(m.tempo * 1.3, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), { Rotation = g.Rotation + 360 })
-            giro:Play(); table.insert(GS.animsInfinitas, giro)
-        end
-        -- estrelinhas subindo e apagando, cada uma no seu ritmo
-        for _ = 1, 18 do
-            local e = Instance.new("Frame", fundoVivo)
-            local tam, x = math.random(2, 4), math.random()
-            e.Size = UDim2.fromOffset(tam, tam); e.Position = UDim2.new(x, 0, 1, 10)
-            e.BackgroundColor3 = Color3.fromRGB(255, 255, 255); e.BackgroundTransparency = 0.35
-            e.BorderSizePixel = 0; e.ZIndex = 0; redondo(e)
-            local sobe = TweenService:Create(e,
-                TweenInfo.new(math.random(70, 140) / 10, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1, false, math.random(0, 40) / 10),
-                { Position = UDim2.new(x + (math.random() - 0.5) * 0.12, 0, 0, -10), BackgroundTransparency = 1 })
-            sobe:Play(); table.insert(GS.animsInfinitas, sobe)
-        end
+
+        local interior = Instance.new("Frame",MainFrame)
+        interior.Name = "BiselInterno"
+        interior.Size = UDim2.new(1,-10,1,-10)
+        interior.Position = UDim2.fromOffset(5,5)
+        interior.BackgroundTransparency = 1
+        interior.BorderSizePixel = 0
+        interior.ZIndex = 0
+        mkC(10,interior)
+        local contorno = mkS(1,Color3.fromRGB(229,255,250),interior,0.25)
+        local luzBorda = Instance.new("UIGradient",contorno)
+        luzBorda.Rotation = 55
+        luzBorda.Transparency = NumberSequence.new{
+            NumberSequenceKeypoint.new(0,0),
+            NumberSequenceKeypoint.new(0.35,0.65),
+            NumberSequenceKeypoint.new(0.7,0.85),
+            NumberSequenceKeypoint.new(1,0.1),
+        }
+
+        local reflexo = Instance.new("Frame",MainFrame)
+        reflexo.Name = "ReflexoVidro"
+        reflexo.Size = UDim2.fromScale(1,1)
+        reflexo.BackgroundColor3 = Color3.fromRGB(221,255,250)
+        reflexo.BackgroundTransparency = 0.65
+        reflexo.BorderSizePixel = 0
+        reflexo.ZIndex = 0
+        mkC(14,reflexo)
+        local faixa = Instance.new("UIGradient",reflexo)
+        faixa.Rotation = 24
+        faixa.Transparency = NumberSequence.new{
+            NumberSequenceKeypoint.new(0,1),
+            NumberSequenceKeypoint.new(0.40,1),
+            NumberSequenceKeypoint.new(0.47,0.6),
+            NumberSequenceKeypoint.new(0.50,0.1),
+            NumberSequenceKeypoint.new(0.54,0.72),
+            NumberSequenceKeypoint.new(0.62,1),
+            NumberSequenceKeypoint.new(1,1),
+        }
+        faixa.Offset = Vector2.new(-1.1,0)
+        local deslizar = TweenService:Create(faixa,
+            TweenInfo.new(11,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut,-1,true),
+            {Offset=Vector2.new(1.1,0)})
+        deslizar:Play()
+        table.insert(GS.animsInfinitas,deslizar)
+        local respirar = TweenService:Create(luzBorda,
+            TweenInfo.new(8,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut,-1,true),
+            {Offset=Vector2.new(0.20,0)})
+        respirar:Play()
+        table.insert(GS.animsInfinitas,respirar)
     end
 
     -- escala: tela pequena (celular/notebook) → janela encolhe pra caber
@@ -606,7 +676,7 @@ do
     local Sidebar=Instance.new("Frame",MainFrame)
     Sidebar.Position=UDim2.fromOffset(14,14); Sidebar.Size=UDim2.new(0,68,1,-28)
     Sidebar.BackgroundColor3=T.vidro; Sidebar.BackgroundTransparency=V.campo; Sidebar.BorderSizePixel=0
-    mkC(22,Sidebar); mkS(1,BRANCO,Sidebar,V.borda)
+    mkC(12,Sidebar); mkS(1,T.stroke,Sidebar,V.borda)
     -- v9.1.2: sem logo na lateral (o nome fica na barra de titulo)
     -- lista de abas: do topo ate a engrenagem; se um dia tiver aba demais
     -- ela rola em vez de passar por cima da engrenagem
@@ -646,31 +716,16 @@ do
         l.SortOrder = Enum.SortOrder.LayoutOrder; l.Padding = UDim.new(0, 10)
         l.VerticalAlignment = Enum.VerticalAlignment.Center
         local pad = Instance.new("UIPadding", Titulo); pad.PaddingLeft = UDim.new(0, 10)
-        -- o nome, com um brilho branco correndo pelas letras
+        -- Marca em tinta escura: contraste constante sobre a face clara.
         local marca = Instance.new("TextLabel", Titulo)
         marca.Name = "Marca"; marca.LayoutOrder = 1; marca.BackgroundTransparency = 1
         marca.Size = UDim2.fromOffset(0, TITULO_H); marca.AutomaticSize = Enum.AutomaticSize.X
         marca.Font = Enum.Font.GothamBlack; marca.TextSize = 24; marca.Text = "GRINGOdll"
-        marca.TextColor3 = BRANCO; marca.TextXAlignment = Enum.TextXAlignment.Left
-        local mg = Instance.new("UIGradient", marca)
-        mg.Color = ColorSequence.new{
-            ColorSequenceKeypoint.new(0,    Color3.fromRGB(170, 170, 170)),
-            ColorSequenceKeypoint.new(0.42, Color3.fromRGB(170, 170, 170)),
-            ColorSequenceKeypoint.new(0.5,  Color3.fromRGB(255, 255, 255)),
-            ColorSequenceKeypoint.new(0.58, Color3.fromRGB(170, 170, 170)),
-            ColorSequenceKeypoint.new(1,    Color3.fromRGB(170, 170, 170)),
-        }
-        mg.Offset = Vector2.new(-1, 0)
-        local brilho = TweenService:Create(mg, TweenInfo.new(2.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false, 1.2), { Offset = Vector2.new(1, 0) })
-        brilho:Play(); table.insert(GS.animsInfinitas, brilho)
-        -- aura respirando em volta das letras
-        local aura = Instance.new("UIStroke", marca); aura.Color = T.on; aura.Thickness = 1.6; aura.Transparency = 0.75
-        local respira = TweenService:Create(aura, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.25, Thickness = 2.4 })
-        respira:Play(); table.insert(GS.animsInfinitas, respira)
+        marca.TextColor3 = T.text; marca.TextXAlignment = Enum.TextXAlignment.Left
         -- versao numa pilula de vidro
         local pilula = Instance.new("Frame", Titulo)
         pilula.LayoutOrder = 2; pilula.Size = UDim2.fromOffset(0, 22); pilula.AutomaticSize = Enum.AutomaticSize.X
-        pilula.BackgroundColor3 = T.on; pilula.BackgroundTransparency = 0.7; pilula.BorderSizePixel = 0
+        pilula.BackgroundColor3 = T.on; pilula.BackgroundTransparency = 0.08; pilula.BorderSizePixel = 0
         redondo(pilula); mkS(1, BRANCO, pilula, 0.7)
         do local pp = Instance.new("UIPadding", pilula); pp.PaddingLeft = UDim.new(0, 10); pp.PaddingRight = UDim.new(0, 10) end
         local ver = Instance.new("TextLabel", pilula)
@@ -689,11 +744,11 @@ do
         vivo.LayoutOrder = 3; vivo.Size = UDim2.fromOffset(18, 18); vivo.BackgroundTransparency = 1
         local onda = Instance.new("Frame", vivo)
         onda.AnchorPoint = Vector2.new(0.5, 0.5); onda.Position = UDim2.fromScale(0.5, 0.5)
-        onda.Size = UDim2.fromOffset(8, 8); onda.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+        onda.Size = UDim2.fromOffset(8, 8); onda.BackgroundColor3 = T.on
         onda.BackgroundTransparency = 0.2; onda.BorderSizePixel = 0; redondo(onda)
         local ponto = Instance.new("Frame", vivo)
         ponto.AnchorPoint = Vector2.new(0.5, 0.5); ponto.Position = UDim2.fromScale(0.5, 0.5)
-        ponto.Size = UDim2.fromOffset(8, 8); ponto.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+        ponto.Size = UDim2.fromOffset(8, 8); ponto.BackgroundColor3 = T.on
         ponto.BorderSizePixel = 0; redondo(ponto)
         local pulso = TweenService:Create(onda, TweenInfo.new(1.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, -1), { Size = UDim2.fromOffset(20, 20), BackgroundTransparency = 1 })
         pulso:Play(); table.insert(GS.animsInfinitas, pulso)
@@ -847,8 +902,11 @@ do
     local function linhaBase(pai, altura, ord)
         local row=Instance.new("Frame",pai); row.Size=UDim2.new(1,0,0,altura)
         row.BackgroundColor3=T.vidro; row.BackgroundTransparency=V.linha
-        row.BorderSizePixel=0; row.LayoutOrder=ord; mkC(18,row)
-        local st=mkS(1,BRANCO,row,V.borda)
+        row.BorderSizePixel=0; row.LayoutOrder=ord; mkC(12,row)
+        local st=mkS(1,T.stroke,row,V.borda)
+        local face=Instance.new("UIGradient",row)
+        face.Color=ColorSequence.new(BRANCO,Color3.fromRGB(176,232,227))
+        face.Rotation=70
         return row, st
     end
 
@@ -856,7 +914,7 @@ do
     local function grupo(pai, titulo, subtitulo, ico, ord)
         local f=Instance.new("Frame",pai); f.Size=UDim2.new(1,0,0,0); f.AutomaticSize=Enum.AutomaticSize.Y
         f.BackgroundColor3=T.vidro; f.BackgroundTransparency=V.grupo; f.BorderSizePixel=0; f.LayoutOrder=ord
-        mkC(24,f); mkS(1,BRANCO,f,0.86)
+        mkC(14,f); mkS(1,T.stroke,f,0.65)
         local p=Instance.new("UIPadding",f); p.PaddingTop=UDim.new(0,14); p.PaddingBottom=UDim.new(0,14)
         p.PaddingLeft=UDim.new(0,14); p.PaddingRight=UDim.new(0,14)
         local l=Instance.new("UIListLayout",f); l.SortOrder=Enum.SortOrder.LayoutOrder; l.Padding=UDim.new(0,8)
@@ -911,7 +969,7 @@ do
             local props = {
                 track = { BackgroundColor3 = on and T.on or T.off, BackgroundTransparency = on and 0 or 0.3 },
                 knob  = { Position = on and KNOB_ON or KNOB_OFF, BackgroundColor3 = on and T.knobOn or T.knobOff },
-                st    = { Color = on and T.strokeHi or BRANCO, Transparency = on and 0.4 or V.borda },
+                st    = { Color = on and T.on or T.stroke, Transparency = on and 0.25 or V.borda },
                 lbl   = { TextColor3 = on and T.text or T.dim },
             }
             if o.ic then alvos.ic = o.ic; props.ic = { ImageColor3 = on and BRANCO or T.dim } end
@@ -1024,8 +1082,11 @@ do
     local function tile(pai,rotulo,ico,ord)
         local nome = semEmoji(rotulo)
         local row=Instance.new("Frame",pai); row.BackgroundColor3=T.vidro; row.BackgroundTransparency=V.linha
-        row.BorderSizePixel=0; row.LayoutOrder=ord; mkC(22,row)
-        local st=mkS(1,BRANCO,row,V.borda)
+        row.BorderSizePixel=0; row.LayoutOrder=ord; mkC(12,row)
+        local st=mkS(1,T.stroke,row,V.borda)
+        local face=Instance.new("UIGradient",row)
+        face.Color=ColorSequence.new(BRANCO,Color3.fromRGB(176,232,227))
+        face.Rotation=70
         local bolha, ic = bolhaIcone(row, nomeIcone(ico), 36, UDim2.fromOffset(12,12))
         local lbl=Instance.new("TextLabel",row); lbl.Size=UDim2.new(1,-28,0,20); lbl.Position=UDim2.new(0,14,1,-34)
         lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.GothamMedium; lbl.Text=nome
@@ -1052,14 +1113,14 @@ do
             b.BackgroundColor3=T.perigo; b.BackgroundTransparency=0.25; b.TextColor3=T.perigoTxt
             corBorda, trBorda = T.perigoTxt, 0.6
         elseif cor=="primario" then
-            b.BackgroundColor3=T.on; b.BackgroundTransparency=0.3; b.TextColor3=T.text
+            b.BackgroundColor3=T.on; b.BackgroundTransparency=0.12; b.TextColor3=T.onText
             corBorda, trBorda = T.strokeHi, 0.45
         elseif typeof(cor)=="Color3" then
             b.BackgroundColor3=cor; b.BackgroundTransparency=0; b.TextColor3=BRANCO
         else
             b.BackgroundColor3=T.vidro; b.BackgroundTransparency=0.88; b.TextColor3=T.text
         end
-        mkC(math.floor(altura/2),b); mkS(1,corBorda,b,trBorda)
+        mkC(12,b); mkS(1,corBorda,b,trBorda)
         -- conteudo centralizado: [icone] texto
         local miolo=Instance.new("Frame",b); miolo.AnchorPoint=Vector2.new(0.5,0.5); miolo.Position=UDim2.fromScale(0.5,0.5)
         miolo.AutomaticSize=Enum.AutomaticSize.X; miolo.Size=UDim2.fromOffset(0,altura); miolo.BackgroundTransparency=1
@@ -1611,7 +1672,7 @@ do
     ConfigFrame=Instance.new("Frame",ScreenGui)
     ConfigFrame.BackgroundTransparency=0.08; ConfigFrame.BorderSizePixel=0
     ConfigFrame.Position=UDim2.new(0.5,-130,0.5,-134); ConfigFrame.Size=UDim2.new(0,260,0,268)
-    ConfigFrame.Visible=false; vidroRoxo(ConfigFrame, 70); mkC(24,ConfigFrame); mkS(1.2,BRANCO,ConfigFrame,0.6)
+    ConfigFrame.Visible=false; vidroRoxo(ConfigFrame, 70); mkC(14,ConfigFrame); mkS(3,T.stroke,ConfigFrame,0.2)
     local cfgScale=Instance.new("UIScale",ConfigFrame)
     do
         local ic=icone(ConfigFrame,"settings",18,T.dim); ic.Position=UDim2.fromOffset(28,28)
@@ -5988,7 +6049,7 @@ GS.prepararTelaFarma = function()
         for i,tela in ipairs(telas) do
             tela.Visible=i==indice
             botoes[i].BackgroundTransparency=i==indice and 0.2 or 0.8
-            botoes[i].TextColor3=i==indice and U.T.text or U.T.mute
+            botoes[i].TextColor3=i==indice and U.T.onText or U.T.mute
         end
         local scroll=painel.Parent
         if scroll and scroll:IsA("ScrollingFrame") then scroll.CanvasPosition=Vector2.zero end
@@ -6223,6 +6284,34 @@ print("[DEBUG-BOT]: Anti-void controller active")
     MainFrame.Parent=GS.painelFarma
     MainFrame.LayoutOrder=-0.5
     MainFrame.Draggable=false
+    -- O controle importado recebe o mesmo material; seu comportamento permanece.
+    MainFrame.Size=UDim2.new(1,0,0,44)
+    MainFrame.BackgroundColor3=GS.ui.T.vidro
+    MainFrame.BackgroundTransparency=0.34
+    GS.ui.mkC(12,MainFrame)
+    GS.ui.mkS(1,GS.ui.T.stroke,MainFrame,0.48)
+    ToggleButton.Size=UDim2.fromOffset(146,30)
+    ToggleButton.Position=UDim2.new(1,-158,0.5,-15)
+    ToggleButton.Font=Enum.Font.GothamBold
+    ToggleButton.TextSize=12
+    GS.ui.mkC(9,ToggleButton)
+    local legenda=Instance.new("TextLabel",MainFrame)
+    legenda.Size=UDim2.new(1,-180,1,0)
+    legenda.Position=UDim2.fromOffset(14,0)
+    legenda.BackgroundTransparency=1
+    legenda.Font=Enum.Font.GothamMedium
+    legenda.TextSize=13
+    legenda.TextColor3=GS.ui.T.text
+    legenda.TextXAlignment=Enum.TextXAlignment.Left
+    legenda.Text="Atravessar obstáculos · tecla K"
+    local atualizarOriginal=UpdateUI
+    UpdateUI=function()
+        atualizarOriginal()
+        ToggleButton.BackgroundColor3=Settings.Enabled and GS.ui.T.on or GS.ui.T.ctrl
+        ToggleButton.BackgroundTransparency=Settings.Enabled and 0.08 or 0.20
+        ToggleButton.TextColor3=Settings.Enabled and GS.ui.T.onText or GS.ui.T.text
+    end
+    UpdateUI()
     ScreenGui:Destroy()
     guiPainel.Destroying:Connect(function()
         ModuloAtivo=false
