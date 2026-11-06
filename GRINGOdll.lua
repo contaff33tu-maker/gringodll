@@ -1,4 +1,4 @@
--- GRINGOdll V50.5 · Feito pelo @henrique_system
+-- GRINGOdll V50.6 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +29,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.5"
+GS.versao = "V50.6"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -1334,7 +1334,7 @@ do
         { nome="Resolver",  ico="brain",       subs={"Resolver"} },
         { nome="Emotes",    ico="smile",       subs={"Emotes"}, ordem=1.5 },
         { nome="Duelo da Bola", ico="flame",   subs={"Auto Toque"}, ordem=8.5 },
-        { nome="Farma", ico="package", subs={"Farma Bot"}, ordem=9.5 },
+        { nome="Farmar Vibes", ico="package", subs={"Farmar Vibes"}, ordem=9.5 },
     }
     do
         local ordem = 0
@@ -5117,7 +5117,6 @@ local function regenerar()
         return
     end
     R.morrendo = true
-    local destino = GS.resetMesmoLugar and root.CFrame or nil
     local function informar(texto)
         if not ScreenGui.Parent then return end
         RegenUI.regenerar.Text = texto
@@ -5159,25 +5158,7 @@ local function regenerar()
             R.morrendo = false
             return
         end
-        if destino then
-            local ok = pcall(function()
-                novoHum.Sit = false
-                novoRoot.CFrame = destino
-                novoRoot.AssemblyLinearVelocity = Vector3.zero
-                novoRoot.AssemblyAngularVelocity = Vector3.zero
-            end)
-            task.wait(0.5)
-            if not ScreenGui.Parent then R.morrendo = false return end
-            if LocalPlayer.Character ~= novoChar or not novoRoot.Parent then
-                informar("O personagem mudou durante o retorno")
-            elseif ok and (novoRoot.Position - destino.Position).Magnitude < 8 then
-                informar("RENASCIDO · de volta ao mesmo lugar")
-            else
-                informar("RENASCIDO · o jogo bloqueou a volta ao lugar")
-            end
-        else
-            informar("RENASCIDO · no ponto de spawn")
-        end
+        informar("RENASCIDO · no ponto de spawn")
         R.morrendo = false
         task.delay(2, function()
             if ScreenGui.Parent and not R.morrendo then
@@ -6030,7 +6011,7 @@ end
 GS.rodar("Rastreio", GS.iniciarRastreio, GS.painelRastrear)
 
 -- ═══════════════════════════════════════════════════════════════
---   FARMA BOT — coleta local para playtest
+--   FARMAR VIBES — coleta local para playtest
 -- ═══════════════════════════════════════════════════════════════
 GS.prepararTelaFarma = function()
     local U,painel=GS.ui,GS.painelFarma
@@ -6716,9 +6697,15 @@ GS.iniciarFarma = function()
     local Nav = {}
     Nav.cfg = {
         velocidade = 500,
-        velocidadePerto = 65,
-        freioSegundos = 0.12,
-        intervalo = 0.05,
+        velocidadePerto = 110,
+        freioSegundos = 0.08,
+        intervalo = 0.02,
+        saltoRapido = true,
+        passoRapido = 180,
+        limiteRapido = 2400,
+        pausaRapida = 0.04,
+        verificarRapido = 0.12,
+        bloquearRapidoAte = 0,
         chegada = 1.5,
         raioVertical = 1.5,
         alturaElevada = 5,
@@ -6743,6 +6730,8 @@ GS.iniciarFarma = function()
         raioToque = 1.8,
         cooldownBase = 3,
         cooldownMaximo = 45,
+        orcamentoComAlternativa = 12,
+        orcamentoSozinho = 20,
         pausaConfirmacao = 0.18,
         limiteMemoria = 64,
         idadeMemoria = 180,
@@ -6784,6 +6773,12 @@ GS.iniciarFarma = function()
     -- Atividade periodica limitada ao mesmo ciclo da coleta automatica.
     Nav.atividade = {
         intervalo = 2,
+        media = 2,
+        desvio = 0.085,
+        minimo = 1.7,
+        maximo = 2.3,
+        gaussReserva = nil,
+        ultimoPonto = nil,
         ativo = false,
         conn = nil,
         servico = nil,
@@ -6791,6 +6786,9 @@ GS.iniciarFarma = function()
         ultimaTentativa = -math.huge,
         enviados = 0,
         erros = 0,
+        seguidos = 0,
+        ultimoSucesso = 0,
+        proximaBusca = 0,
         avisou = false,
         token = 0,
         g = 0,
@@ -6808,6 +6806,69 @@ GS.iniciarFarma = function()
         R.atividadeTexto = "Autoclique: OFF"
     end
 
+    -- Box-Muller: duas uniformes geram duas amostras normais independentes.
+    -- Os limites impedem rajadas acidentais e esperas excessivas.
+    function Nav.intervaloAtividade()
+        local s = Nav.atividade
+        local z = s.gaussReserva
+        if z then
+            s.gaussReserva = nil
+        else
+            local u1 = math.max(0.0000001,math.random())
+            local u2 = math.random()
+            local raio = math.sqrt(-2*math.log(u1))
+            local angulo = 2*math.pi*u2
+            z = raio*math.cos(angulo)
+            s.gaussReserva = raio*math.sin(angulo)
+        end
+        return math.clamp(s.media+s.desvio*z,s.minimo,s.maximo)
+    end
+
+    function Nav.deslocarClique(base,tamanho)
+        if tamanho.X<40 or tamanho.Y<40 then return nil end
+        local centroX = math.clamp(base.X,16,tamanho.X-16)
+        local centroY = math.clamp(base.Y,16,tamanho.Y-16)
+        for _=1,10 do
+            local angulo = math.random()*math.pi*2
+            local raio = math.sqrt(25+math.random()*200)
+            local x = math.floor(centroX+math.cos(angulo)*raio+0.5)
+            local y = math.floor(centroY+math.sin(angulo)*raio+0.5)
+            local d2 = (x-centroX)^2+(y-centroY)^2
+            local ultimo = Nav.atividade.ultimoPonto
+            local repetiu = ultimo and ultimo.X==x and ultimo.Y==y
+            if d2>=25 and d2<=225 and not repetiu
+                and x>=1 and y>=1 and x<tamanho.X and y<tamanho.Y then
+                return Vector2.new(x,y)
+            end
+        end
+        return nil
+    end
+
+    function Nav.pixelLivre(ponto,superficies)
+        for _,janela in ipairs({MainFrame,ConfigFrame}) do
+            if janela and janela.Visible then
+                local pos,tam = janela.AbsolutePosition,janela.AbsoluteSize
+                if ponto.X>=pos.X and ponto.X<=pos.X+tam.X
+                    and ponto.Y>=pos.Y and ponto.Y<=pos.Y+tam.Y then
+                    return false
+                end
+            end
+        end
+        for _,superficie in ipairs(superficies) do
+            local sucesso,objetos = pcall(function()
+                return superficie:GetGuiObjectsAtPosition(ponto.X,ponto.Y)
+            end)
+            -- Nao injeta clique se nao for possivel consultar a interface.
+            if not sucesso then return false end
+            for _,obj in ipairs(objetos) do
+                if obj.Visible and (obj:IsA("GuiButton") or obj:IsA("TextBox") or obj.Active) then
+                    return false
+                end
+            end
+        end
+        return true
+    end
+
     function Nav.pontoClique(camera)
         local tamanho = camera.ViewportSize
         local candidatos = {
@@ -6820,38 +6881,18 @@ GS.iniciarFarma = function()
         local ok,playerGui = pcall(function()
             return LocalPlayer:FindFirstChildOfClass("PlayerGui")
         end)
-        if ok and playerGui then table.insert(superficies,playerGui) end
-        if GS.pai and GS.pai ~= playerGui then table.insert(superficies,GS.pai) end
-        for _,ponto in ipairs(candidatos) do
-            local livre = true
-            for _,janela in ipairs({MainFrame,ConfigFrame}) do
-                if janela and janela.Visible then
-                    local pos,tam = janela.AbsolutePosition,janela.AbsoluteSize
-                    if ponto.X>=pos.X and ponto.X<=pos.X+tam.X
-                        and ponto.Y>=pos.Y and ponto.Y<=pos.Y+tam.Y then
-                        livre = false
-                        break
-                    end
+        if not ok then return nil end
+        if playerGui then table.insert(superficies,playerGui) end
+        if GS.pai and GS.pai~=playerGui then table.insert(superficies,GS.pai) end
+        for _,base in ipairs(candidatos) do
+            for _=1,4 do
+                local ponto = Nav.deslocarClique(base,tamanho)
+                if ponto and Nav.pixelLivre(ponto,superficies) then
+                    return ponto
                 end
             end
-            if livre then
-                for _,superficie in ipairs(superficies) do
-                    local sucesso,objetos = pcall(function()
-                        return superficie:GetGuiObjectsAtPosition(ponto.X,ponto.Y)
-                    end)
-                    if sucesso then
-                        for _,obj in ipairs(objetos) do
-                            if obj.Visible and (obj:IsA("GuiButton") or obj:IsA("TextBox") or obj.Active) then
-                                livre = false
-                                break
-                            end
-                        end
-                    end
-                    if not livre then break end
-                end
-            end
-            if livre then return ponto end
         end
+        return nil
     end
 
     function Nav.pulsoAtividade(g,a,motivo)
@@ -6874,7 +6915,15 @@ GS.iniciarFarma = function()
             return false,"tela_ocupada"
         end
         s.ultimaTentativa = agora
+        s.intervalo = Nav.intervaloAtividade()
         s.proxima = agora+s.intervalo
+        if not s.servico and agora >= s.proximaBusca then
+            s.proximaBusca = agora+math.min(30,2^(math.min(s.seguidos,4)))
+            local disponivel,servico = pcall(function()
+                return game:GetService("VirtualUser")
+            end)
+            s.servico = disponivel and servico or nil
+        end
         local ok,erro = pcall(function()
             if not s.servico then error("VirtualUser indisponivel neste ambiente") end
             s.servico:CaptureController()
@@ -6882,10 +6931,16 @@ GS.iniciarFarma = function()
         end)
         if ok then
             s.enviados = s.enviados+1
-            R.atividadeTexto = "Autoclique 2s: ON · enviados " .. s.enviados
+            s.ultimoPonto = ponto
+            s.seguidos = 0
+            s.ultimoSucesso = agora
+            s.avisou = false
+            R.atividadeTexto = string.format("Autoclique ~2s: ON · %d cliques · proximo %.2fs",s.enviados,s.intervalo)
             return true,"enviado"
         end
         s.erros = s.erros+1
+        s.seguidos = s.seguidos+1
+        s.servico = nil
         R.atividadeTexto = "Atividade indisponível · verificar Output"
         if not s.avisou then
             s.avisou = true
@@ -6902,25 +6957,39 @@ GS.iniciarFarma = function()
         s.a = a
         s.avisou = false
         s.ultimaTentativa = -math.huge
+        s.seguidos = 0
+        s.proximaBusca = 0
+        s.gaussReserva = nil
+        s.intervalo = Nav.intervaloAtividade()
+        s.ultimoPonto = nil
         s.proxima = os.clock()+s.intervalo
         local token = s.token
         local ok,servico = pcall(function()
             return game:GetService("VirtualUser")
         end)
         s.servico = ok and servico or nil
-        R.atividadeTexto = "Autoclique 2s: ON"
+        R.atividadeTexto = "Autoclique ~2s: ON · variacao gaussiana"
         s.conn = LocalPlayer.Idled:Connect(function()
             if s.token == token then Nav.pulsoAtividade(g,a,"Idled") end
         end)
         task.spawn(function()
             while s.ativo and s.token == token and autoVivo(g,a) do
                 if os.clock() >= s.proxima then
-                    Nav.pulsoAtividade(g,a,"periodico")
+                    local sucesso,erro = pcall(Nav.pulsoAtividade,g,a,"periodico")
+                    if not sucesso then
+                        s.proxima = os.clock()+s.intervalo
+                        s.erros = s.erros+1
+                        R.atividadeTexto = "Autoclique em recuperação"
+                        if not s.avisou then
+                            s.avisou = true
+                            warn("[DEBUG-BOT]: Recuperando autoclique:",erro)
+                        end
+                    end
                 end
-                task.wait(0.25)
+                task.wait(0.05)
             end
         end)
-        registrar("ATIVIDADE","Clique esquerdo a cada 2s enquanto coleta; pausa em menus e prompts.")
+        registrar("ATIVIDADE","Clique esquerdo ~2s (normal limitada); raio 5-15px validado fora da interface.")
     end
 
     function Nav.fase(nome)
@@ -7004,6 +7073,7 @@ GS.iniciarFarma = function()
         if not Nav.vivo(ctx) then return "cancelado" end
         if R.coletados > ctx.recebido then return "inventario" end
         if not Nav.alvoValido(e) then return "retirado" end
+        if ctx.prazo and os.clock()>ctx.prazo then return "reagendar" end
         return nil
     end
 
@@ -7769,6 +7839,60 @@ GS.iniciarFarma = function()
         return "sem_confirmacao"
     end
 
+    -- O deslocamento rapido nunca e contabilizado como coleta.
+    -- Caso o servidor corrija a posicao, volta ao navegador com pouso/pulos.
+    function Nav.encadearRapido(ctx,e)
+        if not Nav.cfg.saltoRapido then return "desativado" end
+        if os.clock() < Nav.cfg.bloquearRapidoAte then return "aguardando" end
+        if not Nav.vivo(ctx) or ctx.root.Anchored then return "cancelado" end
+        if not ctx.root.CFrame then return "sem_raiz" end
+        local destino = Nav.posAlvo(e)
+        if not destino then return "retirado" end
+        if destino.Y <= workspace.FallenPartsDestroyHeight+Nav.cfg.minAltura then
+            return "destino_inseguro"
+        end
+        if (destino-ctx.root.Position).Magnitude > Nav.cfg.limiteRapido then
+            return "fora_do_limite"
+        end
+        if not Nav.voo(ctx) then return "sem_movimento" end
+        Nav.fase("ENCADEANDO FRASCOS · DESLOCAMENTO RÁPIDO")
+        local inicio = os.clock()
+        for _=1,24 do
+            local fim = Nav.terminou(ctx,e)
+            if fim then return fim end
+            destino = Nav.posAlvo(e)
+            if not destino then return "retirado" end
+            local delta = destino-ctx.root.Position
+            if delta.Magnitude < 1.4 then break end
+            if os.clock()-inicio > 1.5 then return "tempo_rapido" end
+            local passo = math.min(delta.Magnitude,Nav.cfg.passoRapido)
+            local ponto = ctx.root.Position+delta.Unit*passo
+            if ponto.Y <= workspace.FallenPartsDestroyHeight+Nav.cfg.minAltura then
+                return "destino_inseguro"
+            end
+            Nav.zerar(ctx)
+            local ok = pcall(function()
+                ctx.root.CFrame = ctx.root.CFrame+(ponto-ctx.root.Position)
+            end)
+            if not ok then return "movimento_recusado" end
+            Nav.esperar(ctx,Nav.cfg.pausaRapida)
+            if not Nav.vivo(ctx) then return "cancelado" end
+            if (ctx.root.Position-ponto).Magnitude > 24 then
+                Nav.cfg.bloquearRapidoAte = os.clock()+15
+                registrar("AJUSTE","Servidor corrigiu o deslocamento; usando voo e pouso.")
+                return "corrigido"
+            end
+        end
+        Nav.interagir(ctx,e)
+        local prazo = os.clock()+Nav.cfg.verificarRapido
+        while Nav.vivo(ctx) and os.clock()<prazo do
+            local resultado = Nav.terminou(ctx,e)
+            if resultado then return resultado end
+            task.wait(0.02)
+        end
+        return Nav.terminou(ctx,e) or "sem_confirmacao"
+    end
+
     function Nav.coletarChegada(ctx,e,analise)
         local fim = Nav.terminou(ctx,e)
         if fim then return fim end
@@ -7844,11 +7968,27 @@ GS.iniciarFarma = function()
         Nav.estado.rota = nil
     end
 
+    function Nav.temAlternativa(ctx,e)
+        for obj,it in pairs(R.itens) do
+            if obj~=e.obj and (it.tentarEm or 0)<=os.clock() then
+                if Nav.alvoValido({obj=obj,it=it}) then return true end
+            end
+        end
+        return false
+    end
+
     function Nav.buscar(e,g,a)
         local ctx = Nav.contexto(g,a)
         if not ctx then return end
+        local haOutro = Nav.temAlternativa(ctx,e)
+        ctx.prazo = os.clock()+(haOutro and Nav.cfg.orcamentoComAlternativa or Nav.cfg.orcamentoSozinho)
         Nav.estado.alvo = e.obj
         Nav.salvarSeguro(ctx)
+        local rapido = Nav.encadearRapido(ctx,e)
+        if rapido == "inventario" or rapido == "retirado" or rapido == "cancelado" then
+            Nav.concluir(ctx,e,rapido)
+            return
+        end
         local inicial = Nav.analise(ctx,e)
         if not inicial then return end
         local nomeSuporte = inicial.suporte and inicial.suporte.objeto.Name or "sem apoio"
@@ -7895,6 +8035,16 @@ GS.iniciarFarma = function()
             end
             if resultado == "inventario" or resultado == "retirado" then break end
             if resultado == "cancelado" then break end
+            if resultado == "reagendar" or os.clock()>ctx.prazo then
+                resultado = "reagendar"
+                break
+            end
+            if (resultado=="bloqueado" or resultado=="parado" or resultado=="ancorado")
+                and Nav.temAlternativa(ctx,e) then
+                registrar("TROCANDO ALVO","Frasco travado; tentando outro sem insistir no mesmo obstaculo.")
+                resultado = "reagendar"
+                break
+            end
             if resultado == "void" then
                 Nav.recuperar(ctx)
             elseif resultado ~= "replanejar" then
@@ -8132,7 +8282,7 @@ GS.iniciarFarma = function()
                     end
                     R.fase = "REPLANEJANDO MOVIMENTO"
                 end
-                task.wait(0.05)
+                task.wait(0.02)
             end
         end)
     end
@@ -8238,7 +8388,7 @@ GS.iniciarFarma = function()
         pararMonitor()
     end)
 end
-GS.rodar("Farma Bot", GS.iniciarFarma, GS.painelFarma)
+GS.rodar("Farmar Vibes", GS.iniciarFarma, GS.painelFarma)
 
 -- Lucky Blocks: busca independente na mesma tela da farma de frascos.
 GS.iniciarFarmaLucky = function()
@@ -13994,170 +14144,1355 @@ end
 GS.rodar("Velocidade da bala", GS.iniciarVelocidade, GS.painelMunicao)
 
 -- ═══════════════════════════════════════════════════════════════
+GS.iniciarModoFantasma = function()
+    -- Uma entrada publica, um controle e um estado para todo o efeito.
+    local F = {}
+    F.cfg = {
+        bridge = "GringoPanelBridge",
+        atributo = "GringoGhostEnabled",
+        maxFila = 768,
+        lote = 48,
+        auditoria = 1.5,
+        timeout = 3,
+        pausaPonte = 2,
+        logIntervalo = 4,
+        maxLog = 24,
+        versao = 1,
+    }
+    F.s = {
+        ativo = false,
+        morto = false,
+        geracao = 0,
+        ciclo = 0,
+        personagem = nil,
+        objetos = {},
+        fila = {},
+        pendentes = {},
+        conns = {},
+        charConns = {},
+        remoto = nil,
+        remotoConn = nil,
+        requisicao = 0,
+        pedidoEm = 0,
+        ultimoPedido = -math.huge,
+        ultimaAuditoria = 0,
+        ultimoLog = 0,
+        proximaBusca = 0,
+        servidor = false,
+        aguardando = false,
+        aplicados = 0,
+        restaurados = 0,
+        corrigidos = 0,
+        erros = 0,
+        log = {},
+        fonte = "LOCAL",
+    }
+    -- Apenas propriedades visuais. Saude, colisao e movimento nao sao alterados.
+    F.politicas = {
+        {
+            classe = "BasePart",
+            valores = {
+                LocalTransparencyModifier = 1,
+                CastShadow = false,
+            },
+        },
+        {
+            classe = "Decal",
+            valores = {
+                Transparency = 1,
+            },
+        },
+        {
+            classe = "Texture",
+            valores = {
+                Transparency = 1,
+            },
+        },
+        {
+            classe = "ParticleEmitter",
+            valores = {
+                Enabled = false,
+            },
+        },
+        {
+            classe = "Beam",
+            valores = {
+                Enabled = false,
+            },
+        },
+        {
+            classe = "Trail",
+            valores = {
+                Enabled = false,
+            },
+        },
+        {
+            classe = "Fire",
+            valores = {
+                Enabled = false,
+            },
+        },
+        {
+            classe = "Smoke",
+            valores = {
+                Enabled = false,
+            },
+        },
+        {
+            classe = "Sparkles",
+            valores = {
+                Enabled = false,
+            },
+        },
+        {
+            classe = "PointLight",
+            valores = {
+                Enabled = false,
+            },
+        },
+        {
+            classe = "SpotLight",
+            valores = {
+                Enabled = false,
+            },
+        },
+        {
+            classe = "SurfaceLight",
+            valores = {
+                Enabled = false,
+            },
+        },
+        {
+            classe = "Highlight",
+            valores = {
+                Enabled = false,
+            },
+        },
+        {
+            classe = "BillboardGui",
+            valores = {
+                Enabled = false,
+            },
+        },
+        {
+            classe = "SurfaceGui",
+            valores = {
+                Enabled = false,
+            },
+        },
+        {
+            classe = "PVAdornment",
+            valores = {
+                Visible = false,
+            },
+        },
+        {
+            classe = "HandleAdornment",
+            valores = {
+                Visible = false,
+            },
+        },
+        {
+            classe = "Humanoid",
+            valores = {
+                DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None,
+                HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff,
+                NameDisplayDistance = 0,
+                HealthDisplayDistance = 0,
+            },
+        },
+    }
+    F.ui = {}
+    function F.registrar(tipo,mensagem)
+        local s = F.s
+        local linha = tipo .. " · " .. tostring(mensagem)
+        table.insert(s.log,1,linha)
+        while #s.log > F.cfg.maxLog do
+            table.remove(s.log)
+        end
+        if os.clock()-s.ultimoLog >= F.cfg.logIntervalo or tipo == "ESTADO" then
+            s.ultimoLog = os.clock()
+            print("[DEBUG-BOT][FANTASMA]: " .. linha)
+        end
+    end
+    function F.conectar(sinal,callback,lista)
+        local ok,conn = pcall(function()
+            return sinal:Connect(callback)
+        end)
+        if ok and conn then
+            table.insert(lista or F.s.conns,conn)
+            return conn
+        end
+        F.s.erros = F.s.erros+1
+        return nil
+    end
+    function F.desconectar(lista)
+        for _,conn in ipairs(lista) do
+            pcall(function()
+                conn:Disconnect()
+            end)
+        end
+        table.clear(lista)
+    end
+    function F.classe(obj,nome)
+        local ok,resultado = pcall(function()
+            return obj:IsA(nome)
+        end)
+        return ok and resultado
+    end
+    function F.descendente(obj,pai)
+        if not obj or not pai then
+            return false
+        end
+        if obj == pai then
+            return true
+        end
+        local ok,resultado = pcall(function()
+            return obj:IsDescendantOf(pai)
+        end)
+        return ok and resultado
+    end
+    function F.ler(obj,prop)
+        local ok,valor = pcall(function()
+            return obj[prop]
+        end)
+        if not ok then
+            return false,nil
+        end
+        return true,valor
+    end
+    function F.escrever(obj,prop,valor,registro)
+        if not obj then
+            return false
+        end
+        if registro then
+            registro.escrevendo = true
+        end
+        local ok = pcall(function()
+            obj[prop] = valor
+        end)
+        if registro then
+            registro.escrevendo = false
+        end
+        if not ok then
+            F.s.erros = F.s.erros+1
+        end
+        return ok
+    end
+    function F.adornee(obj)
+        if not (
+            F.classe(obj,"BillboardGui")
+            or F.classe(obj,"SurfaceGui")
+            or F.classe(obj,"Highlight")
+            or F.classe(obj,"PVAdornment")
+            or F.classe(obj,"HandleAdornment")
+        ) then
+            return nil
+        end
+        local ok,alvo = F.ler(obj,"Adornee")
+        if ok then
+            return alvo
+        end
+        return nil
+    end
+    function F.pertence(obj)
+        local char = F.s.personagem
+        if not char or not obj then
+            return false
+        end
+        if F.descendente(obj,char) then
+            return true
+        end
+        return F.descendente(F.adornee(obj),char)
+    end
+    function F.regra(obj)
+        for _,politica in ipairs(F.politicas) do
+            if F.classe(obj,politica.classe) then
+                return politica
+            end
+        end
+        return nil
+    end
+    function F.estaVivo(geracao)
+        return not F.s.morto
+            and F.s.ativo
+            and F.s.geracao == geracao
+            and ScreenGui.Parent ~= nil
+    end
+    function F.restaurarObjeto(obj)
+        local registro = F.s.objetos[obj]
+        if not registro then
+            return
+        end
+        F.desconectar(registro.conns)
+        for prop,valor in pairs(registro.originais) do
+            local ok,atual = F.ler(obj,prop)
+            -- Uma alteracao posterior de outro sistema nao e sobrescrita.
+            if ok and atual == registro.ocultos[prop] then
+                if F.escrever(obj,prop,valor,registro) then
+                    F.s.restaurados = F.s.restaurados+1
+                end
+            end
+        end
+        F.s.objetos[obj] = nil
+        F.s.pendentes[obj] = nil
+    end
+    function F.restaurarTodos()
+        local objetos = {}
+        for obj in pairs(F.s.objetos) do
+            table.insert(objetos,obj)
+        end
+        for _,obj in ipairs(objetos) do
+            F.restaurarObjeto(obj)
+        end
+        table.clear(F.s.fila)
+        table.clear(F.s.pendentes)
+    end
+    function F.enfileirar(obj)
+        local s = F.s
+        if not s.ativo or s.morto then
+            return
+        end
+        if s.pendentes[obj] then
+            return
+        end
+        if #s.fila >= F.cfg.maxFila then
+            return
+        end
+        s.pendentes[obj] = true
+        table.insert(s.fila,obj)
+    end
+    function F.mudou(obj,prop)
+        local s = F.s
+        local registro = s.objetos[obj]
+        if not registro or registro.escrevendo then
+            return
+        end
+        if not s.ativo or not F.pertence(obj) then
+            return
+        end
+        local ok,valor = F.ler(obj,prop)
+        if not ok then
+            return
+        end
+        if valor ~= registro.ocultos[prop] then
+            -- Mantem a intencao mais recente de scripts do proprio personagem.
+            if prop ~= "LocalTransparencyModifier" then
+                registro.originais[prop] = valor
+            end
+            F.enfileirar(obj)
+        end
+    end
+    function F.aplicar(obj)
+        local s = F.s
+        if not s.ativo or not F.pertence(obj) then
+            return false
+        end
+        local politica = F.regra(obj)
+        if not politica then
+            return false
+        end
+        local registro = s.objetos[obj]
+        if not registro then
+            registro = {
+                originais = {},
+                ocultos = {},
+                conns = {},
+                escrevendo = false,
+                geracao = s.geracao,
+            }
+            s.objetos[obj] = registro
+            for prop,oculto in pairs(politica.valores) do
+                local ok,valor = F.ler(obj,prop)
+                if ok then
+                    registro.originais[prop] = valor
+                    registro.ocultos[prop] = oculto
+                    local sucesso,sinal = pcall(function()
+                        return obj:GetPropertyChangedSignal(prop)
+                    end)
+                    if sucesso then
+                        F.conectar(
+                            sinal,
+                            function()
+                                F.mudou(obj,prop)
+                            end,
+                            registro.conns
+                        )
+                    end
+                end
+            end
+        end
+        for prop,oculto in pairs(registro.ocultos) do
+            local ok,valor = F.ler(obj,prop)
+            if ok and valor ~= oculto then
+                if F.escrever(obj,prop,oculto,registro) then
+                    s.aplicados = s.aplicados+1
+                end
+            end
+        end
+        return true
+    end
+    function F.processar()
+        local s = F.s
+        if not s.ativo then
+            return
+        end
+        local lote = {}
+        for _=1,math.min(F.cfg.lote,#s.fila) do
+            table.insert(lote,table.remove(s.fila,1))
+        end
+        for _,obj in ipairs(lote) do
+            s.pendentes[obj] = nil
+            if F.pertence(obj) then
+                F.aplicar(obj)
+            else
+                F.restaurarObjeto(obj)
+            end
+        end
+    end
+    function F.contar()
+        local objetos = 0
+        local propriedades = 0
+        local incorretas = 0
+        for obj,registro in pairs(F.s.objetos) do
+            objetos = objetos+1
+            for prop,oculto in pairs(registro.ocultos) do
+                propriedades = propriedades+1
+                local ok,valor = F.ler(obj,prop)
+                if ok and valor ~= oculto then
+                    incorretas = incorretas+1
+                end
+            end
+        end
+        return {
+            objetos = objetos,
+            propriedades = propriedades,
+            incorretas = incorretas,
+            fila = #F.s.fila,
+            erros = F.s.erros,
+        }
+    end
+    function F.auditar()
+        local s = F.s
+        if not s.ativo then
+            return
+        end
+        local perdidos = {}
+        for obj,registro in pairs(s.objetos) do
+            if not F.pertence(obj) then
+                table.insert(perdidos,obj)
+            else
+                for prop,oculto in pairs(registro.ocultos) do
+                    local ok,valor = F.ler(obj,prop)
+                    if ok and valor ~= oculto then
+                        s.corrigidos = s.corrigidos+1
+                        F.enfileirar(obj)
+                        break
+                    end
+                end
+            end
+        end
+        for _,obj in ipairs(perdidos) do
+            F.restaurarObjeto(obj)
+        end
+        local char = s.personagem
+        if char then
+            for _,obj in ipairs(char:GetDescendants()) do
+                if not s.objetos[obj] and F.regra(obj) then
+                    F.enfileirar(obj)
+                end
+            end
+        end
+    end
+    -- Adornee pode ser definido depois de a placa entrar no PlayerGui.
+    -- Observadores limitados evitam varrer a interface inteira a cada frame.
+    function F.ehVisualExterno(obj)
+        return F.classe(obj,"BillboardGui")
+            or F.classe(obj,"SurfaceGui")
+            or F.classe(obj,"Highlight")
+            or F.classe(obj,"PVAdornment")
+            or F.classe(obj,"HandleAdornment")
+    end
+    function F.limparExternos()
+        local s = F.s
+        if not s.externos then
+            s.externos = {}
+        end
+        for obj,registro in pairs(s.externos) do
+            F.desconectar(registro.conns)
+            s.externos[obj] = nil
+        end
+        s.totalExternos = 0
+    end
+    function F.observarExterno(obj)
+        local s = F.s
+        if not s.ativo or s.morto or not obj or not obj.Parent then
+            return
+        end
+        if not F.ehVisualExterno(obj) then
+            return
+        end
+        if F.descendente(obj,s.personagem) then
+            return
+        end
+        s.externos = s.externos or {}
+        s.totalExternos = s.totalExternos or 0
+        if s.externos[obj] or s.totalExternos>=192 then
+            return
+        end
+        local registro = {
+            conns = {},
+            geracao = s.geracao,
+            ultimoAlvo = F.adornee(obj),
+        }
+        s.externos[obj] = registro
+        s.totalExternos = s.totalExternos+1
+        local ok,sinal = pcall(function()
+            return obj:GetPropertyChangedSignal("Adornee")
+        end)
+        if ok and sinal then
+            F.conectar(
+                sinal,
+                function()
+                    if not F.estaVivo(registro.geracao) then
+                        return
+                    end
+                    registro.ultimoAlvo = F.adornee(obj)
+                    if F.pertence(obj) then
+                        F.enfileirar(obj)
+                    else
+                        -- A placa voltou a apontar para outra pessoa.
+                        F.restaurarObjeto(obj)
+                    end
+                end,
+                registro.conns
+            )
+        end
+    end
+    function F.auditarExternos()
+        local s = F.s
+        if not s.externos then
+            return
+        end
+        local retirar = {}
+        for obj,registro in pairs(s.externos) do
+            if not obj.Parent or registro.geracao~=s.geracao then
+                table.insert(retirar,obj)
+            elseif F.pertence(obj) and not s.objetos[obj] then
+                F.enfileirar(obj)
+            elseif not F.pertence(obj) and s.objetos[obj] then
+                F.restaurarObjeto(obj)
+            end
+        end
+        for _,obj in ipairs(retirar) do
+            local registro = s.externos[obj]
+            F.desconectar(registro.conns)
+            s.externos[obj] = nil
+            s.totalExternos = math.max(0,(s.totalExternos or 1)-1)
+            F.restaurarObjeto(obj)
+        end
+    end
+    function F.observarPlayerGui(geracao)
+        local gui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if not gui then
+            return
+        end
+        F.conectar(
+            gui.DescendantAdded,
+            function(obj)
+                if F.estaVivo(geracao) and F.ehVisualExterno(obj) then
+                    F.externo(obj)
+                end
+            end,
+            F.s.charConns
+        )
+    end
+    function F.validarPonte()
+        local s = F.s
+        if s.remoto and not s.remoto.Parent then
+            if s.remotoConn then
+                s.remotoConn:Disconnect()
+                s.remotoConn = nil
+            end
+            s.remoto = nil
+            s.servidor = false
+            s.aguardando = false
+            s.requisicao = s.requisicao+1
+            s.proximaBusca = os.clock()+F.cfg.pausaPonte
+            F.registrar("PONTE","Conexao removida; mantendo apenas efeito local.")
+            F.atualizarUI()
+        end
+    end
+    function F.externo(obj)
+        F.observarExterno(obj)
+        if not F.adornee(obj) then
+            return
+        end
+        if F.pertence(obj) then
+            F.enfileirar(obj)
+        end
+    end
+    function F.buscarExternos(geracao)
+        task.spawn(function()
+            local fontes = {workspace}
+            local gui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            if gui then
+                table.insert(fontes,gui)
+            end
+            for _,fonte in ipairs(fontes) do
+                for i,obj in ipairs(fonte:GetDescendants()) do
+                    if not F.estaVivo(geracao) then
+                        return
+                    end
+                    if F.classe(obj,"BillboardGui")
+                        or F.classe(obj,"SurfaceGui")
+                        or F.classe(obj,"Highlight")
+                    then
+                        F.externo(obj)
+                    end
+                    if i%300 == 0 then
+                        task.wait()
+                    end
+                end
+            end
+        end)
+    end
+    function F.vincular(char)
+        local s = F.s
+        F.desconectar(s.charConns)
+        F.limparExternos()
+        F.restaurarTodos()
+        s.personagem = char
+        s.ciclo = s.ciclo+1
+        if not char or not s.ativo then
+            return
+        end
+        local ciclo = s.ciclo
+        local geracao = s.geracao
+        for _,obj in ipairs(char:GetDescendants()) do
+            F.aplicar(obj)
+        end
+        F.conectar(
+            char.DescendantAdded,
+            function(obj)
+                if F.estaVivo(geracao) and s.ciclo == ciclo then
+                    F.enfileirar(obj)
+                end
+            end,
+            s.charConns
+        )
+        F.conectar(
+            char.DescendantRemoving,
+            function(obj)
+                task.defer(function()
+                    if s.ciclo ~= ciclo then
+                        return
+                    end
+                    if not F.descendente(obj,char) then
+                        F.restaurarObjeto(obj)
+                    end
+                end)
+            end,
+            s.charConns
+        )
+        F.buscarExternos(geracao)
+        F.observarPlayerGui(geracao)
+        F.registrar("PERSONAGEM","Aparencia e efeitos rastreados sem alterar fisica.")
+    end
+    function F.atualizarUI()
+        local s = F.s
+        local ui = F.ui
+        if ui.toggle then
+            ui.toggle.Text = s.ativo and "MODO FANTASMA: ON" or "MODO FANTASMA: OFF"
+        end
+        if not ui.status then
+            return
+        end
+        if not s.ativo then
+            ui.status.Text = "Desligado · aparência restaurada"
+            return
+        end
+        local n = F.contar()
+        local escopo
+        if s.aguardando then
+            escopo = "Confirmando servidor"
+        elseif s.servidor then
+            escopo = "Servidor confirmou invisibilidade"
+        else
+            escopo = "Invisibilidade local · ponte de servidor não confirmada"
+        end
+        ui.status.Text = string.format(
+            "%s · %d objetos · %d correções",
+            escopo,
+            n.objetos,
+            s.corrigidos
+        )
+    end
+    function F.ack(comando,dados)
+        local s = F.s
+        if comando ~= "ghost" or type(dados) ~= "table" then
+            return
+        end
+        if dados.id ~= s.requisicao then
+            return
+        end
+        if dados.ok == true and dados.enabled ~= s.ativo then
+            return
+        end
+        s.aguardando = false
+        s.servidor = dados.ok == true and dados.enabled == true
+        s.fonte = s.servidor and "SERVIDOR" or "LOCAL"
+        if s.ativo then
+            F.registrar(
+                "SERVIDOR",
+                s.servidor and "Modo fantasma aplicado no servidor."
+                    or tostring(dados.reason or "Efeito permanece apenas local.")
+            )
+        end
+        F.atualizarUI()
+    end
+    function F.procurarPonte()
+        local s = F.s
+        if s.remoto and s.remoto.Parent then
+            return s.remoto
+        end
+        if s.remotoConn then
+            s.remotoConn:Disconnect()
+            s.remotoConn = nil
+        end
+        s.remoto = nil
+        local pasta = game:GetService("ReplicatedStorage")
+        local remoto = pasta:FindFirstChild(F.cfg.bridge)
+        if not remoto or not remoto:IsA("RemoteEvent") then
+            return nil
+        end
+        s.remoto = remoto
+        s.remotoConn = remoto.OnClientEvent:Connect(function(comando,dados)
+            if not s.morto then
+                F.ack(comando,dados)
+            end
+        end)
+        return remoto
+    end
+    function F.pedirServidor()
+        local s = F.s
+        local remoto = F.procurarPonte()
+        if not remoto then
+            s.servidor = false
+            s.aguardando = false
+            return false
+        end
+        s.requisicao = s.requisicao+1
+        s.pedidoEm = os.clock()
+        s.ultimoPedido = os.clock()
+        s.aguardando = s.ativo
+        local ok,erro = pcall(function()
+            remoto:FireServer("ghost",{
+                id = s.requisicao,
+                enabled = s.ativo,
+                version = F.cfg.versao,
+            })
+        end)
+        if not ok then
+            s.aguardando = false
+            s.servidor = false
+            F.registrar("PONTE",erro)
+        end
+        return ok
+    end
+    function F.ativar()
+        local s = F.s
+        if s.morto or s.ativo then
+            return
+        end
+        s.ativo = true
+        s.geracao = s.geracao+1
+        s.servidor = false
+        s.aguardando = false
+        s.aplicados = 0
+        s.corrigidos = 0
+        s.ultimaAuditoria = 0
+        s.proximaBusca = os.clock()+F.cfg.pausaPonte
+        F.vincular(LocalPlayer.Character)
+        F.pedirServidor()
+        F.registrar("ESTADO","Modo fantasma ativado.")
+        F.atualizarUI()
+    end
+    function F.desativar()
+        local s = F.s
+        if not s.ativo then
+            return
+        end
+        s.ativo = false
+        s.geracao = s.geracao+1
+        s.aguardando = false
+        s.servidor = false
+        F.desconectar(s.charConns)
+        F.limparExternos()
+        F.restaurarTodos()
+        F.pedirServidor()
+        F.registrar("ESTADO","Modo fantasma desligado; valores originais restaurados.")
+        F.atualizarUI()
+    end
+    function F.passo()
+        local s = F.s
+        if s.morto or not s.ativo then
+            return
+        end
+        if LocalPlayer.Character ~= s.personagem then
+            F.vincular(LocalPlayer.Character)
+        end
+        F.processar()
+        F.validarPonte()
+        local agora = os.clock()
+        if agora-s.ultimaAuditoria >= F.cfg.auditoria then
+            s.ultimaAuditoria = agora
+            F.auditar()
+            F.auditarExternos()
+            F.atualizarUI()
+        end
+        if s.aguardando and agora-s.pedidoEm > F.cfg.timeout then
+            s.aguardando = false
+            s.servidor = false
+            F.registrar("PONTE","Sem confirmacao; interface informa escopo local.")
+            F.atualizarUI()
+        end
+        if not s.remoto and agora >= s.proximaBusca then
+            s.proximaBusca = agora+F.cfg.pausaPonte
+            if F.procurarPonte() then
+                F.pedirServidor()
+            end
+        end
+    end
+    function F.inspecionar()
+        local dados = F.contar()
+        dados.ativo = F.s.ativo
+        dados.servidor = F.s.servidor
+        dados.aguardando = F.s.aguardando
+        dados.geracao = F.s.geracao
+        dados.personagem = F.s.personagem
+        return dados
+    end
+    function F.desligar()
+        if F.s.morto then
+            return
+        end
+        F.desativar()
+        F.s.morto = true
+        F.s.geracao = F.s.geracao+1
+        F.desconectar(F.s.charConns)
+        F.desconectar(F.s.conns)
+        if F.s.remotoConn then
+            F.s.remotoConn:Disconnect()
+            F.s.remotoConn = nil
+        end
+        F.s.remoto = nil
+        F.s.personagem = nil
+        table.clear(F.s.fila)
+        table.clear(F.s.pendentes)
+    end
+
+    -- O mesmo controlador trata R6, R15, acessorios, ferramentas e novos efeitos.
+    -- A interface tem somente uma chave para ligar ou desligar.
+    if not GS.ui or not GS.painelPersonagem then
+        error("Tela de personagem indisponivel")
+    end
+    local U = GS.ui
+    local grupo = U.grupo(
+        GS.painelPersonagem,
+        "Modo fantasma",
+        "Oculta personagem e efeitos · o status informa local ou servidor",
+        "ghost",
+        1.5
+    )
+    F.ui.toggle = U.tog(
+        grupo,
+        "Modo fantasma",
+        1,
+        "ghost"
+    )
+    F.ui.toggle:SetAttribute("Controlado",true)
+    F.ui.status = U.pequeno(
+        grupo,
+        "Desligado · aparência restaurada",
+        nil,
+        2,
+        "info"
+    )
+    F.ui.status.Active = false
+    F.ui.status.AutoButtonColor = false
+    F.conectar(
+        F.ui.toggle.MouseButton1Click,
+        function()
+            if F.s.ativo then
+                F.desativar()
+            else
+                F.ativar()
+            end
+        end
+    )
+    F.conectar(
+        LocalPlayer.CharacterAdded,
+        function(char)
+            if F.s.ativo and not F.s.morto then
+                F.vincular(char)
+                F.pedirServidor()
+                F.atualizarUI()
+            end
+        end
+    )
+    F.conectar(
+        workspace.DescendantAdded,
+        function(obj)
+            if not F.s.ativo then
+                return
+            end
+            if F.classe(obj,"BillboardGui")
+                or F.classe(obj,"SurfaceGui")
+                or F.classe(obj,"Highlight")
+            then
+                local geracao = F.s.geracao
+                task.delay(0.15,function()
+                    if F.estaVivo(geracao) then
+                        F.externo(obj)
+                    end
+                end)
+            end
+        end
+    )
+    F.conectar(
+        RunService.Heartbeat,
+        function()
+            local ok,erro = pcall(F.passo)
+            if not ok then
+                F.s.erros = F.s.erros+1
+                F.registrar("ERRO",erro)
+            end
+        end
+    )
+    F.conectar(
+        ScreenGui.Destroying,
+        function()
+            F.desligar()
+        end
+    )
+    GS.controladorFantasma = F
+    F.atualizarUI()
+    return F
+end
+GS.rodar("Modo fantasma",GS.iniciarModoFantasma,GS.painelPersonagem)
+
 --   RETORNO SEGURO — TELEPORTE > PLAYERS
 GS.iniciarRetorno = function()
     local U = GS.ui
-    local painel = GS.painelRetorno
-    if not U or not painel then error("Painel de retorno indisponivel") end
+    if not U or not GS.painelRetorno then error("Tela de retorno indisponivel") end
+    local C = {}
+    local s = {
+        ativo=false, escolhendo=false, tecla=nil, destino=nil,
+        ultimoUso=-math.huge, ultimaAmostra=-math.huge,
+        historico={}, conns={}, pendente=nil, id=0,
+        morto=false, remoto=nil, remotoConn=nil,
+        mensagem="Defina uma tecla; o ponto seguro sera atualizado ao caminhar.",
+        proximaPonte=0, proximaUI=0, sucessos=0, falhas=0,
+    }
+    C.s = s
+    C.cfg = {
+        intervalo=0.1, movimento=0.3, maxHistorico=32, normal=0.55,
+        alturaMinima=25, velocidadeVertical=12, velocidadeMaxima=180,
+        timeoutPonte=1.5, cooldown=2, tolerancia=6,
+        prazoMinimo=20, tentativas=3, esperaVerificacao=0.3,
+    }
+    GS.resetMesmoLugar = false
+    GS.resetStatus = nil
+    GS.retornoSeguro = s
 
-    GS.resetMesmoLugar = true
-    local resetGrupo = U.grupo(painel, "Renascer no mesmo lugar", "Aguarda renascer e tenta voltar à posição anterior", "refresh-cw", 1.5)
-    local resetModo = U.tog(resetGrupo, "Voltar ao mesmo lugar após renascer", 1, "map-pin")
-    resetModo.Text = "MESMO LUGAR: ON"
-    local resetBotao = U.acao(resetGrupo, "MORRER / RENASCER AGORA", "refresh-cw", 2)
-    GS.resetStatus = U.pequeno(resetGrupo, "Pronto · o tempo de renascer depende do jogo", nil, 3, "info")
-    GS.resetStatus.Active = false
-    GS.resetStatus.AutoButtonColor = false
-    resetModo.MouseButton1Click:Connect(function()
-        GS.resetMesmoLugar = not GS.resetMesmoLugar
-        resetModo.Text = GS.resetMesmoLugar and "MESMO LUGAR: ON" or "MESMO LUGAR: OFF"
-    end)
-    resetBotao.MouseButton1Click:Connect(function()
-        if GS.renascer then GS.renascer() end
-    end)
-
-    local estado = { ativo = false, escolhendo = false, tecla = nil, destino = nil, ultimoUso = -math.huge, conns = {} }
-    GS.retornoSeguro = estado
-    local grupo = U.grupo(painel, "Retorno seguro", "Escolha a tecla e ative para salvar seu lugar atual", "map-pin", 2)
-    local teclaBtn = U.pequeno(grupo, "1. DEFINIR TECLA", nil, 1, "keyboard")
-    local ativarBtn = U.tog(grupo, "2. Ativar retorno pela tecla", 2, "shield-check")
-    local salvarBtn = U.pequeno(grupo, "ATUALIZAR LUGAR SALVO", nil, 3, "map-pin")
-    local voltarBtn = U.acao(grupo, "VOLTAR AO LUGAR SALVO", "arrow-up-to-line", 4)
-    local status = U.pequeno(grupo, "Escolha uma tecla para começar", nil, 5, "info")
-    status.Active = false
-    status.AutoButtonColor = false
-    status.TextColor3 = U.T.dim
-    ativarBtn.Text = "RETORNO: OFF"
-
-    local function personagem()
+    function C.conectar(signal,fn)
+        local conn = signal:Connect(fn)
+        table.insert(s.conns,conn)
+        return conn
+    end
+    function C.finito(n)
+        return type(n)=="number" and n==n and n>-math.huge and n<math.huge
+    end
+    function C.vetor(v)
+        return v and C.finito(v.X) and C.finito(v.Y) and C.finito(v.Z)
+    end
+    function C.personagem()
         local char = LocalPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not (char and hum and root) or hum.Health <= 0 then return end
-        return char, hum, root
+        if not char or not char.Parent or not hum or not root then return end
+        if hum.Health<=0 or not root.Parent or not C.vetor(root.Position) then return end
+        return char,hum,root
     end
-
-    local function salvar()
-        local char, hum, root = personagem()
-        if not char then
-            GS.toast("Espere seu personagem aparecer", false)
-            return false
+    function C.piso(char,hum,root)
+        if hum.Sit or hum.PlatformStand or root.Anchored then return nil,"imobilizado" end
+        if hum.FloorMaterial==Enum.Material.Air then return nil,"no_ar" end
+        if not C.vetor(root.AssemblyLinearVelocity) then return nil,"velocidade_invalida" end
+        if math.abs(root.AssemblyLinearVelocity.Y)>C.cfg.velocidadeVertical then
+            return nil,"queda"
         end
-        if hum.Sit or hum.PlatformStand or root.Anchored or hum.WalkSpeed <= 0 then
-            GS.toast("Salve o lugar enquanto estiver livre e em pé", false)
-            return false
+        if root.AssemblyLinearVelocity.Magnitude>C.cfg.velocidadeMaxima then
+            return nil,"movimento_instavel"
         end
-        if hum.FloorMaterial == Enum.Material.Air then
-            GS.toast("Fique no chão para salvar um lugar seguro", false)
-            return false
+        if root.Position.Y<=workspace.FallenPartsDestroyHeight+C.cfg.alturaMinima then
+            return nil,"void"
         end
-        estado.destino = root.CFrame
-        status.Text = "Lugar salvo · tecla " .. (estado.tecla and estado.tecla.Name or "não definida")
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {char}
+        params.RespectCanCollide = true
+        params.IgnoreWater = true
+        local comprimento = math.max(7,hum.HipHeight+root.Size.Y*0.5+3)
+        local hit = workspace:Raycast(root.Position,Vector3.new(0,-comprimento,0),params)
+        if not hit or not C.vetor(hit.Position) or hit.Normal.Y<C.cfg.normal then
+            return nil,"sem_chao_estavel"
+        end
+        local apoio = hit.Instance
+        if not apoio or not apoio.Parent then return nil,"apoio_removido" end
+        local modelo = apoio:FindFirstAncestorOfClass("Model")
+        if modelo and modelo:FindFirstChildOfClass("Humanoid") then
+            return nil,"outro_personagem"
+        end
+        if apoio:IsA("BasePart") and not apoio.Anchored then
+            return nil,"apoio_movel"
+        end
+        return hit
+    end
+    function C.candidato()
+        local char,hum,root = C.personagem()
+        if not char then return nil,"sem_personagem" end
+        local hit,motivo = C.piso(char,hum,root)
+        if not hit then return nil,motivo end
+        return {
+            cf=root.CFrame, pos=root.Position, apoio=hit.Instance,
+            normal=hit.Normal, chao=hit.Position, hora=os.clock(), char=char,
+        }
+    end
+    function C.valido(ponto)
+        if not ponto or not C.vetor(ponto.pos) or not ponto.cf then return false end
+        if ponto.pos.Y<=workspace.FallenPartsDestroyHeight+C.cfg.alturaMinima then return false end
+        if not ponto.apoio or not ponto.apoio.Parent then return false end
+        if ponto.apoio:IsA("BasePart") and not ponto.apoio.Anchored then return false end
         return true
     end
-
-    local function voltar()
-        if not estado.ativo or estado.escolhendo or not estado.destino then
-            GS.toast("Defina a tecla e ative o retorno primeiro", false)
+    function C.salvar(forcar)
+        if s.morto or not s.ativo or s.pendente then return false,"pausado" end
+        local ponto,motivo = C.candidato()
+        if not ponto then return false,motivo end
+        if not forcar and s.destino and (ponto.pos-s.destino.pos).Magnitude<C.cfg.movimento then
+            return false,"sem_movimento"
+        end
+        s.destino = ponto
+        table.insert(s.historico,ponto)
+        while #s.historico>C.cfg.maxHistorico do table.remove(s.historico,1) end
+        return true
+    end
+    function C.escolherPonto()
+        if C.valido(s.destino) then return s.destino end
+        for i=#s.historico,1,-1 do
+            if C.valido(s.historico[i]) then return s.historico[i] end
+        end
+        return nil
+    end
+    function C.status(texto)
+        s.mensagem = texto
+        if C.texto and C.texto.Parent then C.texto.Text = texto end
+    end
+    function C.atualizarUI()
+        if s.morto then return end
+        if C.tecla then
+            C.tecla.Text = s.escolhendo and "PRESSIONE UMA TECLA · ESC CANCELA"
+                or (s.tecla and ("TECLA: "..s.tecla.Name) or "DEFINIR TECLA")
+        end
+        if C.ativar then
+            C.ativar.Text = s.pendente and "RETORNO EM ANDAMENTO"
+                or (s.ativo and "RETORNO SEGURO: ON" or "RETORNO SEGURO: OFF")
+        end
+    end
+    function C.pausarMovimento()
+        for _,nome in ipairs({
+            "pararFarmaFrascos","pararFarmaLucky","pararFarmaTesouro","pararFarmaNome",
+        }) do
+            if type(GS[nome])=="function" then
+                local ok,erro = pcall(GS[nome])
+                if not ok then warn("[DEBUG-BOT]: Pausa de retorno:",nome,erro) end
+            end
+        end
+        GS.farmaDirecao = nil
+        pcall(function() if ghostAtivado then alternarGhost() end end)
+        pcall(function() if flyAtivado then alternarFly() end end)
+        pcall(function() if GS.limparCarregar then GS.limparCarregar() end end)
+    end
+    function C.pedidoAtual(p)
+        return not s.morto and s.pendente==p and p.id==s.id and ScreenGui.Parent~=nil
+    end
+    function C.finalizar(p,sucesso,motivo)
+        if not C.pedidoAtual(p) then return end
+        s.pendente = nil
+        s.ultimoUso = os.clock()
+        if sucesso then
+            s.sucessos = s.sucessos+1
+            -- Continua no ponto de retorno; nao grava o spawn intermediario.
+            s.destino = p.ponto
+            C.status("Retorno confirmado · salvamento automatico retomado")
+        else
+            s.falhas = s.falhas+1
+            C.status("Retorno interrompido: "..tostring(motivo))
+        end
+        s.ultimaAmostra = os.clock()
+        C.atualizarUI()
+        print("[DEBUG-BOT]: Retorno",sucesso and "confirmado" or "falhou",motivo or "")
+    end
+    function C.resetLocal(p)
+        if not C.pedidoAtual(p) or p.resetSolicitado or p.servidor then return end
+        p.resetSolicitado = true
+        p.fase = "renascendo"
+        C.status("Renascendo · aguardando o tempo normal do servidor")
+        if type(GS.renascer)~="function" then
+            C.finalizar(p,false,"reset indisponivel")
             return
         end
-        if os.clock() - estado.ultimoUso < 1 then return end
-        local char, hum, root = personagem()
-        if not char then return end
-        estado.ultimoUso = os.clock()
-        local ok = pcall(function()
+        local ok,erro = pcall(GS.renascer)
+        if not ok then C.finalizar(p,false,tostring(erro)) end
+    end
+    function C.ack(comando,dados)
+        local p = s.pendente
+        if comando~="return" or type(dados)~="table" or not p then return end
+        if dados.id~=p.id or not C.pedidoAtual(p) then return end
+        if dados.ok~=true then
+            -- Sem confirmacao de reset, o caminho local ainda pode ser usado.
+            if not p.servidor then
+                C.resetLocal(p)
+            else
+                C.finalizar(p,false,dados.reason or "servidor recusou")
+            end
+            return
+        end
+        if dados.phase=="accepted" then
+            p.servidor = true
+            p.fase = "servidor"
+            C.status("Retorno autorizado · servidor carregando personagem")
+        elseif dados.phase=="completed" then
+            p.servidor = true
+            p.concluidoServidor = true
+            p.concluidoEm = os.clock()
+            if C.vetor(dados.position) then p.posServidor = dados.position end
+            C.status("Servidor concluiu · verificando personagem")
+        end
+    end
+    function C.procurarPonte()
+        if s.remoto and s.remoto.Parent then return s.remoto end
+        if s.remotoConn then s.remotoConn:Disconnect(); s.remotoConn=nil end
+        s.remoto = nil
+        local rs = game:GetService("ReplicatedStorage")
+        local remoto = rs:FindFirstChild("GringoPanelBridge")
+        if not remoto or not remoto:IsA("RemoteEvent") then return nil end
+        s.remoto = remoto
+        s.remotoConn = remoto.OnClientEvent:Connect(C.ack)
+        return remoto
+    end
+    function C.solicitar()
+        if s.morto or not s.ativo or s.escolhendo or s.pendente then return false,"ocupado" end
+        if os.clock()-s.ultimoUso<C.cfg.cooldown then return false,"intervalo" end
+        local char = C.personagem()
+        if not char then return false,"sem_personagem" end
+        C.salvar(true)
+        local ponto = C.escolherPonto()
+        if not ponto then
+            C.status("Aguarde em um chao firme para registrar o primeiro ponto")
+            return false,"sem_ponto_seguro"
+        end
+        s.id = s.id+1
+        local p = {
+            id=s.id, ponto=ponto, antigo=char, inicio=os.clock(),
+            prazo=os.clock()+math.max(C.cfg.prazoMinimo,Players.RespawnTime+12),
+            fase="solicitando", servidor=false, resetSolicitado=false,
+            tentativas=0, proximaTentativa=0,
+        }
+        s.pendente = p
+        s.ultimoUso = os.clock()
+        C.pausarMovimento()
+        C.atualizarUI()
+        local remoto = C.procurarPonte()
+        local enviou = false
+        if remoto then
+            enviou = pcall(function()
+                remoto:FireServer("return",{id=p.id,version=1})
+            end)
+        end
+        if enviou then
+            p.enviadoServidor = true
+            C.status("Solicitando retorno ao servidor de playtest")
+        else
+            C.resetLocal(p)
+        end
+        return true
+    end
+    function C.verificar(p,char,root)
+        if not C.pedidoAtual(p) or char==p.antigo then return false end
+        local destino = p.posServidor or p.ponto.pos
+        if (root.Position-destino).Magnitude<=C.cfg.tolerancia then
+            if not p.pertoEm then p.pertoEm=os.clock() end
+            if os.clock()-p.pertoEm>=C.cfg.esperaVerificacao then
+                C.finalizar(p,true,"posicao estavel")
+                return true
+            end
+        else
+            p.pertoEm = nil
+        end
+        return false
+    end
+    function C.aplicarLocal(p,char,hum,root)
+        if p.servidor or not C.pedidoAtual(p) or char==p.antigo then return end
+        if not C.valido(p.ponto) then
+            C.finalizar(p,false,"o apoio salvo foi removido")
+            return
+        end
+        if os.clock()<p.proximaTentativa then return end
+        if p.tentativas>=C.cfg.tentativas then
+            C.finalizar(p,false,"o jogo corrigiu a posicao")
+            return
+        end
+        p.tentativas = p.tentativas+1
+        p.proximaTentativa = os.clock()+0.8
+        p.fase = "verificando"
+        local ok,erro = pcall(function()
             hum.Sit = false
-            root.CFrame = estado.destino
+            hum.PlatformStand = false
+            root.CFrame = p.ponto.cf
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
         end)
         if not ok then
-            GS.toast("Não foi possível realizar o retorno", false)
+            C.finalizar(p,false,tostring(erro))
             return
         end
-        status.Text = "Retorno solicitado · verificando posição..."
-        task.delay(0.5, function()
-            if not ScreenGui.Parent or not estado.ativo then return end
-            local atual, _, raiz = personagem()
-            if atual ~= char then return end
-            local chegou = (raiz.Position - estado.destino.Position).Magnitude < 8
-            status.Text = chegou and "Você voltou ao lugar salvo" or "O jogo impediu o retorno"
-            GS.toast(chegou and "Você voltou ao lugar salvo" or "O servidor pode estar bloqueando o teleporte", chegou)
-        end)
+        C.status("Verificando retorno · tentativa "..p.tentativas)
     end
-
-    teclaBtn.MouseButton1Click:Connect(function()
-        if escutandoTecla then
-            GS.toast("Termine de escolher a tecla do menu primeiro", false)
-            return
-        end
-        estado.escolhendo = true
-        teclaBtn.Text = "PRESSIONE UMA TECLA · ESC CANCELA"
-    end)
-
-    ativarBtn.MouseButton1Click:Connect(function()
-        if estado.ativo then
-            estado.ativo = false
-            ativarBtn.Text = "RETORNO: OFF"
-            status.Text = "Retorno desativado"
-            return
-        end
-        if not estado.tecla or estado.escolhendo then
-            GS.toast("Escolha a tecla do retorno primeiro", false)
-            return
-        end
-        if estado.tecla == teclaMenu then
-            GS.toast("Escolha uma tecla diferente da tecla do menu", false)
-            return
-        end
-        if not salvar() then return end
-        estado.ativo = true
-        ativarBtn.Text = "RETORNO: ON"
-        GS.toast("Lugar salvo! Aperte " .. estado.tecla.Name .. " para voltar", true)
-    end)
-
-    salvarBtn.MouseButton1Click:Connect(function()
-        if salvar() then GS.toast("Lugar seguro atualizado", true) end
-    end)
-    voltarBtn.MouseButton1Click:Connect(voltar)
-
-    table.insert(estado.conns, UserInputService.InputBegan:Connect(function(input, processado)
-        if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-        if estado.escolhendo then
-            if UserInputService:GetFocusedTextBox() then return end
-            if input.KeyCode == Enum.KeyCode.Escape then
-                estado.escolhendo = false
-                teclaBtn.Text = estado.tecla and ("TECLA: " .. estado.tecla.Name) or "1. DEFINIR TECLA"
+    function C.passo()
+        if s.morto then return end
+        local agora = os.clock()
+        local p = s.pendente
+        if p then
+            if agora>p.prazo then
+                C.finalizar(p,false,"tempo de resposta excedido")
                 return
             end
-            if input.KeyCode == Enum.KeyCode.Unknown or input.KeyCode == teclaMenu or input.KeyCode == Enum.KeyCode.K then
-                GS.toast("K controla o noclip. Escolha outra tecla para o retorno", false)
+            if not p.servidor and not p.resetSolicitado and agora-p.inicio>C.cfg.timeoutPonte then
+                if p.enviadoServidor then
+                    if not p.avisouDemora then
+                        p.avisouDemora = true
+                        C.status("Servidor sem resposta · aguardando sem duplicar o reset")
+                    end
+                else
+                    C.resetLocal(p)
+                end
+            end
+            local char,hum,root = C.personagem()
+            if char and char~=p.antigo then
+                if C.verificar(p,char,root) then return end
+                if not p.servidor then C.aplicarLocal(p,char,hum,root) end
+            end
+        elseif s.ativo and agora-s.ultimaAmostra>=C.cfg.intervalo then
+            s.ultimaAmostra = agora
+            local gravou = C.salvar(false)
+            if gravou then
+                local pos = s.destino.pos
+                C.status(string.format("Ponto automatico: %.0f, %.0f, %.0f · tecla %s",
+                    pos.X,pos.Y,pos.Z,s.tecla and s.tecla.Name or "?"))
+            end
+        end
+        if agora>=s.proximaUI then
+            s.proximaUI = agora+0.25
+            C.atualizarUI()
+        end
+    end
+    function C.definirTecla(tecla)
+        if tecla==Enum.KeyCode.Unknown or tecla==Enum.KeyCode.Escape
+            or tecla==Enum.KeyCode.K or tecla==Enum.KeyCode.L or tecla==teclaMenu then
+            return false
+        end
+        s.tecla = tecla
+        s.escolhendo = false
+        s.ativo = true
+        C.salvar(true)
+        C.atualizarUI()
+        C.status("Retorno ativo · caminhe para atualizar o ponto automaticamente")
+        return true
+    end
+    function C.entrada(input,processado)
+        if input.UserInputType~=Enum.UserInputType.Keyboard then return end
+        if UserInputService:GetFocusedTextBox() or escutandoTecla then return end
+        if s.escolhendo then
+            if input.KeyCode==Enum.KeyCode.Escape then
+                s.escolhendo = false
+                C.atualizarUI()
                 return
             end
-            estado.tecla = input.KeyCode
-            estado.escolhendo = false
-            teclaBtn.Text = "TECLA: " .. estado.tecla.Name
-            status.Text = estado.ativo and ("Retorno ativo · tecla " .. estado.tecla.Name) or "Agora ative para salvar seu lugar"
+            if not C.definirTecla(input.KeyCode) then
+                C.status("Tecla reservada; escolha outra diferente de K, L e menu")
+            end
             return
         end
-        if processado or escutandoTecla or UserInputService:GetFocusedTextBox() then return end
-        if estado.ativo and input.KeyCode == estado.tecla and input.KeyCode ~= teclaMenu then voltar() end
-    end))
-
-    table.insert(estado.conns, LocalPlayer.CharacterAdded:Connect(function()
-        estado.ativo = false
-        estado.destino = nil
-        estado.escolhendo = false
-        ativarBtn.Text = "RETORNO: OFF"
-        teclaBtn.Text = estado.tecla and ("TECLA: " .. estado.tecla.Name) or "1. DEFINIR TECLA"
-        status.Text = "Você renasceu · ative novamente para salvar um lugar"
-    end))
-
-    ScreenGui.Destroying:Connect(function()
-        estado.ativo = false
-        for _, conexao in ipairs(estado.conns) do conexao:Disconnect() end
-        table.clear(estado.conns)
+        if processado or input.KeyCode~=s.tecla or input.KeyCode==teclaMenu then return end
+        C.solicitar()
+    end
+    function C.desligar()
+        if s.morto then return end
+        s.morto = true
+        s.ativo = false
+        s.escolhendo = false
+        s.id = s.id+1
+        s.pendente = nil
+        for _,conn in ipairs(s.conns) do conn:Disconnect() end
+        table.clear(s.conns)
+        if s.remotoConn then s.remotoConn:Disconnect(); s.remotoConn=nil end
+        s.remoto = nil
+        table.clear(s.historico)
+    end
+    local grupo = U.grupo(GS.painelRetorno,"Retorno seguro",
+        "A tecla renasce e retorna. O ponto e salvo automaticamente ao caminhar.","shield-check",1)
+    C.tecla = U.pequeno(grupo,"DEFINIR TECLA",nil,1,"keyboard")
+    C.ativar = U.tog(grupo,"Retorno seguro",2,"shield-check")
+    C.texto = U.pequeno(grupo,s.mensagem,nil,3,"info")
+    C.texto.Active = false
+    C.texto.AutoButtonColor = false
+    C.texto.TextWrapped = true
+    C.conectar(C.tecla.MouseButton1Click,function()
+        if s.pendente or escutandoTecla then return end
+        s.escolhendo = true
+        C.atualizarUI()
     end)
+    C.conectar(C.ativar.MouseButton1Click,function()
+        if s.pendente then
+            C.status("Aguarde o retorno terminar antes de desativar")
+            return
+        end
+        if not s.tecla then
+            s.escolhendo = true
+        else
+            s.ativo = not s.ativo
+            if s.ativo then C.salvar(true) end
+            C.status(s.ativo and "Salvamento automatico ativado" or "Retorno desativado")
+        end
+        C.atualizarUI()
+    end)
+    C.conectar(UserInputService.InputBegan,C.entrada)
+    C.conectar(RunService.Heartbeat,function()
+        local ok,erro = pcall(C.passo)
+        if not ok then
+            if s.pendente then C.finalizar(s.pendente,false,tostring(erro)) end
+            if os.clock()>=(s.proximoErro or 0) then
+                s.proximoErro = os.clock()+5
+                warn("[DEBUG-BOT]: Retorno seguro:",erro)
+            end
+        end
+    end)
+    C.conectar(ScreenGui.Destroying,C.desligar)
+    GS.controladorRetorno = C
+    C.atualizarUI()
+    return C
 end
 GS.rodar("Retorno seguro", GS.iniciarRetorno, GS.painelRetorno)
 
