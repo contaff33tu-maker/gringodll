@@ -1,4 +1,4 @@
--- GRINGOdll V50.10 · Feito pelo @henrique_system
+-- GRINGOdll V50.11 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +29,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.10"
+GS.versao = "V50.11"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -7509,6 +7509,9 @@ GS.iniciarFarma = function()
     function Nav.moverVoo(ctx,destino,opcoes)
         opcoes = opcoes or {}
         if not Nav.vetorValido(destino) then return "destino_invalido" end
+        if destino.Y<=workspace.FallenPartsDestroyHeight+Nav.cfg.minAltura then
+            return "destino_inseguro"
+        end
         if not Nav.voo(ctx) then return "sem_movimento" end
         local inicio = os.clock()
         local limite = opcoes.limite or Nav.cfg.limiteTrecho
@@ -8320,7 +8323,7 @@ GS.iniciarFarma = function()
         celula=220, trecho=280, maxRaio=32768,
         maxVisitados=2048, revisita=180, pausaFalha=25,
         intervaloCarga=2, timeoutCarga=1.5, intervaloCantos=20,
-        candidatosPorPasso=128, margem=12,
+        candidatosPorPasso=24, margem=12, teleporte=true, pausaTeleporte=0.15,
     }
     function Nav.mundoNovo()
         Nav.mundo = {
@@ -8512,18 +8515,20 @@ GS.iniciarFarma = function()
                 pos=table.remove(m.fila,1)
             else
                 m.planos=m.planos+1
-                -- Em streaming, sair dos limites conhecidos revela novas regioes.
-                -- Limites explicitos do proprio mapa dispensam essa extrapolacao.
-                local b=m.limites
-                local fronteira=not b or (workspace.StreamingEnabled and not b.explicito and m.planos%4==0)
-                pos=fronteira and Nav.mundoFronteira() or Nav.mundoGrade()
+                -- Geometria conhecida define candidatos, nunca autoriza voar no vazio.
+                -- Streaming pendente e consultado sem mover o personagem.
+                pos=Nav.mundoGrade()
             end
             if pos and Nav.mundoDisponivel(pos) then
-                if Nav.distanciaHorizontal(ctx.root.Position,pos)<12 then
-                    Nav.mundoRegistrar(pos,false)
+                local seguro=Nav.destinoPatrulha(ctx,pos)
+                if not seguro then
+                    Nav.mundoPedirCarga(ctx,pos)
+                    Nav.mundoRegistrar(pos,true)
+                elseif Nav.distanciaHorizontal(ctx.root.Position,seguro)<12 then
+                    Nav.mundoRegistrar(seguro,false)
                 else
-                    m.alvo=pos
-                    return pos
+                    m.alvo=seguro
+                    return seguro
                 end
             end
         end
@@ -8559,18 +8564,65 @@ GS.iniciarFarma = function()
         end)
         return true
     end
-    function Nav.mundoTrecho(ctx,meta)
-        local delta=meta-ctx.root.Position
-        local distancia=delta.Magnitude
-        if distancia<0.01 then return meta end
-        local bruto=ctx.root.Position+delta.Unit*math.min(distancia,Nav.mundoCfg.trecho)
-        local sondado=Nav.sondarPatrulha(ctx,bruto)
-        if sondado then return sondado end
-        local y=math.clamp(ctx.root.Position.Y,
-            workspace.FallenPartsDestroyHeight+Nav.cfg.minAltura+5,
-            Nav.estado.ancora.Y+Nav.cfg.alturaMaxPatrulha)
-        return Vector3.new(bruto.X,y,bruto.Z)
+    -- A altura de voo nao e um limite do mapa. Valida X/Z e o piso no destino.
+    function Nav.destinoPatrulha(ctx,ponto)
+        if not Nav.vetorValido(ponto) then return nil end
+        local b=Nav.mundoEstado().limites
+        if b and b.explicito and (ponto.X<b.minX or ponto.X>b.maxX
+            or ponto.Z<b.minZ or ponto.Z>b.maxZ) then return nil end
+        return Nav.sondarPatrulha(ctx,ponto)
     end
+
+    function Nav.mundoTrecho(ctx,meta)
+        if Nav.mundoCfg.teleporte and os.clock()>=Nav.cfg.bloquearRapidoAte then
+            local seguro=Nav.destinoPatrulha(ctx,meta)
+            if not seguro then
+                Nav.mundoPedirCarga(ctx,meta)
+                Nav.mundoRegistrar(meta,true)
+                Nav.mundoEstado().alvo=nil
+            end
+            return seguro
+        end
+        local delta=meta-ctx.root.Position
+        if delta.Magnitude<0.01 then return Nav.destinoPatrulha(ctx,meta) end
+        local bruto=ctx.root.Position+delta.Unit*math.min(delta.Magnitude,Nav.mundoCfg.trecho)
+        -- Sem piso confirmado: aguarda streaming, sem fabricar destino no vazio.
+        local sondado=Nav.destinoPatrulha(ctx,bruto)
+        if not sondado then
+            Nav.mundoPedirCarga(ctx,bruto)
+            Nav.mundoRegistrar(meta,true)
+            Nav.mundoEstado().alvo=nil
+        end
+        return sondado
+    end
+
+    function Nav.teleportarPatrulha(ctx,destino)
+        if not Nav.mundoCfg.teleporte or os.clock()<Nav.cfg.bloquearRapidoAte then
+            return "indisponivel"
+        end
+        if not Nav.vivo(ctx) or ctx.root.Anchored then return "cancelado" end
+        local seguro=Nav.destinoPatrulha(ctx,destino)
+        if not seguro then return "sem_suporte" end
+        if not Nav.voo(ctx) then return "sem_movimento" end
+        Nav.zerar(ctx)
+        local ok=pcall(function()
+            ctx.root.CFrame=ctx.root.CFrame+(seguro-ctx.root.Position)
+        end)
+        if not ok then
+            Nav.cfg.bloquearRapidoAte=os.clock()+15
+            return "indisponivel"
+        end
+        if not Nav.esperar(ctx,Nav.mundoCfg.pausaTeleporte) then return "cancelado" end
+        if (ctx.root.Position-seguro).Magnitude>24 then
+            Nav.cfg.bloquearRapidoAte=os.clock()+15
+            registrar("PATRULHA","Deslocamento corrigido pelo servidor; retomando voo.")
+            return "corrigido"
+        end
+        Nav.zerar(ctx)
+        Nav.salvarSeguro(ctx)
+        return "chegou"
+    end
+
     function Nav.mundoConcluir(ctx,resultado)
         local m=Nav.mundoEstado()
         if not m.alvo or resultado=="alvo_detectado" or resultado=="cancelado" then return end
@@ -8680,19 +8732,24 @@ GS.iniciarFarma = function()
         Nav.inicializarPatrulha(ctx)
         local e = Nav.escolher(ctx)
         if e then return end
-        Nav.fase("VARRENDO MAPA · SETORES, BORDAS E CANTOS")
+        Nav.fase("VARRENDO MAPA · TELEPORTE ENTRE SETORES SEGUROS")
         local destino = Nav.planoPatrulha(ctx)
         if not destino then
+            if Nav.voo(ctx) then Nav.zerar(ctx) end
+            Nav.fase("AGUARDANDO SETOR COM PISO CONFIRMADO")
             Nav.esperar(ctx,0.3)
             return
         end
         Nav.mundoPedirCarga(ctx,destino)
         local chave = Nav.chave(destino)
-        local resultado = Nav.moverVoo(ctx,destino,{
-            patrulha = true,
-            limite = Nav.cfg.limitePatrulha,
-            tolerancia = 4,
-        })
+        local resultado = Nav.teleportarPatrulha(ctx,destino)
+        if resultado=="indisponivel" then
+            resultado=Nav.moverVoo(ctx,destino,{
+                patrulha = true,
+                limite = Nav.cfg.limitePatrulha,
+                tolerancia = 4,
+            })
+        end
         if not Nav.vivo(ctx) then return end
         if resultado == "alvo_detectado" then
             Nav.fase("FRASCO DETECTADO · INTERROMPENDO PATRULHA")
