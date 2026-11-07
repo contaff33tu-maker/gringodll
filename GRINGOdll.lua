@@ -1,4 +1,4 @@
--- GRINGOdll V50.13 · Feito pelo @henrique_system
+-- GRINGOdll V50.14 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +29,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.13"
+GS.versao = "V50.14"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -1335,6 +1335,7 @@ do
         { nome="Emotes",    ico="smile",       subs={"Emotes"}, ordem=1.5 },
         { nome="Duelo da Bola", ico="flame",   subs={"Auto Toque"}, ordem=8.5 },
         { nome="Farmar Vibes", ico="package", subs={"Farmar Vibes"}, ordem=9.5 },
+        { nome="Vale Rush", ico="gauge", subs={"Câmera e FPS"}, ordem=9.6 },
     }
     do
         local ordem = 0
@@ -1588,6 +1589,7 @@ do
     -- ── RASTREAR / COMBATE / RESOLVER ── (montadas pelos modulos do fim do arquivo)
     GS.painelRastrear = painel(7,1)
     GS.painelFarma    = painel(12,1)
+    GS.painelValeRush = painel(13,1)
     GS.painelCombate  = painel(8,1)
     GS.painelSilent   = painel(8,2)   -- SILENT AIM: montada pelo modulo do fim do arquivo
     GS.painelRecoil   = painel(8,3)   -- NO RECOIL: montada pelo modulo do fim do arquivo
@@ -6017,6 +6019,221 @@ GS.rodar("Rastreio", GS.iniciarRastreio, GS.painelRastrear)
 -- ═══════════════════════════════════════════════════════════════
 --   FARMAR VIBES — coleta local para playtest
 -- ═══════════════════════════════════════════════════════════════
+-- Vale Rush: controles visuais locais, reversiveis e independentes da coleta.
+GS.iniciarValeRush = function()
+    local U,painel=GS.ui,GS.painelValeRush
+    if not U or not painel then return end
+    local Lighting=game:GetService("Lighting")
+    local Players=game:GetService("Players")
+    local Run=game:GetService("RunService")
+    local jogador=Players.LocalPlayer
+    local V={camera=false,leve=false,fov=95,epoch=0,busy=false,vivo=true,
+        salvos=setmetatable({}, {__mode="k"}),cameras=setmetatable({}, {__mode="k"}),
+        conns={},fila={},pendentes=setmetatable({}, {__mode="k"}),head=1,mudancas=0}
+    U.sec(painel,"VALE RUSH · HUSS VALLEY","gauge",1)
+    local cameraBtn=U.tog(painel,"VISÃO AMPLIADA: OFF",2,"eye")
+    local menos,mais,fovLabel=U.ctrl(painel,"Campo de visão (graus)",V.fov,3)
+    local leveBtn=U.tog(painel,"MAPA LEVE: OFF",4,"zap")
+    local info=U.pequeno(painel,"Texturas simples · menos sombras e efeitos",nil,5,"info")
+    info.AutoButtonColor=false
+    local contador=U.pequeno(painel,"FPS: medindo...",nil,6,"gauge")
+    contador.AutoButtonColor=false
+    local restaurarBtn=U.acao(painel,"RESTAURAR VISUAL ORIGINAL","refresh-cw",7)
+
+    -- Guarda apenas propriedades que conseguiu alterar; nada e destruido.
+    function V.alterar(obj,prop,valor)
+        local ok,atual=pcall(function() return obj[prop] end)
+        if not ok or atual==valor then return false end
+        local props=V.salvos[obj]
+        local registro=props and props[prop]
+        local mudou=pcall(function() obj[prop]=valor end)
+        if not mudou then return false end
+        if not props then props={}; V.salvos[obj]=props end
+        if not registro then registro={original=atual}; props[prop]=registro end
+        registro.aplicado=valor
+        V.mudancas=V.mudancas+1
+        return true
+    end
+
+    function V.protegido(obj)
+        local atual=obj
+        while atual and atual~=workspace and atual~=Lighting do
+            if atual:IsA("Tool") then return true end
+            if atual:IsA("Model") and atual:FindFirstChildOfClass("Humanoid") then return true end
+            if atual.Name=="PotionTemplate" then return true end
+            atual=atual.Parent
+        end
+        return false
+    end
+
+    function V.aplicar(obj)
+        if not V.leve or not obj.Parent or V.protegido(obj) then return end
+        if obj:IsA("BasePart") then
+            if not obj.Anchored then return end
+            -- Materiais tambem definem atrito: conserva a fisica efetiva do piso.
+            local podeMaterial=obj.CustomPhysicalProperties~=nil
+            if not podeMaterial then
+                podeMaterial=V.alterar(obj,"CustomPhysicalProperties",obj.CurrentPhysicalProperties)
+            end
+            if podeMaterial then
+                V.alterar(obj,"Material",Enum.Material.SmoothPlastic)
+                V.alterar(obj,"MaterialVariant","")
+            end
+            V.alterar(obj,"Reflectance",0)
+            V.alterar(obj,"CastShadow",false)
+            if obj:IsA("MeshPart") then
+                V.alterar(obj,"TextureID","")
+                V.alterar(obj,"RenderFidelity",Enum.RenderFidelity.Performance)
+            end
+        elseif obj:IsA("Decal") or obj:IsA("Texture") then
+            V.alterar(obj,"Transparency",1)
+        elseif obj:IsA("SurfaceAppearance") then
+            for _,prop in ipairs({"ColorMap","NormalMap","MetalnessMap","RoughnessMap"}) do
+                V.alterar(obj,prop,"")
+            end
+        elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
+            or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
+            V.alterar(obj,"Enabled",false)
+        elseif obj:IsA("BloomEffect") or obj:IsA("BlurEffect")
+            or obj:IsA("DepthOfFieldEffect") or obj:IsA("SunRaysEffect") then
+            V.alterar(obj,"Enabled",false)
+        elseif obj:IsA("Light") then
+            V.alterar(obj,"Shadows",false)
+        elseif obj:IsA("Atmosphere") then
+            V.alterar(obj,"Density",0)
+            V.alterar(obj,"Haze",0)
+        end
+    end
+
+    function V.enfileirar(obj)
+        if not V.leve or V.pendentes[obj] then return end
+        V.pendentes[obj]=true
+        V.fila[#V.fila+1]=obj
+    end
+
+    function V.otimizar(ativo)
+        if V.busy or V.leve==ativo then return end
+        V.leve=ativo
+        V.epoch=V.epoch+1
+        for _,c in ipairs(V.conns) do c:Disconnect() end
+        V.conns={}
+        V.fila={}; V.head=1
+        V.pendentes=setmetatable({}, {__mode="k"})
+        if not ativo then
+            local salvos=V.salvos
+            V.salvos=setmetatable({}, {__mode="k"})
+            V.busy=true
+            leveBtn.Text="MAPA LEVE: RESTAURANDO..."
+            task.spawn(function()
+                local n=0
+                for obj,props in pairs(salvos) do
+                    for prop,r in pairs(props) do
+                        pcall(function()
+                            -- Respeita alteracoes feitas por outro controle apos este modo.
+                            if obj[prop]==r.aplicado then obj[prop]=r.original end
+                        end)
+                    end
+                    n=n+1
+                    if n%100==0 then task.wait() end
+                end
+                V.busy=false; V.mudancas=0
+                if V.vivo then leveBtn.Text="MAPA LEVE: OFF" end
+                print("[DEBUG-BOT]: Vale Rush: visual restaurado")
+            end)
+            return
+        end
+        leveBtn.Text="MAPA LEVE: ON"
+        V.mudancas=0
+        V.alterar(Lighting,"GlobalShadows",false)
+        local terreno=workspace:FindFirstChildOfClass("Terrain")
+        if terreno then
+            V.alterar(terreno,"Decoration",false)
+            V.alterar(terreno,"WaterWaveSize",0)
+            V.alterar(terreno,"WaterWaveSpeed",0)
+            V.alterar(terreno,"WaterReflectance",0)
+        end
+        table.insert(V.conns,workspace.DescendantAdded:Connect(V.enfileirar))
+        table.insert(V.conns,Lighting.DescendantAdded:Connect(V.enfileirar))
+        local epoch=V.epoch
+        task.spawn(function()
+            for _,raiz in ipairs({workspace,Lighting}) do
+                for _,obj in ipairs(raiz:GetDescendants()) do V.enfileirar(obj) end
+            end
+            while V.leve and V.vivo and V.epoch==epoch do
+                local limite=math.min(#V.fila,V.head+99)
+                for i=V.head,limite do
+                    local obj=V.fila[i]
+                    V.pendentes[obj]=nil
+                    local ok,erro=pcall(V.aplicar,obj)
+                    if not ok then warn("[DEBUG-BOT]: Vale Rush:",erro) end
+                end
+                V.head=limite+1
+                if V.head>#V.fila then V.fila={}; V.head=1 end
+                task.wait()
+            end
+        end)
+        print("[DEBUG-BOT]: Vale Rush: otimizacao visual ativa")
+    end
+
+    function V.ligarCamera()
+        if V.fovConn then V.fovConn:Disconnect(); V.fovConn=nil end
+        local camera=workspace.CurrentCamera
+        if not V.camera or not camera then return end
+        if not V.cameras[camera] then V.cameras[camera]={original=camera.FieldOfView} end
+        V.cameras[camera].aplicado=V.fov
+        camera.FieldOfView=V.fov
+        V.fovConn=camera:GetPropertyChangedSignal("FieldOfView"):Connect(function()
+            if V.camera and camera.FieldOfView~=V.fov then camera.FieldOfView=V.fov end
+        end)
+    end
+    function V.visao(ativo)
+        V.camera=ativo
+        if ativo then
+            V.ligarCamera()
+        else
+            if V.fovConn then V.fovConn:Disconnect(); V.fovConn=nil end
+            for camera,r in pairs(V.cameras) do
+                pcall(function() if camera.FieldOfView==r.aplicado then camera.FieldOfView=r.original end end)
+            end
+            V.cameras=setmetatable({}, {__mode="k"})
+        end
+        cameraBtn.Text=ativo and "VISÃO AMPLIADA: ON" or "VISÃO AMPLIADA: OFF"
+    end
+    function V.ajustar(delta)
+        V.fov=math.clamp(V.fov+delta,70,110)
+        fovLabel.Text=tostring(V.fov)
+        if V.camera then V.ligarCamera() end
+    end
+    cameraBtn.MouseButton1Click:Connect(function() V.visao(not V.camera) end)
+    menos.MouseButton1Click:Connect(function() V.ajustar(-5) end)
+    mais.MouseButton1Click:Connect(function() V.ajustar(5) end)
+    leveBtn.MouseButton1Click:Connect(function() V.otimizar(not V.leve) end)
+    restaurarBtn.MouseButton1Click:Connect(function() V.visao(false); V.otimizar(false) end)
+    local cameraConn=workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+        V.ligarCamera()
+        if V.leve and workspace.CurrentCamera then
+            for _,obj in ipairs(workspace.CurrentCamera:GetDescendants()) do V.enfileirar(obj) end
+        end
+    end)
+    local tempo,frames=0,0
+    local fpsConn=Run.RenderStepped:Connect(function(dt)
+        tempo=tempo+dt; frames=frames+1
+        if tempo>=0.5 then
+            contador.Text=string.format("FPS: %.0f · Alterações visuais: %d",frames/tempo,V.mudancas)
+            tempo=0; frames=0
+        end
+    end)
+    ScreenGui.Destroying:Connect(function()
+        V.vivo=false
+        cameraConn:Disconnect(); fpsConn:Disconnect()
+        V.visao(false)
+        V.otimizar(false)
+    end)
+    GS.valeRush=V
+    print("[DEBUG-BOT]: Vale Rush: painel pronto")
+end
+GS.rodar("Vale Rush",GS.iniciarValeRush,GS.painelValeRush)
+
 GS.prepararTelaFarma = function()
     local U,painel=GS.ui,GS.painelFarma
     if not U or not painel then return end
@@ -6635,7 +6852,7 @@ GS.iniciarFarma = function()
     end
 
     local function atualizarResumo(total)
-        status.Text = "V50.13 · " .. R.fase .. " · LOCALIZADOS: " .. total
+        status.Text = "V50.14 · " .. R.fase .. " · LOCALIZADOS: " .. total
         local limite = workspace.StreamingEnabled
             and "Streaming ativo: aparição no cliente não prova spawn no servidor."
             or "Streaming desligado: novas aparições são observações locais."
