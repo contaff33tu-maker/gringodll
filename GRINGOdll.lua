@@ -1,4 +1,4 @@
--- GRINGOdll V50.12 · Feito pelo @henrique_system
+-- GRINGOdll V50.13 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +29,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.12"
+GS.versao = "V50.13"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -6635,7 +6635,7 @@ GS.iniciarFarma = function()
     end
 
     local function atualizarResumo(total)
-        status.Text = R.fase .. " · LOCALIZADOS: " .. total
+        status.Text = "V50.13 · " .. R.fase .. " · LOCALIZADOS: " .. total
         local limite = workspace.StreamingEnabled
             and "Streaming ativo: aparição no cliente não prova spawn no servidor."
             or "Streaming desligado: novas aparições são observações locais."
@@ -8507,6 +8507,43 @@ GS.iniciarFarma = function()
     end
     -- Se a grade estiver em cooldown, continua a ronda pelos pontos ja confirmados.
     -- Falhas mantem sua pausa: nunca recicla um destino rejeitado como se fosse seguro.
+    -- Busca local funciona mesmo quando Terrain/streaming ainda nao gerou limites.
+    -- Os candidatos usam o mesmo teste de piso e os limites X/Z explicitos.
+    function Nav.mundoExplorarPerto(ctx)
+        local m=Nav.mundoEstado()
+        local origem=ctx.root.Position
+        local melhor,custo
+        local agora=os.clock()
+        local setor=m.setorLocal or 0
+        local raio=32+32*((m.anelLocal or 0)%3)
+        m.setorLocal=(setor+1)%12
+        m.anelLocal=(m.anelLocal or 0)+1
+        for i=0,11 do
+            local angulo=(i+setor)*math.pi/6
+            local ponto=origem+Vector3.new(math.cos(angulo)*raio,0,math.sin(angulo)*raio)
+            local antigo=m.visitados[Nav.mundoChave(ponto)]
+            if not antigo or (not antigo.falha and agora-antigo.hora>=0.25)
+                or (antigo.falha and agora-antigo.hora>=Nav.mundoCfg.pausaFalha) then
+                local seguro=Nav.destinoPatrulha(ctx,ponto)
+                if seguro and Nav.distanciaHorizontal(origem,seguro)>=12 then
+                    local v=m.visitados[Nav.mundoChave(seguro)]
+                    if not v or not v.falha or agora-v.hora>=Nav.mundoCfg.pausaFalha then
+                        local nota=v and v.hora or -math.huge
+                        if not melhor or nota<custo then
+                            melhor,custo=seguro,nota
+                        end
+                    end
+                end
+            end
+        end
+        if melhor then
+            m.alvo=melhor
+            R.motivoPatrulha="BUSCA LOCAL ATIVA"
+            return melhor
+        end
+        return nil
+    end
+
     function Nav.mundoRevisitar(ctx)
         local m=Nav.mundoEstado()
         local candidatos={}
@@ -8560,7 +8597,7 @@ GS.iniciarFarma = function()
                 end
             end
         end
-        return Nav.mundoRevisitar(ctx)
+        return Nav.mundoExplorarPerto(ctx) or Nav.mundoRevisitar(ctx)
     end
     function Nav.mundoPedirCarga(ctx,pos)
         if not workspace.StreamingEnabled then return false end
@@ -8728,6 +8765,14 @@ GS.iniciarFarma = function()
 
     function Nav.sondarPatrulha(ctx,ponto)
         if not Nav.vetorValido(ponto) then return end
+        -- Primeiro sonda perto da altura atual; cenarios muito altos nao devem
+        -- esconder o terreno local nem obrigar a aguardar a grade global.
+        local localOrigem=Vector3.new(ponto.X,math.max(ponto.Y,ctx.root.Position.Y)+32,ponto.Z)
+        local localHit=Nav.raio(localOrigem,Vector3.new(0,-512,0),ctx,nil)
+        if localHit and localHit.Normal.Y>=Nav.cfg.normalMinima
+            and localHit.Position.Y>workspace.FallenPartsDestroyHeight+20 then
+            return localHit.Position+Vector3.new(0,Nav.cfg.alturaPatrulha,0)
+        end
         local altura = math.max(ponto.Y,ctx.root.Position.Y)+100
         local limites = Nav.mundoEstado().limites
         if limites then altura=math.max(altura,limites.maxY+64) end
@@ -8764,8 +8809,9 @@ GS.iniciarFarma = function()
         local destino = Nav.planoPatrulha(ctx)
         if not destino then
             if Nav.voo(ctx) then Nav.zerar(ctx) end
-            Nav.fase("AGUARDANDO SETOR COM PISO CONFIRMADO")
-            Nav.esperar(ctx,0.3)
+            R.motivoPatrulha="SEM PISO: GRADE, BUSCA LOCAL E REVISITAS"
+            Nav.fase(R.motivoPatrulha)
+            Nav.esperar(ctx,0.05)
             return
         end
         Nav.mundoPedirCarga(ctx,destino)
@@ -8799,7 +8845,7 @@ GS.iniciarFarma = function()
         end
         if Nav.vivo(ctx) then
             R.sujo = true
-            Nav.esperar(ctx,workspace.StreamingEnabled and 0.4 or 0.1)
+            Nav.esperar(ctx,0.05)
         end
     end
 
@@ -8868,7 +8914,7 @@ GS.iniciarFarma = function()
                         local recuperou,erro = pcall(Nav.recuperar,ctx)
                         if not recuperou then warn("[DEBUG-BOT]: Recuperação:",erro) end
                     end
-                    R.fase = "REPLANEJANDO MOVIMENTO"
+                    R.fase = "ERRO AUTO: " .. tostring(err):sub(1,140)
                 end
                 task.wait(0.02)
             end
