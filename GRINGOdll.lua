@@ -1,4 +1,4 @@
--- GRINGOdll V50.9 · Feito pelo @henrique_system
+-- GRINGOdll V50.10 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +29,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.9"
+GS.versao = "V50.10"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -1953,7 +1953,11 @@ local function alternarFly()
             local c = LocalPlayer.Character
             local r = c and c:FindFirstChild("HumanoidRootPart")
             local h = c and c:FindFirstChildOfClass("Humanoid")
-            if not r or not h then return end
+            if not r or not h or h.Health <= 0 then
+                if GS.farmaDirecao then GS.farmaDirecao = Vector3.zero end
+                if bodyVelocity then bodyVelocity.Velocity = Vector3.zero end
+                return
+            end
 
             -- Mantém PlatformStand ligado todo frame
             -- (alguns jogos resetam isso para derrubar o boneco)
@@ -1962,7 +1966,7 @@ local function alternarFly()
             end
 
             -- Recria BodyVelocity se o jogo destruiu (causa do descida)
-            if not bodyVelocity or not bodyVelocity.Parent then
+            if not bodyVelocity or bodyVelocity.Parent ~= r then
                 pcall(function()
                     if bodyVelocity then bodyVelocity:Destroy() end
                     bodyVelocity = Instance.new("BodyVelocity"); bodyVelocity.Name = "GringoVooVel"
@@ -1973,7 +1977,7 @@ local function alternarFly()
             end
 
             -- Recria BodyGyro se o jogo destruiu (causa da rotacao bugada)
-            if not bodyGyro or not bodyGyro.Parent then
+            if not bodyGyro or bodyGyro.Parent ~= r then
                 pcall(function()
                     if bodyGyro then bodyGyro:Destroy() end
                     bodyGyro = Instance.new("BodyGyro"); bodyGyro.Name = "GringoVooGyro"
@@ -7258,6 +7262,13 @@ GS.iniciarFarma = function()
         local char,hum,root = personagem()
         if not char then return end
         if not autoVivo(g,a) then return end
+        if Nav.estado.personagem ~= char then
+            Nav.parar()
+            Nav.reset()
+            Nav.estado.personagem = char
+            GS.farmaDirecao = Vector3.zero
+            registrar("PERSONAGEM","Nova vida: direcao, rota e pontos antigos descartados.")
+        end
         return {
             g = g,
             a = a,
@@ -8710,6 +8721,8 @@ GS.iniciarFarma = function()
     function Nav.passo(g,a)
         local ctx = Nav.contexto(g,a)
         if not ctx then
+            Nav.parar()
+            GS.farmaDirecao = Vector3.zero
             Nav.fase("AGUARDANDO PERSONAGEM")
             return
         end
