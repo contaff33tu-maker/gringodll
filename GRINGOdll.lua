@@ -1,4 +1,4 @@
--- GRINGOdll V50.16 · Feito pelo @henrique_system
+-- GRINGOdll V50.17 · Feito pelo @henrique_system
 -- Encerra a execucao anterior quando ela ja possui o registro de recursos.
 do
     local ok,ambiente=pcall(function() return type(getgenv)=="function" and getgenv() or _G end)
@@ -142,7 +142,7 @@ function GS.finalizarRecursos()
     print("[DEBUG-BOT]: Encerrar tudo: tarefas, eventos e objetos locais removidos")
 end
 
-GS.versao = "V50.16"
+GS.versao = "V50.17"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -6189,7 +6189,11 @@ GS.iniciarValeRush = function()
     local contador=U.pequeno(painel,"FPS: medindo...",nil,6,"gauge")
     contador.AutoButtonColor=false
     local boxBtn=U.tog(painel,"BOX DOS JOGADORES: OFF",7,"users")
-    local restaurarBtn=U.acao(painel,"RESTAURAR TUDO","refresh-cw",8)
+    local focoBtn=U.tog(painel,"FOCAR COM BOTÃO DO MEIO: OFF",8,"crosshair")
+    local focoStatus=U.pequeno(painel,"FOCO: DESLIGADO",nil,9,"info")
+    focoStatus.AutoButtonColor=false
+    local desfocarBtn=U.acao(painel,"DESFOCAR AGORA","x",10)
+    local restaurarBtn=U.acao(painel,"RESTAURAR TUDO","refresh-cw",11)
 
     -- Guarda apenas propriedades que conseguiu alterar; nada e destruido.
     function V.alterar(obj,prop,valor)
@@ -6470,6 +6474,90 @@ GS.iniciarValeRush = function()
         print("[DEBUG-BOT]: Vale Rush: otimizacao visual ativa")
     end
 
+    V.focoAtivo=false
+    V.alvoFoco=nil
+    V.focoCameras=setmetatable({}, {__mode="k"})
+    local entrada=game:GetService("UserInputService")
+    local mouse=jogador:GetMouse()
+    local nomeRender="GringoValeRushFoco"
+
+    function V.personagemClicado(parte)
+        local atual=parte
+        while atual and atual~=workspace do
+            if atual:IsA("Model") and atual~=jogador.Character then
+                local hum=atual:FindFirstChildOfClass("Humanoid")
+                local root=atual:FindFirstChild("HumanoidRootPart")
+                if hum and hum.Health>0 and root then return atual end
+            end
+            atual=atual.Parent
+        end
+        return nil
+    end
+    function V.limparFoco()
+        V.alvoFoco=nil
+        Run:UnbindFromRenderStep(nomeRender)
+        if GS.recursos then GS.recursos.renders[nomeRender]=nil end
+        for camera,r in pairs(V.focoCameras) do
+            pcall(function()
+                if camera.Focus==r.aplicado then camera.Focus=r.original end
+            end)
+        end
+        V.focoCameras=setmetatable({}, {__mode="k"})
+        focoStatus.Text=V.focoAtivo and "Clique do meio: personagem para focar · vazio para soltar" or "FOCO: DESLIGADO"
+    end
+    function V.passoFoco()
+        if not V.vivo or not V.focoAtivo or GS.fechando then V.limparFoco(); return end
+        local char=V.alvoFoco
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        if not char or char==jogador.Character or not char:IsDescendantOf(workspace)
+            or not hum or hum.Health<=0 or not root then
+            V.limparFoco()
+            return
+        end
+        local camera=workspace.CurrentCamera
+        if not camera then return end
+        local head=char:FindFirstChild("Head")
+        local ponto=(head and head:IsA("BasePart")) and head.Position or root.Position
+        local origem=camera.CFrame.Position
+        if (ponto-origem).Magnitude<0.1 then return end
+        if not V.focoCameras[camera] then V.focoCameras[camera]={original=camera.Focus} end
+        local foco=CFrame.new(ponto)
+        V.focoCameras[camera].aplicado=foco
+        camera.CFrame=CFrame.lookAt(origem,ponto)
+        camera.Focus=foco
+    end
+    function V.selecionarFoco(char)
+        if not V.focoAtivo or not V.vivo then return end
+        if not char or char==V.alvoFoco then V.limparFoco(); return end
+        V.limparFoco()
+        V.alvoFoco=char
+        focoStatus.Text="FOCADO: "..char.Name.." · clique em outro para trocar"
+        GS.bindRender(Run,nomeRender,Enum.RenderPriority.Camera.Value+5,function()
+            local ok,erro=pcall(V.passoFoco)
+            if not ok then
+                warn("[DEBUG-BOT]: Vale Rush foco:",erro)
+                V.limparFoco()
+            end
+        end)
+        print("[DEBUG-BOT]: Vale Rush: camera focada em",char.Name)
+    end
+    function V.focar(ativo)
+        V.focoAtivo=ativo
+        V.limparFoco()
+        if V.focoEntrada then V.focoEntrada:Disconnect(); V.focoEntrada=nil end
+        if ativo then
+            V.focoEntrada=GS.conectar(entrada.InputBegan,function(input,processado)
+                if processado or entrada:GetFocusedTextBox() then return end
+                if input.UserInputType~=Enum.UserInputType.MouseButton3 then return end
+                V.selecionarFoco(V.personagemClicado(mouse.Target))
+            end)
+        end
+        focoBtn.Text=ativo and "FOCAR COM BOTÃO DO MEIO: ON" or "FOCAR COM BOTÃO DO MEIO: OFF"
+    end
+    GS.conectar(focoBtn.MouseButton1Click,function() V.focar(not V.focoAtivo) end)
+    GS.conectar(desfocarBtn.MouseButton1Click,V.limparFoco)
+
     function V.ligarCamera()
         if V.fovConn then V.fovConn:Disconnect(); V.fovConn=nil end
         local camera=workspace.CurrentCamera
@@ -6504,7 +6592,7 @@ GS.iniciarValeRush = function()
     GS.conectar(mais.MouseButton1Click,function() V.ajustar(5) end)
     GS.conectar(leveBtn.MouseButton1Click,function() V.otimizar(not V.leve) end)
     GS.conectar(boxBtn.MouseButton1Click,function() V.boxes(not V.box) end)
-    GS.conectar(restaurarBtn.MouseButton1Click,function() V.visao(false); V.otimizar(false); V.boxes(false) end)
+    GS.conectar(restaurarBtn.MouseButton1Click,function() V.visao(false); V.otimizar(false); V.boxes(false); V.focar(false) end)
     local cameraConn=GS.conectar(workspace:GetPropertyChangedSignal("CurrentCamera"),function()
         V.ligarCamera()
         if V.leve and workspace.CurrentCamera then
@@ -6521,6 +6609,7 @@ GS.iniciarValeRush = function()
         end
     end)
     GS.conectar(ScreenGui.Destroying,function()
+        V.focar(false)
         V.vivo=false
         cameraConn:Disconnect(); fpsConn:Disconnect()
         V.visao(false)
@@ -7150,7 +7239,7 @@ GS.iniciarFarma = function()
     end
 
     local function atualizarResumo(total)
-        status.Text = "V50.16 · " .. R.fase .. " · LOCALIZADOS: " .. total
+        status.Text = "V50.17 · " .. R.fase .. " · LOCALIZADOS: " .. total
         local limite = workspace.StreamingEnabled
             and "Streaming ativo: aparição no cliente não prova spawn no servidor."
             or "Streaming desligado: novas aparições são observações locais."
