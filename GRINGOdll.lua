@@ -1,4 +1,4 @@
--- GRINGOdll V50.11 · Feito pelo @henrique_system
+-- GRINGOdll V50.12 · Feito pelo @henrique_system
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +29,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.11"
+GS.versao = "V50.12"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -8320,8 +8320,8 @@ GS.iniciarFarma = function()
     -- Cobertura global: limites observados, bordas, grade e fronteira expansiva.
     -- Sem reiniciar a busca no raio local de oito aneis.
     Nav.mundoCfg = {
-        celula=220, trecho=280, maxRaio=32768,
-        maxVisitados=2048, revisita=180, pausaFalha=25,
+        celula=80, trecho=280, maxRaio=32768,
+        maxVisitados=2048, revisita=8, pausaFalha=25,
         intervaloCarga=2, timeoutCarga=1.5, intervaloCantos=20,
         candidatosPorPasso=24, margem=12, teleporte=true, pausaTeleporte=0.15,
     }
@@ -8407,7 +8407,8 @@ GS.iniciarFarma = function()
         return false
     end
     function Nav.mundoChave(pos)
-        local c=Nav.mundoCfg.celula
+        -- Cantos diferentes nao devem compartilhar o bloqueio de um setor inteiro.
+        local c=16
         return math.floor(pos.X/c)..":"..math.floor(pos.Z/c)
     end
     function Nav.mundoRegistrar(pos,falha)
@@ -8504,6 +8505,33 @@ GS.iniciarFarma = function()
         end
         return pos
     end
+    -- Se a grade estiver em cooldown, continua a ronda pelos pontos ja confirmados.
+    -- Falhas mantem sua pausa: nunca recicla um destino rejeitado como se fosse seguro.
+    function Nav.mundoRevisitar(ctx)
+        local m=Nav.mundoEstado()
+        local candidatos={}
+        local agora=os.clock()
+        for _,v in pairs(m.visitados) do
+            if not v.falha and Nav.vetorValido(v.pos)
+                and agora-v.hora>=0.75
+                and Nav.distanciaHorizontal(ctx.root.Position,v.pos)>=12 then
+                table.insert(candidatos,v)
+            end
+        end
+        table.sort(candidatos,function(a,b) return a.hora<b.hora end)
+        for i=1,math.min(8,#candidatos) do
+            local v=candidatos[i]
+            local seguro=Nav.destinoPatrulha(ctx,v.pos)
+            if seguro then
+                m.alvo=seguro
+                return seguro
+            end
+            Nav.mundoPedirCarga(ctx,v.pos)
+            Nav.mundoRegistrar(v.pos,true)
+        end
+        return nil
+    end
+
     function Nav.mundoEscolher(ctx)
         local m=Nav.mundoEstado()
         if m.alvo then return m.alvo end
@@ -8532,7 +8560,7 @@ GS.iniciarFarma = function()
                 end
             end
         end
-        return nil
+        return Nav.mundoRevisitar(ctx)
     end
     function Nav.mundoPedirCarga(ctx,pos)
         if not workspace.StreamingEnabled then return false end
