@@ -1,4 +1,9 @@
--- GRINGOdll V50.14 · Feito pelo @henrique_system
+-- GRINGOdll V50.16 · Feito pelo @henrique_system
+-- Encerra a execucao anterior quando ela ja possui o registro de recursos.
+do
+    local ok,ambiente=pcall(function() return type(getgenv)=="function" and getgenv() or _G end)
+    if ok and type(ambiente.__GringoEncerrar)=="function" then pcall(ambiente.__GringoEncerrar) end
+end
 -- Garante que o menu anterior seja limpo antes de rodar o novo
 -- (procura no CoreGui e no gethui(), onde o menu pode estar)
 do
@@ -29,7 +34,115 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
-GS.versao = "V50.14"
+-- Recursos pertencentes apenas a esta execucao do painel.
+GS.recursos={conexoes={},tarefas={},ativos={},instancias={},tweens={},renders={},limpezas={}}
+GS.rawTask={spawn=task.spawn,defer=task.defer,delay=task.delay,cancel=task.cancel}
+GS.fechando=false
+GS.encerrado=false
+function GS.tentar(nome,fn,...)
+    local ok,erro=pcall(fn,...)
+    if not ok then warn("[DEBUG-BOT]: Encerrar:",nome,erro) end
+    return ok
+end
+function GS.conectar(sinal,fn)
+    local limpeza
+    if GS.tela and sinal==GS.tela.Destroying then
+        limpeza={fn=fn,feita=false}
+        table.insert(GS.recursos.limpezas,limpeza)
+    end
+    local conn=sinal:Connect(function(...)
+        if limpeza then
+            if limpeza.feita then return end
+            limpeza.feita=true
+        elseif GS.fechando or GS.encerrado then return end
+        local th=coroutine.running()
+        GS.recursos.ativos[th]=true
+        local ok,erro=pcall(fn,...)
+        GS.recursos.ativos[th]=nil
+        if not ok then warn("[DEBUG-BOT]: Evento do painel:",erro) end
+    end)
+    GS.recursos.conexoes[conn]=true
+    GS.contaConexoes=(GS.contaConexoes or 0)+1
+    if GS.contaConexoes%256==0 then
+        for c in pairs(GS.recursos.conexoes) do if not c.Connected then GS.recursos.conexoes[c]=nil end end
+    end
+    return conn
+end
+function GS.agendar(modo,tempo,fn,...)
+    if (GS.fechando or GS.encerrado) and not GS.emLimpeza then return nil end
+    local limpeza=GS.emLimpeza
+    local th
+    if type(fn)=="thread" then
+        th=fn
+    else
+        th=coroutine.create(function(...)
+            if GS.fechando and not limpeza then return end
+            local ok,erro=pcall(fn,...)
+            GS.recursos.tarefas[th]=nil
+            if not ok and not GS.fechando then warn("[DEBUG-BOT]: Tarefa do painel:",erro) end
+        end)
+    end
+    -- Restauracoes iniciadas no encerramento precisam terminar seus lotes.
+    if not limpeza then GS.recursos.tarefas[th]=true end
+    if modo=="delay" then GS.rawTask.delay(tempo,th,...)
+    else GS.rawTask[modo](th,...) end
+    return th
+end
+function GS.spawn(fn,...) return GS.agendar("spawn",nil,fn,...) end
+function GS.defer(fn,...) return GS.agendar("defer",nil,fn,...) end
+function GS.delay(tempo,fn,...) return GS.agendar("delay",tempo,fn,...) end
+function GS.guardarInstancia(obj)
+    if not GS.emLimpeza and not obj:IsA("JointInstance") and not obj:IsA("Animator") then
+        GS.recursos.instancias[obj]=true
+        obj.Destroying:Once(function() GS.recursos.instancias[obj]=nil end)
+    end
+    return obj
+end
+function GS.novaInstancia(...) return GS.guardarInstancia(Instance.new(...)) end
+function GS.clonar(obj,...) return GS.guardarInstancia(obj:Clone(...)) end
+function GS.criarTween(servico,...)
+    local tw=servico:Create(...)
+    GS.recursos.tweens[tw]=true
+    tw.Completed:Once(function() GS.recursos.tweens[tw]=nil end)
+    return tw
+end
+function GS.bindRender(servico,nome,...)
+    GS.recursos.renders[nome]=servico
+    return servico:BindToRenderStep(nome,...)
+end
+function GS.pararRecursos()
+    if GS.encerrado or GS.fechando then return false end
+    GS.fechando=true
+    local atual=coroutine.running()
+    for _,lista in ipairs({GS.recursos.tarefas,GS.recursos.ativos}) do
+        for th in pairs(lista) do
+            if th~=atual and coroutine.status(th)~="dead" then
+                GS.tentar("cancelar tarefa",GS.rawTask.cancel,th)
+            end
+        end
+    end
+    GS.emLimpeza=true
+    for _,r in ipairs(GS.recursos.limpezas) do
+        if not r.feita then r.feita=true; GS.tentar("limpeza de modulo",r.fn) end
+    end
+    GS.emLimpeza=false
+    return true
+end
+function GS.finalizarRecursos()
+    for nome,servico in pairs(GS.recursos.renders) do
+        GS.tentar("render",function() servico:UnbindFromRenderStep(nome) end)
+    end
+    for tw in pairs(GS.recursos.tweens) do GS.tentar("animacao",function() tw:Cancel() end) end
+    for conn in pairs(GS.recursos.conexoes) do GS.tentar("evento",function() conn:Disconnect() end) end
+    for obj in pairs(GS.recursos.instancias) do
+        GS.tentar("objeto local",function() obj:Destroy() end)
+    end
+    for _,lista in pairs(GS.recursos) do table.clear(lista) end
+    GS.encerrado=true
+    print("[DEBUG-BOT]: Encerrar tudo: tarefas, eventos e objetos locais removidos")
+end
+
+GS.versao = "V50.16"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -220,18 +333,18 @@ do
     end
 
     local function tw(o, props, t, estilo, dir)
-        local tween = TweenService:Create(o, TweenInfo.new(t or 0.22, estilo or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out), props)
+        local tween = GS.criarTween(TweenService,o, TweenInfo.new(t or 0.22, estilo or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out), props)
         tween:Play()
         return tween
     end
-    local function mkC(r,p) Instance.new("UICorner",p).CornerRadius=UDim.new(0,r) end
-    local function mkS(t,c,p,tr) local s=Instance.new("UIStroke",p); s.Thickness=t; s.Color=c; s.Transparency=tr or 0; s.ApplyStrokeMode=Enum.ApplyStrokeMode.Border; return s end
-    local function redondo(p) Instance.new("UICorner",p).CornerRadius=UDim.new(1,0) end
+    local function mkC(r,p) GS.novaInstancia("UICorner",p).CornerRadius=UDim.new(0,r) end
+    local function mkS(t,c,p,tr) local s=GS.novaInstancia("UIStroke",p); s.Thickness=t; s.Color=c; s.Transparency=tr or 0; s.ApplyStrokeMode=Enum.ApplyStrokeMode.Border; return s end
+    local function redondo(p) GS.novaInstancia("UICorner",p).CornerRadius=UDim.new(1,0) end
 
     local function icone(pai, nome, tam, cor)
         local d = nome and ICONES[nome]
         if not d then return nil end
-        local im = Instance.new("ImageLabel")
+        local im = GS.novaInstancia("ImageLabel")
         im.Name = "Icone"; im.BackgroundTransparency = 1; im.BorderSizePixel = 0
         im.AnchorPoint = Vector2.new(0.5, 0.5); im.Position = UDim2.fromScale(0.5, 0.5)
         im.Size = UDim2.fromOffset(tam, tam)
@@ -258,48 +371,48 @@ do
             o.BackgroundTransparency = V.card * math.clamp(d / DIST_CARD_ON, 0, 1)
         end
         ajustar()
-        o:GetPropertyChangedSignal("BackgroundColor3"):Connect(ajustar)
+        GS.conectar(o:GetPropertyChangedSignal("BackgroundColor3"),ajustar)
     end
     local function mkCVidro(r, p) mkC(r, p); vidro(p) end
 
     -- efeito de onda ao clicar
     local function ripple(btn)
         btn.ClipsDescendants=true
-        btn.MouseButton1Down:Connect(function()
+        GS.conectar(btn.MouseButton1Down,function()
             if GS.leve then return end
             local m=UserInputService:GetMouseLocation()
-            local c=Instance.new("Frame")
+            local c=GS.novaInstancia("Frame")
             c.AnchorPoint=Vector2.new(0.5,0.5); c.BackgroundColor3=BRANCO
             c.BackgroundTransparency=0.82; c.BorderSizePixel=0; c.ZIndex=btn.ZIndex+1
             c.Position=UDim2.fromOffset(m.X-btn.AbsolutePosition.X, m.Y-btn.AbsolutePosition.Y)
             c.Size=UDim2.fromOffset(0,0); redondo(c); c.Parent=btn
             local d=math.max(btn.AbsoluteSize.X, btn.AbsoluteSize.Y)*2.2
             tw(c,{Size=UDim2.fromOffset(d,d), BackgroundTransparency=1},0.6)
-            task.delay(0.65,function() c:Destroy() end)
+            GS.delay(0.65,function() c:Destroy() end)
         end)
     end
     -- aperta (encolhe) e volta com elastico
     local function press(btn)
-        local sc=Instance.new("UIScale",btn)
-        btn.MouseButton1Down:Connect(function() tw(sc,{Scale=0.96},0.08) end)
+        local sc=GS.novaInstancia("UIScale",btn)
+        GS.conectar(btn.MouseButton1Down,function() tw(sc,{Scale=0.96},0.08) end)
         local function volta() tw(sc,{Scale=1},0.35,Enum.EasingStyle.Back) end
-        btn.MouseButton1Up:Connect(volta); btn.MouseLeave:Connect(volta)
+        GS.conectar(btn.MouseButton1Up,volta); GS.conectar(btn.MouseLeave,volta)
     end
     -- vidro clareia no hover (mexe so na transparencia, nao na cor)
     local function hover(btn)
         local base
-        btn.MouseEnter:Connect(function()
+        GS.conectar(btn.MouseEnter,function()
             base=btn.BackgroundTransparency
             tw(btn,{BackgroundTransparency=math.max(0, base-0.08)},0.15)
         end)
-        btn.MouseLeave:Connect(function()
+        GS.conectar(btn.MouseLeave,function()
             if base then tw(btn,{BackgroundTransparency=base},0.2) base=nil end
         end)
     end
     local function vidroRoxo(o, rot)
         -- UIGradient multiplica a cor de fundo: branco preserva a paleta exata.
         o.BackgroundColor3 = BRANCO
-        local g = Instance.new("UIGradient", o)
+        local g = GS.novaInstancia("UIGradient", o)
         g.Color = ColorSequence.new{
             ColorSequenceKeypoint.new(0,T.roxoA),
             ColorSequenceKeypoint.new(0.52,Color3.fromRGB(187,225,234)),
@@ -309,7 +422,8 @@ do
         return g
     end
 
-    ScreenGui = Instance.new("ScreenGui")
+    ScreenGui = GS.novaInstancia("ScreenGui")
+    GS.tela=ScreenGui
     ScreenGui.Name = "GringoScripts"; ScreenGui.DisplayOrder = 99
     ScreenGui.IgnoreGuiInset = true
     ScreenGui.ResetOnSpawn = false
@@ -317,30 +431,30 @@ do
     ScreenGui.Parent = GS.pai
 
     -- ── Notificacoes (canto inferior direito) ──
-    local ToastBox=Instance.new("Frame",ScreenGui)
+    local ToastBox=GS.novaInstancia("Frame",ScreenGui)
     ToastBox.AnchorPoint=Vector2.new(1,1); ToastBox.Position=UDim2.new(1,-18,1,-18)
     ToastBox.Size=UDim2.new(0,280,0,320); ToastBox.BackgroundTransparency=1
     do
-        local l=Instance.new("UIListLayout",ToastBox); l.VerticalAlignment=Enum.VerticalAlignment.Bottom
+        local l=GS.novaInstancia("UIListLayout",ToastBox); l.VerticalAlignment=Enum.VerticalAlignment.Bottom
         l.HorizontalAlignment=Enum.HorizontalAlignment.Right; l.Padding=UDim.new(0,8); l.SortOrder=Enum.SortOrder.LayoutOrder
     end
     local toastN=0
     GS.toast = function(msg, ligado)
         toastN=toastN+1
-        local holder=Instance.new("Frame",ToastBox); holder.Size=UDim2.new(0,268,0,46)
+        local holder=GS.novaInstancia("Frame",ToastBox); holder.Size=UDim2.new(0,268,0,46)
         holder.BackgroundTransparency=1; holder.LayoutOrder=toastN
-        local card=Instance.new("Frame",holder); card.Size=UDim2.new(1,0,1,0); card.Position=UDim2.new(0,300,0,0)
+        local card=GS.novaInstancia("Frame",holder); card.Size=UDim2.new(1,0,1,0); card.Position=UDim2.new(0,300,0,0)
         card.BackgroundTransparency=0.1; card.BorderSizePixel=0; vidroRoxo(card, 0)
         mkC(18,card); mkS(1,BRANCO,card,0.78)
-        local bolha=Instance.new("Frame",card); bolha.Size=UDim2.fromOffset(26,26); bolha.Position=UDim2.new(0,10,0.5,-13)
+        local bolha=GS.novaInstancia("Frame",card); bolha.Size=UDim2.fromOffset(26,26); bolha.Position=UDim2.new(0,10,0.5,-13)
         bolha.BackgroundColor3 = ligado==false and T.off or T.on; bolha.BorderSizePixel=0; redondo(bolha)
         icone(bolha, ligado==false and "x" or "check", 14, BRANCO)
-        local l=Instance.new("TextLabel",card); l.Size=UDim2.new(1,-56,1,0); l.Position=UDim2.new(0,46,0,0)
+        local l=GS.novaInstancia("TextLabel",card); l.Size=UDim2.new(1,-56,1,0); l.Position=UDim2.new(0,46,0,0)
         l.BackgroundTransparency=1; l.Font=Enum.Font.GothamMedium; l.TextSize=12; l.TextColor3=T.text
         l.TextXAlignment=Enum.TextXAlignment.Left; l.TextTruncate=Enum.TextTruncate.AtEnd
         l.Text=semEmoji(tostring(msg))
         tw(card,{Position=UDim2.new(0,0,0,0)},0.45,Enum.EasingStyle.Back)
-        task.delay(2.4,function()
+        GS.delay(2.4,function()
             tw(card,{Position=UDim2.new(0,300,0,0)},0.35,Enum.EasingStyle.Quint,Enum.EasingDirection.In)
             task.wait(0.4); holder:Destroy()
         end)
@@ -355,7 +469,7 @@ do
             pcall(function() if GS.toast then GS.toast("ERRO em " .. nome .. ": " .. tostring(err), false) end end)
             if painelErro then
                 pcall(function()
-                    local lbl = Instance.new("TextLabel")
+                    local lbl = GS.novaInstancia("TextLabel")
                     lbl.Size = UDim2.new(1, -20, 0, 160); lbl.Position = UDim2.fromOffset(10, 10)
                     lbl.BackgroundColor3 = Color3.fromRGB(45, 10, 10); lbl.BackgroundTransparency = 0.1
                     lbl.BorderSizePixel = 0; lbl.TextColor3 = Color3.fromRGB(255, 130, 130)
@@ -363,8 +477,8 @@ do
                     lbl.TextYAlignment = Enum.TextYAlignment.Top
                     lbl.Text = nome .. " falhou ao montar:\n\n" .. tostring(err)
                     lbl.ZIndex = 50; lbl.Parent = painelErro
-                    local c = Instance.new("UICorner", lbl); c.CornerRadius = UDim.new(0, 10)
-                    local pad = Instance.new("UIPadding", lbl)
+                    local c = GS.novaInstancia("UICorner", lbl); c.CornerRadius = UDim.new(0, 10)
+                    local pad = GS.novaInstancia("UIPadding", lbl)
                     pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10)
                     pad.PaddingTop = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
                 end)
@@ -377,7 +491,7 @@ do
     local TITULO_H = 44   -- barra do nome, versao e autoria
     local W, H = 860, 570 + TITULO_H
     local HEADER_H = 52
-    MainFrame = Instance.new("Frame")
+    MainFrame = GS.novaInstancia("Frame")
     MainFrame.Size = UDim2.fromOffset(W, H); MainFrame.Position = UDim2.new(0.5,-W/2,0.5,-H/2)
     MainFrame.BackgroundTransparency = V.janela; MainFrame.BorderSizePixel = 0
     MainFrame.Active = true; MainFrame.Parent = ScreenGui
@@ -388,7 +502,7 @@ do
     do
         local laminas = {}
         local function lamina(nome,dx,dy,margem,cor,transparencia)
-            local f = Instance.new("Frame")
+            local f = GS.novaInstancia("Frame")
             f.Name = nome
             f.BorderSizePixel = 0
             f.BackgroundColor3 = cor
@@ -397,7 +511,7 @@ do
             f.Active = false
             f.Parent = ScreenGui
             mkC(14+margem,f)
-            local sc = Instance.new("UIScale",f)
+            local sc = GS.novaInstancia("UIScale",f)
             local item = {obj=f,dx=dx,dy=dy,margem=margem,scale=sc}
             table.insert(laminas,item)
             return f
@@ -409,7 +523,7 @@ do
         for i=2,1,-1 do
             local f = lamina("EspessuraVidro"..i,i*3,i*4,0,T.bordaFunda,0.80)
             local st = mkS(2,T.bordaFunda,f,0.25)
-            local g = Instance.new("UIGradient",st)
+            local g = GS.novaInstancia("UIGradient",st)
             g.Rotation = 55
             g.Color = ColorSequence.new{
                 ColorSequenceKeypoint.new(0,T.bordaLuz),
@@ -431,22 +545,22 @@ do
             local function copiar()
                 for _,item in ipairs(laminas) do item.scale.Scale=obj.Scale end
             end
-            obj:GetPropertyChangedSignal("Scale"):Connect(copiar)
+            GS.conectar(obj:GetPropertyChangedSignal("Scale"),copiar)
             copiar()
         end
-        MainFrame:GetPropertyChangedSignal("Position"):Connect(atualizarLaminas)
-        MainFrame:GetPropertyChangedSignal("Size"):Connect(atualizarLaminas)
-        MainFrame:GetPropertyChangedSignal("Visible"):Connect(atualizarLaminas)
-        MainFrame.ChildAdded:Connect(acompanharEscala)
+        GS.conectar(MainFrame:GetPropertyChangedSignal("Position"),atualizarLaminas)
+        GS.conectar(MainFrame:GetPropertyChangedSignal("Size"),atualizarLaminas)
+        GS.conectar(MainFrame:GetPropertyChangedSignal("Visible"),atualizarLaminas)
+        GS.conectar(MainFrame.ChildAdded,acompanharEscala)
         for _,obj in ipairs(MainFrame:GetChildren()) do acompanharEscala(obj) end
-        MainFrame.Destroying:Connect(function()
+        GS.conectar(MainFrame.Destroying,function()
             for _,item in ipairs(laminas) do item.obj:Destroy() end
         end)
         atualizarLaminas()
 
         local borda = mkS(4,BRANCO,MainFrame,0.12)
         borda.Name = "BordaVidroPolida"
-        local bisel = Instance.new("UIGradient",borda)
+        local bisel = GS.novaInstancia("UIGradient",borda)
         bisel.Rotation = 55
         bisel.Color = ColorSequence.new{
             ColorSequenceKeypoint.new(0,T.bordaLuz),
@@ -456,7 +570,7 @@ do
             ColorSequenceKeypoint.new(1,T.bordaLuz),
         }
 
-        local interior = Instance.new("Frame",MainFrame)
+        local interior = GS.novaInstancia("Frame",MainFrame)
         interior.Name = "BiselInterno"
         interior.Size = UDim2.new(1,-10,1,-10)
         interior.Position = UDim2.fromOffset(5,5)
@@ -465,7 +579,7 @@ do
         interior.ZIndex = 0
         mkC(10,interior)
         local contorno = mkS(1,Color3.fromRGB(229,255,250),interior,0.25)
-        local luzBorda = Instance.new("UIGradient",contorno)
+        local luzBorda = GS.novaInstancia("UIGradient",contorno)
         luzBorda.Rotation = 55
         luzBorda.Transparency = NumberSequence.new{
             NumberSequenceKeypoint.new(0,0),
@@ -474,7 +588,7 @@ do
             NumberSequenceKeypoint.new(1,0.1),
         }
 
-        local reflexo = Instance.new("Frame",MainFrame)
+        local reflexo = GS.novaInstancia("Frame",MainFrame)
         reflexo.Name = "ReflexoVidro"
         reflexo.Size = UDim2.fromScale(1,1)
         reflexo.BackgroundColor3 = Color3.fromRGB(221,255,250)
@@ -482,7 +596,7 @@ do
         reflexo.BorderSizePixel = 0
         reflexo.ZIndex = 0
         mkC(14,reflexo)
-        local faixa = Instance.new("UIGradient",reflexo)
+        local faixa = GS.novaInstancia("UIGradient",reflexo)
         faixa.Rotation = 24
         faixa.Transparency = NumberSequence.new{
             NumberSequenceKeypoint.new(0,1),
@@ -494,12 +608,12 @@ do
             NumberSequenceKeypoint.new(1,1),
         }
         faixa.Offset = Vector2.new(-1.1,0)
-        local deslizar = TweenService:Create(faixa,
+        local deslizar = GS.criarTween(TweenService,faixa,
             TweenInfo.new(11,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut,-1,true),
             {Offset=Vector2.new(1.1,0)})
         deslizar:Play()
         table.insert(GS.animsInfinitas,deslizar)
-        local respirar = TweenService:Create(luzBorda,
+        local respirar = GS.criarTween(TweenService,luzBorda,
             TweenInfo.new(8,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut,-1,true),
             {Offset=Vector2.new(0.20,0)})
         respirar:Play()
@@ -524,99 +638,99 @@ do
             { "desativando anti cheat do roblox...", 100, 4.5 },
         }
         local vivos = {}   -- animacoes em loop daqui (param no fim)
-        local fundo = Instance.new("Frame")
+        local fundo = GS.novaInstancia("Frame")
         fundo.Name = "GringoSplash"; fundo.Size = UDim2.fromScale(1, 1)
         fundo.BackgroundColor3 = Color3.fromRGB(0, 0, 0); fundo.BackgroundTransparency = 1
         fundo.BorderSizePixel = 0; fundo.ZIndex = 200; fundo.Parent = ScreenGui
         tw(fundo, {BackgroundTransparency = 0.12}, 0.4)
         -- brilho roxo atras do nome, respirando
-        local halo = Instance.new("Frame", fundo)
+        local halo = GS.novaInstancia("Frame", fundo)
         halo.AnchorPoint = Vector2.new(0.5, 0.5); halo.Position = UDim2.new(0.5, 0, 0.5, -40)
         halo.Size = UDim2.fromOffset(120, 120); halo.BackgroundColor3 = T.on; halo.BackgroundTransparency = 1
         halo.BorderSizePixel = 0; halo.ZIndex = 201; redondo(halo)
-        local hg = Instance.new("UIGradient", halo); hg.Rotation = 90
+        local hg = GS.novaInstancia("UIGradient", halo); hg.Rotation = 90
         hg.Transparency = NumberSequence.new{ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.2), NumberSequenceKeypoint.new(1, 1) }
         tw(halo, {Size = UDim2.fromOffset(560, 560), BackgroundTransparency = 0.62}, 1.1, Enum.EasingStyle.Quint)
-        task.delay(1.1, function()
+        GS.delay(1.1, function()
             if not halo.Parent then return end
-            local r = TweenService:Create(halo, TweenInfo.new(1.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+            local r = GS.criarTween(TweenService,halo, TweenInfo.new(1.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
                 { Size = UDim2.fromOffset(640, 640), BackgroundTransparency = 0.72 })
             r:Play(); table.insert(vivos, r)
         end)
         -- GRINGO
-        local linha = Instance.new("Frame", fundo)
+        local linha = GS.novaInstancia("Frame", fundo)
         linha.AnchorPoint = Vector2.new(0.5, 0.5); linha.Position = UDim2.new(0.5, 0, 0.5, -54)
         linha.Size = UDim2.fromOffset(0, 84); linha.AutomaticSize = Enum.AutomaticSize.X
         linha.BackgroundTransparency = 1; linha.ZIndex = 202
         do
-            local l = Instance.new("UIListLayout", linha); l.FillDirection = Enum.FillDirection.Horizontal
+            local l = GS.novaInstancia("UIListLayout", linha); l.FillDirection = Enum.FillDirection.Horizontal
             l.SortOrder = Enum.SortOrder.LayoutOrder; l.Padding = UDim.new(0, 4)
             l.VerticalAlignment = Enum.VerticalAlignment.Center
         end
         local letras = {}
         for i = 1, #NOME do
-            local caixa = Instance.new("Frame", linha)
+            local caixa = GS.novaInstancia("Frame", linha)
             caixa.BackgroundTransparency = 1; caixa.LayoutOrder = i; caixa.ZIndex = 202
             caixa.Size = UDim2.fromOffset(0, 84); caixa.AutomaticSize = Enum.AutomaticSize.X
-            local t = Instance.new("TextLabel", caixa)
+            local t = GS.novaInstancia("TextLabel", caixa)
             t.BackgroundTransparency = 1; t.Font = Enum.Font.GothamBlack; t.TextSize = 76
             t.Text = string.sub(NOME, i, i); t.TextColor3 = BRANCO; t.TextTransparency = 1
             t.Size = UDim2.fromOffset(0, 84); t.AutomaticSize = Enum.AutomaticSize.X
             t.Position = UDim2.fromOffset(0, 40); t.ZIndex = 203
-            local g = Instance.new("UIGradient", t); g.Rotation = 90
+            local g = GS.novaInstancia("UIGradient", t); g.Rotation = 90
             g.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(170, 170, 170))
-            local st = Instance.new("UIStroke", t); st.Color = T.on; st.Thickness = 2; st.Transparency = 1
+            local st = GS.novaInstancia("UIStroke", t); st.Color = T.on; st.Thickness = 2; st.Transparency = 1
             letras[i] = { t = t, st = st }
         end
         for i, L in ipairs(letras) do
-            task.delay((i - 1) * 0.08, function()
+            GS.delay((i - 1) * 0.08, function()
                 tw(L.t, {Position = UDim2.fromOffset(0, 0), TextTransparency = 0}, 0.5, Enum.EasingStyle.Back)
                 tw(L.st, {Transparency = 0.45}, 0.5)
             end)
         end
         -- bolinha de carregamento girando (arco: contorno com metade apagada)
-        local giraFrame = Instance.new("Frame", fundo)
+        local giraFrame = GS.novaInstancia("Frame", fundo)
         giraFrame.AnchorPoint = Vector2.new(0.5, 0.5); giraFrame.Position = UDim2.new(0.5, 0, 0.5, 34)
         giraFrame.Size = UDim2.fromOffset(34, 34); giraFrame.BackgroundTransparency = 1; giraFrame.ZIndex = 202
         redondo(giraFrame)
-        local arco = Instance.new("UIStroke", giraFrame); arco.Thickness = 3.5; arco.Color = T.strokeHi
-        local ag = Instance.new("UIGradient", arco)
+        local arco = GS.novaInstancia("UIStroke", giraFrame); arco.Thickness = 3.5; arco.Color = T.strokeHi
+        local ag = GS.novaInstancia("UIGradient", arco)
         ag.Transparency = NumberSequence.new{ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.55, 0.15),
                                               NumberSequenceKeypoint.new(0.56, 1), NumberSequenceKeypoint.new(1, 1) }
-        local gira = TweenService:Create(giraFrame, TweenInfo.new(0.9, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), { Rotation = 360 })
+        local gira = GS.criarTween(TweenService,giraFrame, TweenInfo.new(0.9, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1), { Rotation = 360 })
         gira:Play(); table.insert(vivos, gira)
         -- mensagem + porcentagem
-        local msg = Instance.new("TextLabel", fundo)
+        local msg = GS.novaInstancia("TextLabel", fundo)
         msg.AnchorPoint = Vector2.new(0.5, 0); msg.Position = UDim2.new(0.5, 0, 0.5, 64)
         msg.Size = UDim2.fromOffset(420, 22); msg.BackgroundTransparency = 1
         msg.Font = Enum.Font.GothamMedium; msg.TextSize = 15; msg.Text = ""
         msg.TextColor3 = Color3.fromRGB(225, 225, 225); msg.ZIndex = 202
-        local pct = Instance.new("TextLabel", fundo)
+        local pct = GS.novaInstancia("TextLabel", fundo)
         pct.AnchorPoint = Vector2.new(0.5, 0); pct.Position = UDim2.new(0.5, 0, 0.5, 112)
         pct.Size = UDim2.fromOffset(120, 18); pct.BackgroundTransparency = 1
         pct.Font = Enum.Font.GothamBold; pct.TextSize = 13; pct.Text = "0%"
         pct.TextColor3 = Color3.fromRGB(180, 180, 180); pct.ZIndex = 202
         -- barrinha
-        local trilho = Instance.new("Frame", fundo)
+        local trilho = GS.novaInstancia("Frame", fundo)
         trilho.AnchorPoint = Vector2.new(0.5, 0); trilho.Position = UDim2.new(0.5, 0, 0.5, 96)
         trilho.Size = UDim2.fromOffset(300, 5); trilho.BackgroundColor3 = BRANCO
         trilho.BackgroundTransparency = 0.85; trilho.BorderSizePixel = 0; trilho.ZIndex = 202; redondo(trilho)
-        local enche = Instance.new("Frame", trilho)
+        local enche = GS.novaInstancia("Frame", trilho)
         enche.Size = UDim2.fromScale(0, 1); enche.BackgroundColor3 = T.strokeHi
         enche.BorderSizePixel = 0; enche.ZIndex = 203; redondo(enche)
         do
-            local eg = Instance.new("UIGradient", enche)
+            local eg = GS.novaInstancia("UIGradient", enche)
             eg.Color = ColorSequence.new(Color3.fromRGB(150, 150, 150), Color3.fromRGB(240, 240, 240))
         end
         -- insta embaixo
-        local insta = Instance.new("TextLabel", fundo)
+        local insta = GS.novaInstancia("TextLabel", fundo)
         insta.AnchorPoint = Vector2.new(0.5, 1); insta.Position = UDim2.new(0.5, 0, 1, -28)
         insta.Size = UDim2.fromOffset(300, 22); insta.BackgroundTransparency = 1
         insta.Font = Enum.Font.GothamBold; insta.TextSize = 16; insta.Text = "insta @henrique_system"
         insta.TextColor3 = Color3.fromRGB(205, 205, 205); insta.TextTransparency = 1; insta.ZIndex = 202
         tw(insta, {TextTransparency = 0.1}, 0.8)
-        local brilhoInsta = TweenService:Create(insta, TweenInfo.new(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { TextTransparency = 0.5 })
-        task.delay(0.8, function() if insta.Parent then brilhoInsta:Play() end end)
+        local brilhoInsta = GS.criarTween(TweenService,insta, TweenInfo.new(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { TextTransparency = 0.5 })
+        GS.delay(0.8, function() if insta.Parent then brilhoInsta:Play() end end)
         table.insert(vivos, brilhoInsta)
 
         task.wait(#NOME * 0.08 + 0.4)
@@ -652,15 +766,15 @@ do
         tw(trilho, {BackgroundTransparency = 1}, 0.25); tw(enche, {BackgroundTransparency = 1}, 0.25)
         tw(halo, {BackgroundTransparency = 1, Size = UDim2.fromOffset(900, 900)}, 0.4)
         tw(fundo, {BackgroundTransparency = 1}, 0.4)
-        task.delay(0.45, function() fundo:Destroy() end)
+        GS.delay(0.45, function() fundo:Destroy() end)
         task.wait(0.15)
     end
 
     -- Janela abre imediatamente; a tela de carregamento foi removida.
-    local abrirScale=Instance.new("UIScale",MainFrame); abrirScale.Scale=escalaBase*0.85
+    local abrirScale=GS.novaInstancia("UIScale",MainFrame); abrirScale.Scale=escalaBase*0.85
     MainFrame.Position=UDim2.new(0.5,-W/2,0.5,-H/2+40)
     MainFrame.Visible=true
-    task.spawn(function()
+    GS.spawn(function()
         local aberta = false
         local function abrirJanela()
             if aberta then return end
@@ -673,65 +787,65 @@ do
     end)
 
     -- ── Barra lateral (abas por icone) ──
-    local Sidebar=Instance.new("Frame",MainFrame)
+    local Sidebar=GS.novaInstancia("Frame",MainFrame)
     Sidebar.Position=UDim2.fromOffset(14,14); Sidebar.Size=UDim2.new(0,68,1,-28)
     Sidebar.BackgroundColor3=T.vidro; Sidebar.BackgroundTransparency=V.campo; Sidebar.BorderSizePixel=0
     mkC(12,Sidebar); mkS(1,T.stroke,Sidebar,V.borda)
     -- v9.1.2: sem logo na lateral (o nome fica na barra de titulo)
     -- lista de abas: do topo ate a engrenagem; se um dia tiver aba demais
     -- ela rola em vez de passar por cima da engrenagem
-    local ListaAbas=Instance.new("ScrollingFrame",Sidebar)
+    local ListaAbas=GS.novaInstancia("ScrollingFrame",Sidebar)
     ListaAbas.Position=UDim2.fromOffset(0,16); ListaAbas.Size=UDim2.new(1,0,1,-78)
     ListaAbas.BackgroundTransparency=1; ListaAbas.BorderSizePixel=0
     ListaAbas.ScrollBarThickness=0; ListaAbas.ScrollingDirection=Enum.ScrollingDirection.Y
     ListaAbas.CanvasSize=UDim2.new(0,0,0,0); ListaAbas.AutomaticCanvasSize=Enum.AutomaticSize.Y
     do
-        local l=Instance.new("UIListLayout",ListaAbas); l.SortOrder=Enum.SortOrder.LayoutOrder
+        local l=GS.novaInstancia("UIListLayout",ListaAbas); l.SortOrder=Enum.SortOrder.LayoutOrder
         l.Padding=UDim.new(0,3); l.HorizontalAlignment=Enum.HorizontalAlignment.Center
     end
 
     -- Dica com o nome da aba (aparece no hover)
-    local Dica=Instance.new("TextLabel",MainFrame)
+    local Dica=GS.novaInstancia("TextLabel",MainFrame)
     Dica.AutomaticSize=Enum.AutomaticSize.X; Dica.Size=UDim2.fromOffset(0,28)
     Dica.BackgroundColor3=T.bg; Dica.BackgroundTransparency=0.1; Dica.BorderSizePixel=0
     Dica.Font=Enum.Font.GothamMedium; Dica.TextSize=12; Dica.TextColor3=T.text; Dica.Text=""
     Dica.Visible=false; Dica.ZIndex=20; mkC(10,Dica); mkS(1,BRANCO,Dica,0.8)
-    do local p=Instance.new("UIPadding",Dica); p.PaddingLeft=UDim.new(0,10); p.PaddingRight=UDim.new(0,10) end
+    do local p=GS.novaInstancia("UIPadding",Dica); p.PaddingLeft=UDim.new(0,10); p.PaddingRight=UDim.new(0,10) end
     local function dica(btn, txt)
-        btn.MouseEnter:Connect(function()
+        GS.conectar(btn.MouseEnter,function()
             Dica.Text=txt
             local y = (btn.AbsolutePosition.Y - MainFrame.AbsolutePosition.Y) / math.max(abrirScale.Scale, 0.01)
             Dica.Position=UDim2.fromOffset(80, y + 6)
             Dica.Visible=true
         end)
-        btn.MouseLeave:Connect(function() Dica.Visible=false end)
+        GS.conectar(btn.MouseLeave,function() Dica.Visible=false end)
     end
 
     -- ═══════════ TITULO: GRINGOdll, versao e autoria ═══════════
-    local Titulo = Instance.new("Frame", MainFrame)
+    local Titulo = GS.novaInstancia("Frame", MainFrame)
     Titulo.Name = "Titulo"; Titulo.Position = UDim2.fromOffset(96, 14)
     Titulo.Size = UDim2.new(1, -110, 0, TITULO_H); Titulo.BackgroundTransparency = 1; Titulo.Active = true
     do
-        local l = Instance.new("UIListLayout", Titulo); l.FillDirection = Enum.FillDirection.Horizontal
+        local l = GS.novaInstancia("UIListLayout", Titulo); l.FillDirection = Enum.FillDirection.Horizontal
         l.SortOrder = Enum.SortOrder.LayoutOrder; l.Padding = UDim.new(0, 10)
         l.VerticalAlignment = Enum.VerticalAlignment.Center
-        local pad = Instance.new("UIPadding", Titulo); pad.PaddingLeft = UDim.new(0, 10)
+        local pad = GS.novaInstancia("UIPadding", Titulo); pad.PaddingLeft = UDim.new(0, 10)
         -- Marca em tinta escura: contraste constante sobre a face clara.
-        local marca = Instance.new("TextLabel", Titulo)
+        local marca = GS.novaInstancia("TextLabel", Titulo)
         marca.Name = "Marca"; marca.LayoutOrder = 1; marca.BackgroundTransparency = 1
         marca.Size = UDim2.fromOffset(0, TITULO_H); marca.AutomaticSize = Enum.AutomaticSize.X
         marca.Font = Enum.Font.GothamBlack; marca.TextSize = 24; marca.Text = "GRINGOdll"
         marca.TextColor3 = T.text; marca.TextXAlignment = Enum.TextXAlignment.Left
         -- versao numa pilula de vidro
-        local pilula = Instance.new("Frame", Titulo)
+        local pilula = GS.novaInstancia("Frame", Titulo)
         pilula.LayoutOrder = 2; pilula.Size = UDim2.fromOffset(0, 22); pilula.AutomaticSize = Enum.AutomaticSize.X
         pilula.BackgroundColor3 = T.on; pilula.BackgroundTransparency = 0.08; pilula.BorderSizePixel = 0
         redondo(pilula); mkS(1, BRANCO, pilula, 0.7)
-        do local pp = Instance.new("UIPadding", pilula); pp.PaddingLeft = UDim.new(0, 10); pp.PaddingRight = UDim.new(0, 10) end
-        local ver = Instance.new("TextLabel", pilula)
+        do local pp = GS.novaInstancia("UIPadding", pilula); pp.PaddingLeft = UDim.new(0, 10); pp.PaddingRight = UDim.new(0, 10) end
+        local ver = GS.novaInstancia("TextLabel", pilula)
         ver.BackgroundTransparency = 1; ver.Size = UDim2.fromOffset(0, 22); ver.AutomaticSize = Enum.AutomaticSize.X
         ver.Font = Enum.Font.GothamBold; ver.TextSize = 12; ver.Text = GS.versao; ver.TextColor3 = BRANCO
-        local credito = Instance.new("TextLabel", Titulo)
+        local credito = GS.novaInstancia("TextLabel", Titulo)
         credito.Name = "CreditoAutor"; credito.LayoutOrder = 4
         credito.BackgroundTransparency = 1
         credito.Size = UDim2.fromOffset(0, 22)
@@ -740,37 +854,37 @@ do
         credito.TextColor3 = T.dim; credito.Text = GS.credito
         credito.TextXAlignment = Enum.TextXAlignment.Left
         -- bolinha pulsando (onda que abre e some)
-        local vivo = Instance.new("Frame", Titulo)
+        local vivo = GS.novaInstancia("Frame", Titulo)
         vivo.LayoutOrder = 3; vivo.Size = UDim2.fromOffset(18, 18); vivo.BackgroundTransparency = 1
-        local onda = Instance.new("Frame", vivo)
+        local onda = GS.novaInstancia("Frame", vivo)
         onda.AnchorPoint = Vector2.new(0.5, 0.5); onda.Position = UDim2.fromScale(0.5, 0.5)
         onda.Size = UDim2.fromOffset(8, 8); onda.BackgroundColor3 = T.on
         onda.BackgroundTransparency = 0.2; onda.BorderSizePixel = 0; redondo(onda)
-        local ponto = Instance.new("Frame", vivo)
+        local ponto = GS.novaInstancia("Frame", vivo)
         ponto.AnchorPoint = Vector2.new(0.5, 0.5); ponto.Position = UDim2.fromScale(0.5, 0.5)
         ponto.Size = UDim2.fromOffset(8, 8); ponto.BackgroundColor3 = T.on
         ponto.BorderSizePixel = 0; redondo(ponto)
-        local pulso = TweenService:Create(onda, TweenInfo.new(1.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, -1), { Size = UDim2.fromOffset(20, 20), BackgroundTransparency = 1 })
+        local pulso = GS.criarTween(TweenService,onda, TweenInfo.new(1.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, -1), { Size = UDim2.fromOffset(20, 20), BackgroundTransparency = 1 })
         pulso:Play(); table.insert(GS.animsInfinitas, pulso)
         -- linha de luz embaixo do titulo, com uma faisca indo e voltando
-        local fio = Instance.new("Frame", MainFrame)
+        local fio = GS.novaInstancia("Frame", MainFrame)
         fio.Name = "FioTitulo"; fio.Position = UDim2.fromOffset(106, 14 + TITULO_H); fio.Size = UDim2.new(1, -128, 0, 1)
         fio.BackgroundColor3 = BRANCO; fio.BackgroundTransparency = 0.82; fio.BorderSizePixel = 0
-        local fg = Instance.new("UIGradient", fio)
+        local fg = GS.novaInstancia("UIGradient", fio)
         fg.Transparency = NumberSequence.new{ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.15, 0),
                                               NumberSequenceKeypoint.new(0.85, 0), NumberSequenceKeypoint.new(1, 1) }
-        local faisca = Instance.new("Frame", fio)
+        local faisca = GS.novaInstancia("Frame", fio)
         faisca.AnchorPoint = Vector2.new(0.5, 0.5); faisca.Position = UDim2.new(0, 0, 0.5, 0)
         faisca.Size = UDim2.fromOffset(70, 3); faisca.BackgroundColor3 = Color3.fromRGB(225, 225, 225)
         faisca.BorderSizePixel = 0; redondo(faisca)
-        local sg = Instance.new("UIGradient", faisca)
+        local sg = GS.novaInstancia("UIGradient", faisca)
         sg.Transparency = NumberSequence.new{ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1) }
-        local viaja = TweenService:Create(faisca, TweenInfo.new(3.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Position = UDim2.new(1, 0, 0.5, 0) })
+        local viaja = GS.criarTween(TweenService,faisca, TweenInfo.new(3.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Position = UDim2.new(1, 0, 0.5, 0) })
         viaja:Play(); table.insert(GS.animsInfinitas, viaja)
     end
 
     -- ── Topo: subabas + busca + minimizar/fechar + avatar ──
-    local Header=Instance.new("Frame",MainFrame)
+    local Header=GS.novaInstancia("Frame",MainFrame)
     Header.Position=UDim2.fromOffset(96,14+TITULO_H); Header.Size=UDim2.new(1,-110,0,HEADER_H)
     Header.BackgroundTransparency=1; Header.Active=true
 
@@ -778,17 +892,17 @@ do
     do
         local dragging, dragInput, dragStart, startPos
         for _, alca in ipairs({ Header, Titulo }) do   -- arrasta pelo topo e pelo titulo
-            alca.InputBegan:Connect(function(inp)
+            GS.conectar(alca.InputBegan,function(inp)
                 if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
                     dragging=true; dragStart=inp.Position; startPos=MainFrame.Position
-                    inp.Changed:Connect(function() if inp.UserInputState==Enum.UserInputState.End then dragging=false end end)
+                    GS.conectar(inp.Changed,function() if inp.UserInputState==Enum.UserInputState.End then dragging=false end end)
                 end
             end)
-            alca.InputChanged:Connect(function(inp)
+            GS.conectar(alca.InputChanged,function(inp)
                 if inp.UserInputType==Enum.UserInputType.MouseMovement or inp.UserInputType==Enum.UserInputType.Touch then dragInput=inp end
             end)
         end
-        UserInputService.InputChanged:Connect(function(inp)
+        GS.conectar(UserInputService.InputChanged,function(inp)
             if inp==dragInput and dragging then
                 local d=inp.Position-dragStart
                 MainFrame.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y)
@@ -796,33 +910,33 @@ do
         end)
     end
 
-    local SubBar=Instance.new("Frame",Header)
+    local SubBar=GS.novaInstancia("Frame",Header)
     SubBar.Size=UDim2.new(1,-330,1,0); SubBar.BackgroundTransparency=1
     do
-        local l=Instance.new("UIListLayout",SubBar); l.FillDirection=Enum.FillDirection.Horizontal
+        local l=GS.novaInstancia("UIListLayout",SubBar); l.FillDirection=Enum.FillDirection.Horizontal
         l.SortOrder=Enum.SortOrder.LayoutOrder; l.Padding=UDim.new(0,22)
         l.VerticalAlignment=Enum.VerticalAlignment.Center
-        local p=Instance.new("UIPadding",SubBar); p.PaddingLeft=UDim.new(0,8)
+        local p=GS.novaInstancia("UIPadding",SubBar); p.PaddingLeft=UDim.new(0,8)
     end
 
     -- avatar
     do
-        local av=Instance.new("ImageLabel",Header); av.Size=UDim2.fromOffset(38,38); av.Position=UDim2.new(1,-40,0.5,-19)
+        local av=GS.novaInstancia("ImageLabel",Header); av.Size=UDim2.fromOffset(38,38); av.Position=UDim2.new(1,-40,0.5,-19)
         av.BackgroundColor3=T.vidro; av.BackgroundTransparency=0.85; av.BorderSizePixel=0; redondo(av)
         mkS(1.5,BRANCO,av,0.6)
         pcall(function() av.Image="rbxthumb://type=AvatarHeadShot&id="..LP.UserId.."&w=48&h=48" end)
     end
     local function botaoTopo(nomeIco, x, corHover)
-        local b=Instance.new("TextButton",Header)
+        local b=GS.novaInstancia("TextButton",Header)
         b.Size=UDim2.fromOffset(34,34); b.Position=UDim2.new(1,x,0.5,-17)
         b.BackgroundColor3=T.vidro; b.BackgroundTransparency=V.campo; b.AutoButtonColor=false
         b.Text=""; b.BorderSizePixel=0; redondo(b); mkS(1,BRANCO,b,V.borda); press(b)
         local ic=icone(b,nomeIco,16,T.dim)
-        b.MouseEnter:Connect(function()
+        GS.conectar(b.MouseEnter,function()
             tw(b,{BackgroundColor3=corHover or BRANCO,BackgroundTransparency=corHover and 0.1 or 0.75},0.15)
             if ic then tw(ic,{ImageColor3=BRANCO},0.15) end
         end)
-        b.MouseLeave:Connect(function()
+        GS.conectar(b.MouseLeave,function()
             tw(b,{BackgroundColor3=T.vidro,BackgroundTransparency=V.campo},0.2)
             if ic then tw(ic,{ImageColor3=T.dim},0.2) end
         end)
@@ -830,14 +944,14 @@ do
     end
     local XBtn=botaoTopo("x",-82,Color3.fromRGB(200,50,80))
     local MinBtn=botaoTopo("minus",-122)
-    XBtn.MouseButton1Click:Connect(function()
+    GS.conectar(XBtn.MouseButton1Click,function()
         tw(abrirScale,{Scale=escalaBase*0.8},0.25,Enum.EasingStyle.Back,Enum.EasingDirection.In)
         tw(MainFrame,{Position=MainFrame.Position+UDim2.new(0,0,0,40)},0.25,Enum.EasingStyle.Quint,Enum.EasingDirection.In)
         task.wait(0.26)
         ScreenGui:Destroy()
     end)
     local mini=false
-    MinBtn.MouseButton1Click:Connect(function()
+    GS.conectar(MinBtn.MouseButton1Click,function()
         mini=not mini
         local ic=MinBtn:FindFirstChild("Icone")
         if ic then
@@ -850,36 +964,36 @@ do
     -- busca
     local Busca
     do
-        local caixa=Instance.new("Frame",Header); caixa.Size=UDim2.fromOffset(186,36); caixa.Position=UDim2.new(1,-318,0.5,-18)
+        local caixa=GS.novaInstancia("Frame",Header); caixa.Size=UDim2.fromOffset(186,36); caixa.Position=UDim2.new(1,-318,0.5,-18)
         caixa.BackgroundColor3=T.vidro; caixa.BackgroundTransparency=V.campo; caixa.BorderSizePixel=0
         redondo(caixa); local st=mkS(1,BRANCO,caixa,V.borda)
         local ic=icone(caixa,"search",15,T.mute); ic.Position=UDim2.new(0,18,0.5,0)
-        Busca=Instance.new("TextBox",caixa); Busca.Size=UDim2.new(1,-44,1,0); Busca.Position=UDim2.fromOffset(34,0)
+        Busca=GS.novaInstancia("TextBox",caixa); Busca.Size=UDim2.new(1,-44,1,0); Busca.Position=UDim2.fromOffset(34,0)
         Busca.BackgroundTransparency=1; Busca.Font=Enum.Font.GothamMedium; Busca.TextSize=13
         Busca.PlaceholderText="Buscar"; Busca.PlaceholderColor3=T.mute; Busca.Text=""; Busca.TextColor3=T.text
         Busca.TextXAlignment=Enum.TextXAlignment.Left; Busca.ClearTextOnFocus=false; Busca.TextTruncate=Enum.TextTruncate.AtEnd
-        Busca.Focused:Connect(function() tw(st,{Color=T.strokeHi,Transparency=0.3},0.2) tw(caixa,{BackgroundTransparency=0.82},0.2) end)
-        Busca.FocusLost:Connect(function() tw(st,{Color=BRANCO,Transparency=V.borda},0.25) tw(caixa,{BackgroundTransparency=V.campo},0.25) end)
+        GS.conectar(Busca.Focused,function() tw(st,{Color=T.strokeHi,Transparency=0.3},0.2) tw(caixa,{BackgroundTransparency=0.82},0.2) end)
+        GS.conectar(Busca.FocusLost,function() tw(st,{Color=BRANCO,Transparency=V.borda},0.25) tw(caixa,{BackgroundTransparency=V.campo},0.25) end)
     end
 
     -- ── Area de conteudo ──
-    local CA=Instance.new("ScrollingFrame",MainFrame)
+    local CA=GS.novaInstancia("ScrollingFrame",MainFrame)
     CA.Position=UDim2.fromOffset(96,TITULO_H+HEADER_H+28); CA.Size=UDim2.new(1,-110,1,-(TITULO_H+HEADER_H+42))
     CA.BackgroundTransparency=1; CA.BorderSizePixel=0
     CA.ScrollBarThickness=3; CA.ScrollBarImageColor3=BRANCO; CA.ScrollBarImageTransparency=0.6
     CA.CanvasSize=UDim2.new(0,0,0,0); CA.AutomaticCanvasSize=Enum.AutomaticSize.Y
     CA.ClipsDescendants=true; CA.ScrollingDirection=Enum.ScrollingDirection.Y
-    local cp=Instance.new("UIPadding",CA); cp.PaddingTop=UDim.new(0,2); cp.PaddingLeft=UDim.new(0,2); cp.PaddingRight=UDim.new(0,10); cp.PaddingBottom=UDim.new(0,12)
+    local cp=GS.novaInstancia("UIPadding",CA); cp.PaddingTop=UDim.new(0,2); cp.PaddingLeft=UDim.new(0,2); cp.PaddingRight=UDim.new(0,10); cp.PaddingBottom=UDim.new(0,12)
     do
-        local l=Instance.new("UIListLayout",CA); l.SortOrder=Enum.SortOrder.LayoutOrder; l.Padding=UDim.new(0,10)
+        local l=GS.novaInstancia("UIListLayout",CA); l.SortOrder=Enum.SortOrder.LayoutOrder; l.Padding=UDim.new(0,10)
         l.HorizontalAlignment=Enum.HorizontalAlignment.Center
     end
 
     local function criarPanel(ord)
-        local f=Instance.new("Frame",CA); f.Size=UDim2.new(1,0,0,1)
+        local f=GS.novaInstancia("Frame",CA); f.Size=UDim2.new(1,0,0,1)
         f.AutomaticSize=Enum.AutomaticSize.Y; f.BackgroundTransparency=1
         f.Visible=false; f.LayoutOrder=ord
-        local l=Instance.new("UIListLayout",f); l.SortOrder=Enum.SortOrder.LayoutOrder
+        local l=GS.novaInstancia("UIListLayout",f); l.SortOrder=Enum.SortOrder.LayoutOrder
         l.Padding=UDim.new(0,10); l.HorizontalAlignment=Enum.HorizontalAlignment.Center
         return f
     end
@@ -887,12 +1001,12 @@ do
     -- ═══════════════ COMPONENTES ═══════════════
     -- titulo de secao (pequeno, como o "Actions" da imagem)
     local function sec(pai,titulo,ico,ord)
-        local f=Instance.new("Frame",pai); f.Size=UDim2.new(1,0,0,28)
+        local f=GS.novaInstancia("Frame",pai); f.Size=UDim2.new(1,0,0,28)
         f.BackgroundTransparency=1; f.BorderSizePixel=0; f.LayoutOrder=ord
         local x=6
         local ic=icone(f,nomeIcone(ico) or nomeIcone(titulo),14,T.mute)
         if ic then ic.Position=UDim2.new(0,13,0,17); x=26 end
-        local lbl=Instance.new("TextLabel",f); lbl.Size=UDim2.new(1,-x,0,20); lbl.Position=UDim2.new(0,x,0,7)
+        local lbl=GS.novaInstancia("TextLabel",f); lbl.Size=UDim2.new(1,-x,0,20); lbl.Position=UDim2.new(0,x,0,7)
         lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.GothamBold
         lbl.Text=semEmoji(titulo); lbl.TextColor3=T.mute; lbl.TextSize=11
         lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.TextTruncate=Enum.TextTruncate.AtEnd
@@ -900,11 +1014,11 @@ do
 
     -- card de vidro de uma linha
     local function linhaBase(pai, altura, ord)
-        local row=Instance.new("Frame",pai); row.Size=UDim2.new(1,0,0,altura)
+        local row=GS.novaInstancia("Frame",pai); row.Size=UDim2.new(1,0,0,altura)
         row.BackgroundColor3=T.vidro; row.BackgroundTransparency=V.linha
         row.BorderSizePixel=0; row.LayoutOrder=ord; mkC(12,row)
         local st=mkS(1,T.stroke,row,V.borda)
-        local face=Instance.new("UIGradient",row)
+        local face=GS.novaInstancia("UIGradient",row)
         face.Color=ColorSequence.new(BRANCO,Color3.fromRGB(176,232,227))
         face.Rotation=70
         return row, st
@@ -912,26 +1026,26 @@ do
 
     -- caixa que agrupa funcoes (como o "Module One" da imagem)
     local function grupo(pai, titulo, subtitulo, ico, ord)
-        local f=Instance.new("Frame",pai); f.Size=UDim2.new(1,0,0,0); f.AutomaticSize=Enum.AutomaticSize.Y
+        local f=GS.novaInstancia("Frame",pai); f.Size=UDim2.new(1,0,0,0); f.AutomaticSize=Enum.AutomaticSize.Y
         f.BackgroundColor3=T.vidro; f.BackgroundTransparency=V.grupo; f.BorderSizePixel=0; f.LayoutOrder=ord
         mkC(14,f); mkS(1,T.stroke,f,0.65)
-        local p=Instance.new("UIPadding",f); p.PaddingTop=UDim.new(0,14); p.PaddingBottom=UDim.new(0,14)
+        local p=GS.novaInstancia("UIPadding",f); p.PaddingTop=UDim.new(0,14); p.PaddingBottom=UDim.new(0,14)
         p.PaddingLeft=UDim.new(0,14); p.PaddingRight=UDim.new(0,14)
-        local l=Instance.new("UIListLayout",f); l.SortOrder=Enum.SortOrder.LayoutOrder; l.Padding=UDim.new(0,8)
-        local topo=Instance.new("Frame",f); topo.Size=UDim2.new(1,0,0,subtitulo and 40 or 24)
+        local l=GS.novaInstancia("UIListLayout",f); l.SortOrder=Enum.SortOrder.LayoutOrder; l.Padding=UDim.new(0,8)
+        local topo=GS.novaInstancia("Frame",f); topo.Size=UDim2.new(1,0,0,subtitulo and 40 or 24)
         topo.BackgroundTransparency=1; topo.LayoutOrder=0
         local x=2
         if ico and ICONES[ico] then
-            local bolha=Instance.new("Frame",topo); bolha.Size=UDim2.fromOffset(34,34); bolha.Position=UDim2.fromOffset(0,subtitulo and 3 or -5)
+            local bolha=GS.novaInstancia("Frame",topo); bolha.Size=UDim2.fromOffset(34,34); bolha.Position=UDim2.fromOffset(0,subtitulo and 3 or -5)
             bolha.BackgroundColor3=T.vidro; bolha.BackgroundTransparency=0.86; bolha.BorderSizePixel=0; redondo(bolha)
             icone(bolha,ico,17,T.text)
             x=46
         end
-        local t1=Instance.new("TextLabel",topo); t1.Size=UDim2.new(1,-x,0,20); t1.Position=UDim2.fromOffset(x,subtitulo and 1 or 2)
+        local t1=GS.novaInstancia("TextLabel",topo); t1.Size=UDim2.new(1,-x,0,20); t1.Position=UDim2.fromOffset(x,subtitulo and 1 or 2)
         t1.BackgroundTransparency=1; t1.Font=Enum.Font.GothamBold; t1.TextSize=15; t1.TextColor3=T.text
         t1.TextXAlignment=Enum.TextXAlignment.Left; t1.Text=titulo
         if subtitulo then
-            local t2=Instance.new("TextLabel",topo); t2.Size=UDim2.new(1,-x,0,16); t2.Position=UDim2.fromOffset(x,22)
+            local t2=GS.novaInstancia("TextLabel",topo); t2.Size=UDim2.new(1,-x,0,16); t2.Position=UDim2.fromOffset(x,22)
             t2.BackgroundTransparency=1; t2.Font=Enum.Font.Gotham; t2.TextSize=11; t2.TextColor3=T.mute
             t2.TextXAlignment=Enum.TextXAlignment.Left; t2.TextTruncate=Enum.TextTruncate.AtEnd; t2.Text=subtitulo
         end
@@ -940,9 +1054,9 @@ do
 
     -- grade de cards quadrados (como "Thing 1 / Thing 2" da imagem)
     local function grade(pai, ord, colunas, altura)
-        local g=Instance.new("Frame",pai); g.Size=UDim2.new(1,0,0,0); g.AutomaticSize=Enum.AutomaticSize.Y
+        local g=GS.novaInstancia("Frame",pai); g.Size=UDim2.new(1,0,0,0); g.AutomaticSize=Enum.AutomaticSize.Y
         g.BackgroundTransparency=1; g.LayoutOrder=ord
-        local gl=Instance.new("UIGridLayout",g); gl.SortOrder=Enum.SortOrder.LayoutOrder
+        local gl=GS.novaInstancia("UIGridLayout",g); gl.SortOrder=Enum.SortOrder.LayoutOrder
         gl.CellPadding=UDim2.fromOffset(10,10)
         gl.CellSize=UDim2.new(1/colunas, -math.ceil(10*(colunas-1)/colunas), 0, altura)
         return g
@@ -955,9 +1069,9 @@ do
     -- ou clique perdido nunca deixam a chave no lado errado.
     local KNOB_ON, KNOB_OFF = UDim2.new(1,-21,0.5,-9), UDim2.new(0,3,0.5,-9)
     local function trilho(pai, pos)
-        local track=Instance.new("Frame",pai); track.Size=UDim2.fromOffset(44,24); track.Position=pos
+        local track=GS.novaInstancia("Frame",pai); track.Size=UDim2.fromOffset(44,24); track.Position=pos
         track.BackgroundColor3=T.off; track.BackgroundTransparency=0.3; track.BorderSizePixel=0; redondo(track)
-        local knob=Instance.new("Frame",track); knob.Size=UDim2.fromOffset(18,18); knob.Position=KNOB_OFF
+        local knob=GS.novaInstancia("Frame",track); knob.Size=UDim2.fromOffset(18,18); knob.Position=KNOB_OFF
         knob.BackgroundColor3=T.knobOff; knob.BorderSizePixel=0; redondo(knob)
         return track, knob
     end
@@ -1020,35 +1134,35 @@ do
             msgId=msgId+1; local meu=msgId
             sub.Text=semEmoji(txt)
             tw(lbl,{Position=o.posAviso},0.2); tw(sub,{TextTransparency=0},0.2)
-            task.delay(2.8,function()
+            GS.delay(2.8,function()
                 if msgId~=meu then return end
                 tw(lbl,{Position=o.pos},0.25); tw(sub,{TextTransparency=1},0.25)
             end)
         end
         -- "Controlado": a chave so obedece ao .Text que a logica escreve
         -- (evita a chave mostrar OFF com a funcao ligada)
-        t.MouseButton1Click:Connect(function()
+        GS.conectar(t.MouseButton1Click,function()
             if not t:GetAttribute("Controlado") then setOn(not on) end
-            task.delay(0.1, sync)   -- confere logo depois que a funcao escreveu o texto
+            GS.delay(0.1, sync)   -- confere logo depois que a funcao escreveu o texto
         end)
-        t:GetPropertyChangedSignal("Text"):Connect(function()
+        GS.conectar(t:GetPropertyChangedSignal("Text"),function()
             local txt=t.Text
             if txt=="" then return end
             local v = lerTexto()
             if v ~= nil then setOn(v) else aviso(txt) end
         end)
-        t.MouseEnter:Connect(function() tw(row,{BackgroundTransparency=V.linha-0.05},0.15) end)
-        t.MouseLeave:Connect(function() tw(row,{BackgroundTransparency=V.linha},0.2) end)
+        GS.conectar(t.MouseEnter,function() tw(row,{BackgroundTransparency=V.linha-0.05},0.15) end)
+        GS.conectar(t.MouseLeave,function() tw(row,{BackgroundTransparency=V.linha},0.2) end)
         return t
     end
     local function botaoInvisivel(row)
-        local t=Instance.new("TextButton",row); t.Size=UDim2.new(1,0,1,0); t.BackgroundTransparency=1
+        local t=GS.novaInstancia("TextButton",row); t.Size=UDim2.new(1,0,1,0); t.BackgroundTransparency=1
         t.Text=""; t.TextTransparency=1; t.AutoButtonColor=false; t.ZIndex=3
         ripple(t)
         return t
     end
     local function bolhaIcone(pai, ico, tam, pos)
-        local bolha=Instance.new("Frame",pai); bolha.Size=UDim2.fromOffset(tam,tam); bolha.Position=pos
+        local bolha=GS.novaInstancia("Frame",pai); bolha.Size=UDim2.fromOffset(tam,tam); bolha.Position=pos
         bolha.BackgroundColor3=T.vidro; bolha.BackgroundTransparency=0.86; bolha.BorderSizePixel=0; redondo(bolha)
         local ic=icone(bolha,ico,math.floor(tam*0.52),T.dim)
         return bolha, ic
@@ -1064,11 +1178,11 @@ do
             bolha, ic = bolhaIcone(row, ico, 32, UDim2.new(0,11,0.5,-16))
             x0 = 54
         end
-        local lbl=Instance.new("TextLabel",row); lbl.Size=UDim2.new(1,-x0-72,1,0); lbl.Position=UDim2.new(0,x0,0,0)
+        local lbl=GS.novaInstancia("TextLabel",row); lbl.Size=UDim2.new(1,-x0-72,1,0); lbl.Position=UDim2.new(0,x0,0,0)
         lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.GothamMedium; lbl.Text=nome
         lbl.TextColor3=T.dim; lbl.TextSize=13; lbl.TextXAlignment=Enum.TextXAlignment.Left
         lbl.TextTruncate=Enum.TextTruncate.AtEnd
-        local sub=Instance.new("TextLabel",row); sub.Size=UDim2.new(1,-x0-72,0,14); sub.Position=UDim2.new(0,x0,0,29)
+        local sub=GS.novaInstancia("TextLabel",row); sub.Size=UDim2.new(1,-x0-72,0,14); sub.Position=UDim2.new(0,x0,0,29)
         sub.BackgroundTransparency=1; sub.Font=Enum.Font.Gotham; sub.TextSize=10; sub.TextColor3=T.mute
         sub.TextXAlignment=Enum.TextXAlignment.Left; sub.TextTruncate=Enum.TextTruncate.AtEnd
         sub.TextTransparency=1; sub.Text=""
@@ -1081,18 +1195,18 @@ do
     -- Toggle em card quadrado (vai dentro de grade())
     local function tile(pai,rotulo,ico,ord)
         local nome = semEmoji(rotulo)
-        local row=Instance.new("Frame",pai); row.BackgroundColor3=T.vidro; row.BackgroundTransparency=V.linha
+        local row=GS.novaInstancia("Frame",pai); row.BackgroundColor3=T.vidro; row.BackgroundTransparency=V.linha
         row.BorderSizePixel=0; row.LayoutOrder=ord; mkC(12,row)
         local st=mkS(1,T.stroke,row,V.borda)
-        local face=Instance.new("UIGradient",row)
+        local face=GS.novaInstancia("UIGradient",row)
         face.Color=ColorSequence.new(BRANCO,Color3.fromRGB(176,232,227))
         face.Rotation=70
         local bolha, ic = bolhaIcone(row, nomeIcone(ico), 36, UDim2.fromOffset(12,12))
-        local lbl=Instance.new("TextLabel",row); lbl.Size=UDim2.new(1,-28,0,20); lbl.Position=UDim2.new(0,14,1,-34)
+        local lbl=GS.novaInstancia("TextLabel",row); lbl.Size=UDim2.new(1,-28,0,20); lbl.Position=UDim2.new(0,14,1,-34)
         lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.GothamMedium; lbl.Text=nome
         lbl.TextColor3=T.dim; lbl.TextSize=13; lbl.TextXAlignment=Enum.TextXAlignment.Left
         lbl.TextTruncate=Enum.TextTruncate.AtEnd
-        local sub=Instance.new("TextLabel",row); sub.Size=UDim2.new(1,-28,0,14); sub.Position=UDim2.new(0,14,1,-18)
+        local sub=GS.novaInstancia("TextLabel",row); sub.Size=UDim2.new(1,-28,0,14); sub.Position=UDim2.new(0,14,1,-18)
         sub.BackgroundTransparency=1; sub.Font=Enum.Font.Gotham; sub.TextSize=10; sub.TextColor3=T.mute
         sub.TextXAlignment=Enum.TextXAlignment.Left; sub.TextTruncate=Enum.TextTruncate.AtEnd
         sub.TextTransparency=1; sub.Text=""
@@ -1105,7 +1219,7 @@ do
     -- Botao: o texto que a logica escreve fica no .Text (invisivel) e e
     -- mostrado num rotulo por cima, sem emoji. Cor do texto tambem copia.
     local function botaoBase(pai,txt,ord,cor,altura,tam,ico)
-        local b=Instance.new("TextButton",pai); b.Size=UDim2.new(1,0,0,altura)
+        local b=GS.novaInstancia("TextButton",pai); b.Size=UDim2.new(1,0,0,altura)
         b.AutoButtonColor=false; b.BorderSizePixel=0; b.LayoutOrder=ord
         b.Font=Enum.Font.GothamBold; b.Text=txt; b.TextSize=tam
         local corBorda, trBorda = BRANCO, V.borda
@@ -1122,18 +1236,18 @@ do
         end
         mkC(12,b); mkS(1,corBorda,b,trBorda)
         -- conteudo centralizado: [icone] texto
-        local miolo=Instance.new("Frame",b); miolo.AnchorPoint=Vector2.new(0.5,0.5); miolo.Position=UDim2.fromScale(0.5,0.5)
+        local miolo=GS.novaInstancia("Frame",b); miolo.AnchorPoint=Vector2.new(0.5,0.5); miolo.Position=UDim2.fromScale(0.5,0.5)
         miolo.AutomaticSize=Enum.AutomaticSize.X; miolo.Size=UDim2.fromOffset(0,altura); miolo.BackgroundTransparency=1
         do
-            local l=Instance.new("UIListLayout",miolo); l.FillDirection=Enum.FillDirection.Horizontal
+            local l=GS.novaInstancia("UIListLayout",miolo); l.FillDirection=Enum.FillDirection.Horizontal
             l.VerticalAlignment=Enum.VerticalAlignment.Center; l.SortOrder=Enum.SortOrder.LayoutOrder; l.Padding=UDim.new(0,8)
         end
         local ic=icone(miolo,nomeIcone(ico) or nomeIcone(txt),16,b.TextColor3)
         if ic then ic.AnchorPoint=Vector2.zero; ic.LayoutOrder=1 end
-        local lbl=Instance.new("TextLabel",miolo); lbl.Name="Rotulo"; lbl.BackgroundTransparency=1; lbl.LayoutOrder=2
+        local lbl=GS.novaInstancia("TextLabel",miolo); lbl.Name="Rotulo"; lbl.BackgroundTransparency=1; lbl.LayoutOrder=2
         lbl.AutomaticSize=Enum.AutomaticSize.X; lbl.Size=UDim2.fromOffset(0,altura)
         lbl.Font=b.Font; lbl.TextSize=tam; lbl.TextTruncate=Enum.TextTruncate.AtEnd
-        do local lim=Instance.new("UISizeConstraint",lbl); lim.MaxSize=Vector2.new(560,altura) end
+        do local lim=GS.novaInstancia("UISizeConstraint",lbl); lim.MaxSize=Vector2.new(560,altura) end
         b.TextTransparency=1
         local function espelhar()
             lbl.Text=semEmoji(b.Text)
@@ -1142,9 +1256,9 @@ do
             if ic then ic.ImageColor3=b.TextColor3 end
         end
         espelhar()
-        b:GetPropertyChangedSignal("Text"):Connect(espelhar)
-        b:GetPropertyChangedSignal("TextColor3"):Connect(espelhar)
-        b:GetPropertyChangedSignal("TextStrokeTransparency"):Connect(espelhar)
+        GS.conectar(b:GetPropertyChangedSignal("Text"),espelhar)
+        GS.conectar(b:GetPropertyChangedSignal("TextColor3"),espelhar)
+        GS.conectar(b:GetPropertyChangedSignal("TextStrokeTransparency"),espelhar)
         hover(b); press(b); ripple(b)
         return b
     end
@@ -1158,12 +1272,12 @@ do
     -- Linha com  –  valor  +
     local function ctrl(pai,rotulo,val,ord)
         local row=linhaBase(pai,52,ord)
-        local lbl=Instance.new("TextLabel",row); lbl.Size=UDim2.new(1,-190,1,0); lbl.Position=UDim2.new(0,16,0,0)
+        local lbl=GS.novaInstancia("TextLabel",row); lbl.Size=UDim2.new(1,-190,1,0); lbl.Position=UDim2.new(0,16,0,0)
         lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.GothamMedium; lbl.Text=semEmoji(rotulo)
         lbl.TextColor3=T.dim; lbl.TextSize=13; lbl.TextXAlignment=Enum.TextXAlignment.Left
         lbl.TextTruncate=Enum.TextTruncate.AtEnd
         local function bt(nomeIco,x)
-            local b=Instance.new("TextButton",row); b.Size=UDim2.fromOffset(32,32); b.Position=UDim2.new(1,x,0.5,-16)
+            local b=GS.novaInstancia("TextButton",row); b.Size=UDim2.fromOffset(32,32); b.Position=UDim2.new(1,x,0.5,-16)
             b.BackgroundColor3=T.vidro; b.BackgroundTransparency=0.84; b.Text=""; b.AutoButtonColor=false
             b.BorderSizePixel=0; redondo(b); mkS(1,BRANCO,b,0.8)
             icone(b,nomeIco,16,T.text)
@@ -1171,14 +1285,14 @@ do
             return b
         end
         local bm=bt("minus",-158)
-        local vl=Instance.new("TextLabel",row); vl.Size=UDim2.fromOffset(78,32); vl.Position=UDim2.new(1,-120,0.5,-16)
+        local vl=GS.novaInstancia("TextLabel",row); vl.Size=UDim2.fromOffset(78,32); vl.Position=UDim2.new(1,-120,0.5,-16)
         vl.BackgroundColor3=T.bg; vl.BackgroundTransparency=0.45; vl.Font=Enum.Font.GothamBold; vl.Text=tostring(val)
         vl.TextColor3=T.text; vl.TextSize=12; vl.BorderSizePixel=0; redondo(vl); mkS(1,BRANCO,vl,0.85)
         vl.TextScaled=false; vl.TextTruncate=Enum.TextTruncate.AtEnd
         local bp=bt("plus",-38)
         -- valor "pula" quando muda
-        local vs=Instance.new("UIScale",vl)
-        vl:GetPropertyChangedSignal("Text"):Connect(function()
+        local vs=GS.novaInstancia("UIScale",vl)
+        GS.conectar(vl:GetPropertyChangedSignal("Text"),function()
             vs.Scale=1.15; tw(vs,{Scale=1},0.3,Enum.EasingStyle.Back)
         end)
         return bm, bp, vl
@@ -1188,27 +1302,27 @@ do
     -- :Set(valor) e .Changed (BindableEvent) disparado ao arrastar
     local function slider(pai, rotulo, minV, maxV, valInicial, ord)
         local row=linhaBase(pai,68,ord)
-        local lbl=Instance.new("TextLabel",row); lbl.Size=UDim2.new(1,-32,0,20); lbl.Position=UDim2.new(0,16,0,10)
+        local lbl=GS.novaInstancia("TextLabel",row); lbl.Size=UDim2.new(1,-32,0,20); lbl.Position=UDim2.new(0,16,0,10)
         lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.GothamMedium
         lbl.Text=rotulo..": "..string.format("%.1f",valInicial).."x"
         lbl.TextColor3=T.text; lbl.TextSize=13; lbl.TextXAlignment=Enum.TextXAlignment.Left
 
-        local track=Instance.new("Frame",row); track.Size=UDim2.new(1,-32,0,8); track.Position=UDim2.new(0,16,0,44)
+        local track=GS.novaInstancia("Frame",row); track.Size=UDim2.new(1,-32,0,8); track.Position=UDim2.new(0,16,0,44)
         track.BackgroundColor3=BRANCO; track.BackgroundTransparency=0.75; track.BorderSizePixel=0; redondo(track)
-        local fill=Instance.new("Frame",track); fill.BackgroundColor3=T.on; fill.BorderSizePixel=0
+        local fill=GS.novaInstancia("Frame",track); fill.BackgroundColor3=T.on; fill.BorderSizePixel=0
         fill.Size=UDim2.new((valInicial-minV)/(maxV-minV),0,1,0); redondo(fill)
         do
-            local g=Instance.new("UIGradient",fill)
+            local g=GS.novaInstancia("UIGradient",fill)
             g.Color=ColorSequence.new(Color3.fromRGB(220,220,220), T.on)
         end
-        local knob=Instance.new("Frame",track); knob.Size=UDim2.new(0,18,0,18)
+        local knob=GS.novaInstancia("Frame",track); knob.Size=UDim2.new(0,18,0,18)
         knob.AnchorPoint=Vector2.new(0.5,0.5); knob.BackgroundColor3=BRANCO
         knob.BorderSizePixel=0; knob.ZIndex=2
         knob.Position=UDim2.new((valInicial-minV)/(maxV-minV),0,0.5,0); redondo(knob)
         mkS(2,T.on,knob,0.2)
 
         local valorAtual = valInicial
-        local changedEvent = Instance.new("BindableEvent")
+        local changedEvent = GS.novaInstancia("BindableEvent")
 
         local function aplicarValor(v)
             v = math.clamp(v, minV, maxV)
@@ -1232,20 +1346,20 @@ do
             tw(knob,{Size=v and UDim2.new(0,24,0,24) or UDim2.new(0,18,0,18)},0.25,Enum.EasingStyle.Back)
         end
 
-        track.InputBegan:Connect(function(inp)
+        GS.conectar(track.InputBegan,function(inp)
             if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
                 setArrastando(true)
                 aplicarValor(posicaoParaValor(inp.Position.X))
-                inp.Changed:Connect(function() if inp.UserInputState==Enum.UserInputState.End then setArrastando(false) end end)
+                GS.conectar(inp.Changed,function() if inp.UserInputState==Enum.UserInputState.End then setArrastando(false) end end)
             end
         end)
-        knob.InputBegan:Connect(function(inp)
+        GS.conectar(knob.InputBegan,function(inp)
             if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
                 setArrastando(true)
-                inp.Changed:Connect(function() if inp.UserInputState==Enum.UserInputState.End then setArrastando(false) end end)
+                GS.conectar(inp.Changed,function() if inp.UserInputState==Enum.UserInputState.End then setArrastando(false) end end)
             end
         end)
-        UserInputService.InputChanged:Connect(function(inp)
+        GS.conectar(UserInputService.InputChanged,function(inp)
             if arrastando and (inp.UserInputType==Enum.UserInputType.MouseMovement or inp.UserInputType==Enum.UserInputType.Touch) then
                 aplicarValor(posicaoParaValor(inp.Position.X))
             end
@@ -1262,7 +1376,7 @@ do
     -- Retorna o TextBox de sempre; a pilula e uma moldura em volta dele.
     local function inp(pai,ph,ord)
         local lupa = type(ph)=="string" and (ph:find("🔎",1,true) or ph:find("🔍",1,true)) and true or false
-        local caixa=Instance.new("Frame",pai); caixa.Size=UDim2.new(1,0,0,44); caixa.LayoutOrder=ord
+        local caixa=GS.novaInstancia("Frame",pai); caixa.Size=UDim2.new(1,0,0,44); caixa.LayoutOrder=ord
         caixa.BackgroundColor3=T.vidro; caixa.BackgroundTransparency=V.campo; caixa.BorderSizePixel=0; mkC(22,caixa)
         local st=mkS(1,BRANCO,caixa,V.borda)
         local x = 18
@@ -1270,15 +1384,15 @@ do
             local ic=icone(caixa,"search",16,T.mute); ic.Position=UDim2.new(0,22,0.5,0)
             x = 42
         end
-        local i=Instance.new("TextBox",caixa); i.Size=UDim2.new(1,-(x+14),1,0); i.Position=UDim2.fromOffset(x,0)
+        local i=GS.novaInstancia("TextBox",caixa); i.Size=UDim2.new(1,-(x+14),1,0); i.Position=UDim2.fromOffset(x,0)
         i.BackgroundTransparency=1; i.Font=Enum.Font.GothamMedium
         i.PlaceholderText=semEmoji(ph); i.PlaceholderColor3=T.mute; i.ClearTextOnFocus=false
         i.Text=""; i.TextColor3=T.text; i.TextSize=13; i.TextXAlignment=Enum.TextXAlignment.Left
         i.TextTruncate=Enum.TextTruncate.AtEnd; i.BorderSizePixel=0
-        i.Focused:Connect(function() tw(st,{Color=T.strokeHi,Transparency=0.3},0.2) tw(caixa,{BackgroundTransparency=0.84},0.2) end)
-        i.FocusLost:Connect(function() tw(st,{Color=BRANCO,Transparency=V.borda},0.25) tw(caixa,{BackgroundTransparency=V.campo},0.25) end)
+        GS.conectar(i.Focused,function() tw(st,{Color=T.strokeHi,Transparency=0.3},0.2) tw(caixa,{BackgroundTransparency=0.84},0.2) end)
+        GS.conectar(i.FocusLost,function() tw(st,{Color=BRANCO,Transparency=V.borda},0.25) tw(caixa,{BackgroundTransparency=V.campo},0.25) end)
         -- se a logica trocar o placeholder (ex.: "HEX invalido"), tira emoji tambem
-        i:GetPropertyChangedSignal("PlaceholderText"):Connect(function()
+        GS.conectar(i:GetPropertyChangedSignal("PlaceholderText"),function()
             local limpo = semEmoji(i.PlaceholderText)
             if limpo ~= i.PlaceholderText then i.PlaceholderText = limpo end
         end)
@@ -1289,16 +1403,16 @@ do
     -- cinza fixa → aqui viram vidro roxo automaticamente.
     local CINZA_LINHA, CINZA_SEL = Color3.fromRGB(26,26,31), Color3.fromRGB(70,70,80)
     local function lista(pai,altura,ord)
-        local f=Instance.new("ScrollingFrame",pai)
+        local f=GS.novaInstancia("ScrollingFrame",pai)
         f.Size=UDim2.new(1,0,0,altura); f.LayoutOrder=ord
         f.BackgroundColor3=T.bg; f.BackgroundTransparency=0.6; f.BorderSizePixel=0
         f.ScrollBarThickness=3; f.ScrollBarImageColor3=BRANCO; f.ScrollBarImageTransparency=0.6
         f.CanvasSize=UDim2.new(0,0,0,0); f.AutomaticCanvasSize=Enum.AutomaticSize.Y
         mkC(18,f); mkS(1,BRANCO,f,0.88)
-        local ll=Instance.new("UIListLayout",f); ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,5)
-        local lp=Instance.new("UIPadding",f); lp.PaddingTop=UDim.new(0,7); lp.PaddingBottom=UDim.new(0,7)
+        local ll=GS.novaInstancia("UIListLayout",f); ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,5)
+        local lp=GS.novaInstancia("UIPadding",f); lp.PaddingTop=UDim.new(0,7); lp.PaddingBottom=UDim.new(0,7)
         lp.PaddingLeft=UDim.new(0,7); lp.PaddingRight=UDim.new(0,11)
-        f.ChildAdded:Connect(function(ch)
+        GS.conectar(f.ChildAdded,function(ch)
             if not ch:IsA("GuiButton") then return end
             local function ajustar()
                 local c = ch.BackgroundColor3
@@ -1306,9 +1420,9 @@ do
                 if perto(c, CINZA_SEL) then ch.BackgroundColor3 = T.on return end
                 ch.BackgroundTransparency = perto(c, T.on) and 0.15 or 0.55
             end
-            ch:GetPropertyChangedSignal("BackgroundColor3"):Connect(ajustar)
-            task.defer(ajustar)
-            task.defer(function()
+            GS.conectar(ch:GetPropertyChangedSignal("BackgroundColor3"),ajustar)
+            GS.defer(ajustar)
+            GS.defer(function()
                 local cr = ch:FindFirstChildOfClass("UICorner")
                 if cr then cr.CornerRadius = UDim.new(0,12) end
             end)
@@ -1364,15 +1478,15 @@ do
         for _, b in ipairs(subBotoes) do b:Destroy() end
         subBotoes = {}
         for j, s in ipairs(ABAS[ai].subs) do
-            local b=Instance.new("TextButton",SubBar); b.AutomaticSize=Enum.AutomaticSize.X
+            local b=GS.novaInstancia("TextButton",SubBar); b.AutomaticSize=Enum.AutomaticSize.X
             b.Size=UDim2.new(0,0,0,32); b.BackgroundTransparency=1; b.AutoButtonColor=false
             b.Font=Enum.Font.GothamMedium; b.TextSize=15; b.Text=s.nome; b.TextColor3=T.mute; b.LayoutOrder=j
-            local ponto=Instance.new("Frame",b); ponto.Name="Ponto"; ponto.AnchorPoint=Vector2.new(0.5,0)
+            local ponto=GS.novaInstancia("Frame",b); ponto.Name="Ponto"; ponto.AnchorPoint=Vector2.new(0.5,0)
             ponto.Size=UDim2.fromOffset(16,3); ponto.Position=UDim2.new(0.5,0,1,1)
             ponto.BackgroundColor3=T.strokeHi; ponto.BackgroundTransparency=1; ponto.BorderSizePixel=0; redondo(ponto)
-            b.MouseEnter:Connect(function() if j ~= subAtual then tw(b,{TextColor3=T.dim},0.15) end end)
-            b.MouseLeave:Connect(function() if j ~= subAtual then tw(b,{TextColor3=T.mute},0.2) end end)
-            b.MouseButton1Click:Connect(function() abrir(ai, j) end)
+            GS.conectar(b.MouseEnter,function() if j ~= subAtual then tw(b,{TextColor3=T.dim},0.15) end end)
+            GS.conectar(b.MouseLeave,function() if j ~= subAtual then tw(b,{TextColor3=T.mute},0.2) end end)
+            GS.conectar(b.MouseButton1Click,function() abrir(ai, j) end)
             subBotoes[j]=b
         end
     end
@@ -1400,31 +1514,31 @@ do
     end
 
     for i, a in ipairs(ABAS) do
-        local b=Instance.new("TextButton",ListaAbas)
+        local b=GS.novaInstancia("TextButton",ListaAbas)
         b.Size=UDim2.fromOffset(32,32); b.BackgroundColor3=T.vidro; b.BackgroundTransparency=1
         b.Text=""; b.AutoButtonColor=false; b.BorderSizePixel=0; b.LayoutOrder=math.floor((a.ordem or i)*10); redondo(b)
         a.traco=mkS(1,BRANCO,b,1)
         a.icone=icone(b,a.ico,17,T.mute)
         a.botao=b
-        b.MouseEnter:Connect(function()
+        GS.conectar(b.MouseEnter,function()
             if abaAtual ~= i then tw(b,{BackgroundTransparency=0.9},0.15) if a.icone then tw(a.icone,{ImageColor3=T.dim},0.15) end end
         end)
-        b.MouseLeave:Connect(function()
+        GS.conectar(b.MouseLeave,function()
             if abaAtual ~= i then tw(b,{BackgroundTransparency=1},0.2) if a.icone then tw(a.icone,{ImageColor3=T.mute},0.2) end end
         end)
-        b.MouseButton1Click:Connect(function() abrir(i) end)
+        GS.conectar(b.MouseButton1Click,function() abrir(i) end)
         press(b); dica(b, a.nome)
     end
 
     -- Botao configuracoes (embaixo da barra lateral)
-    local cfgBtn=Instance.new("TextButton",Sidebar)
+    local cfgBtn=GS.novaInstancia("TextButton",Sidebar)
     cfgBtn.Size=UDim2.fromOffset(38,38); cfgBtn.Position=UDim2.new(0.5,-19,1,-50)
     cfgBtn.BackgroundColor3=T.vidro; cfgBtn.BackgroundTransparency=0.88; cfgBtn.AutoButtonColor=false
     cfgBtn.Text=""; cfgBtn.BorderSizePixel=0; redondo(cfgBtn); mkS(1,BRANCO,cfgBtn,V.borda)
     do
         local ic=icone(cfgBtn,"settings",18,T.dim)
-        cfgBtn.MouseEnter:Connect(function() if ic then tw(ic,{ImageColor3=BRANCO,Rotation=60},0.3) end end)
-        cfgBtn.MouseLeave:Connect(function() if ic then tw(ic,{ImageColor3=T.dim,Rotation=0},0.3) end end)
+        GS.conectar(cfgBtn.MouseEnter,function() if ic then tw(ic,{ImageColor3=BRANCO,Rotation=60},0.3) end end)
+        GS.conectar(cfgBtn.MouseLeave,function() if ic then tw(ic,{ImageColor3=T.dim,Rotation=0},0.3) end end)
     end
     hover(cfgBtn); press(cfgBtn); dica(cfgBtn, "Configurações")
 
@@ -1471,9 +1585,9 @@ do
     do
         local p = painel(2,1)
         local gx = grupo(p, "Puxar todos", "Trava os monstros em volta de você", "magnet", 1)
-        local box=Instance.new("Frame",gx); box.Size=UDim2.new(1,0,0,1)
+        local box=GS.novaInstancia("Frame",gx); box.Size=UDim2.new(1,0,0,1)
         box.AutomaticSize=Enum.AutomaticSize.Y; box.BackgroundTransparency=1; box.LayoutOrder=1
-        local bl=Instance.new("UIListLayout",box); bl.SortOrder=Enum.SortOrder.LayoutOrder; bl.Padding=UDim.new(0,8)
+        local bl=GS.novaInstancia("UIListLayout",box); bl.SortOrder=Enum.SortOrder.LayoutOrder; bl.Padding=UDim.new(0,8)
         PuxarButton    = tog(box,"Puxar todos (trava os monstros)",1,"magnet")
         GS.dancaBtn    = tog(box,"Dança dos monstros",2,"music")
         PuxarButton:SetAttribute("Controlado", true)
@@ -1559,9 +1673,9 @@ do
         local p = painel(6,2)
         local gc = grupo(p, "Cor global", "Todo mundo vê", "palette", 1)
         -- Paleta de cores vibrantes (clica pra escolher)
-        local paletaF=Instance.new("Frame",gc); paletaF.Size=UDim2.new(1,0,0,44)
+        local paletaF=GS.novaInstancia("Frame",gc); paletaF.Size=UDim2.new(1,0,0,44)
         paletaF.BackgroundTransparency=1; paletaF.LayoutOrder=1
-        local gl=Instance.new("UIGridLayout",paletaF); gl.CellSize=UDim2.new(0,38,0,38)
+        local gl=GS.novaInstancia("UIGridLayout",paletaF); gl.CellSize=UDim2.new(0,38,0,38)
         gl.CellPadding=UDim2.new(0,12,0,0); gl.SortOrder=Enum.SortOrder.LayoutOrder
         gl.HorizontalAlignment=Enum.HorizontalAlignment.Center
         local paleta={
@@ -1570,12 +1684,12 @@ do
             Color3.fromRGB(170,0,255), Color3.fromRGB(255,0,200),
         }
         for i,c in ipairs(paleta) do
-            local b=Instance.new("TextButton",paletaF); b.Text=""; b.BackgroundColor3=c; b.AutoButtonColor=false
+            local b=GS.novaInstancia("TextButton",paletaF); b.Text=""; b.BackgroundColor3=c; b.AutoButtonColor=false
             b.BorderSizePixel=0; b.LayoutOrder=i; redondo(b)
             local st=mkS(2,BRANCO,b,0.7)
             press(b)
-            b.MouseEnter:Connect(function() tw(st,{Transparency=0},0.15) end)
-            b.MouseLeave:Connect(function() tw(st,{Transparency=0.7},0.2) end)
+            GS.conectar(b.MouseEnter,function() tw(st,{Transparency=0},0.15) end)
+            GS.conectar(b.MouseLeave,function() tw(st,{Transparency=0.7},0.2) end)
             table.insert(CorSwatches,{botao=b,cor=c})
         end
         CorHexInput      = inp(gc,"Ou digite a cor em HEX (ex: FF00FF)...",2)
@@ -1627,10 +1741,10 @@ do
                 local y = alvo.AbsolutePosition.Y - CA.AbsolutePosition.Y + CA.CanvasPosition.Y - 20
                 CA.CanvasPosition = Vector2.new(0, math.max(0, y))
             end)
-            local luz=Instance.new("Frame"); luz.Size=UDim2.new(1,0,1,0); luz.BackgroundColor3=T.on
+            local luz=GS.novaInstancia("Frame"); luz.Size=UDim2.new(1,0,1,0); luz.BackgroundColor3=T.on
             luz.BackgroundTransparency=0.45; luz.BorderSizePixel=0; luz.ZIndex=6; mkC(18,luz); luz.Parent=alvo
             tw(luz,{BackgroundTransparency=1},1.2)
-            task.delay(1.3,function() luz:Destroy() end)
+            GS.delay(1.3,function() luz:Destroy() end)
         end
         local function buscar(q, avisar)
             q = string.lower(semEmoji(q or ""))
@@ -1654,7 +1768,7 @@ do
                             end
                             -- nunca joga a luz dentro de um container com layout
                             if alvo:FindFirstChildWhichIsA("UIGridStyleLayout") then alvo = d end
-                            task.spawn(destacar, alvo)
+                            GS.spawn(destacar, alvo)
                             return true
                         end
                     end
@@ -1663,27 +1777,27 @@ do
             if avisar then GS.toast("Nada encontrado: "..q, false) end
         end
         local buscaId = 0
-        Busca:GetPropertyChangedSignal("Text"):Connect(function()
+        GS.conectar(Busca:GetPropertyChangedSignal("Text"),function()
             buscaId = buscaId + 1; local meu = buscaId
-            task.delay(0.5, function() if meu == buscaId then pcall(buscar, Busca.Text, false) end end)
+            GS.delay(0.5, function() if meu == buscaId then pcall(buscar, Busca.Text, false) end end)
         end)
-        Busca.FocusLost:Connect(function(enter) if enter then pcall(buscar, Busca.Text, true) end end)
+        GS.conectar(Busca.FocusLost,function(enter) if enter then pcall(buscar, Busca.Text, true) end end)
     end
 
     -- ═══════════════ CONFIGURACOES ═══════════════
-    ConfigFrame=Instance.new("Frame",ScreenGui)
+    ConfigFrame=GS.novaInstancia("Frame",ScreenGui)
     ConfigFrame.BackgroundTransparency=0.08; ConfigFrame.BorderSizePixel=0
     ConfigFrame.Position=UDim2.new(0.5,-130,0.5,-134); ConfigFrame.Size=UDim2.new(0,260,0,268)
     ConfigFrame.Visible=false; vidroRoxo(ConfigFrame, 70); mkC(14,ConfigFrame); mkS(3,T.stroke,ConfigFrame,0.2)
-    local cfgScale=Instance.new("UIScale",ConfigFrame)
+    local cfgScale=GS.novaInstancia("UIScale",ConfigFrame)
     do
         local ic=icone(ConfigFrame,"settings",18,T.dim); ic.Position=UDim2.fromOffset(28,28)
     end
-    ConfigTitle=Instance.new("TextLabel",ConfigFrame); ConfigTitle.Size=UDim2.new(1,-60,0,24); ConfigTitle.Position=UDim2.fromOffset(46,16)
+    ConfigTitle=GS.novaInstancia("TextLabel",ConfigFrame); ConfigTitle.Size=UDim2.new(1,-60,0,24); ConfigTitle.Position=UDim2.fromOffset(46,16)
     ConfigTitle.BackgroundTransparency=1; ConfigTitle.Font=Enum.Font.GothamBold; ConfigTitle.TextXAlignment=Enum.TextXAlignment.Left
     ConfigTitle.Text="Configurações"; ConfigTitle.TextColor3=T.text; ConfigTitle.TextSize=15
     local function mkCB(txt,posY)
-        local b=Instance.new("TextButton",ConfigFrame); b.Size=UDim2.new(1,-28,0,40); b.Position=UDim2.new(0,14,0,posY)
+        local b=GS.novaInstancia("TextButton",ConfigFrame); b.Size=UDim2.new(1,-28,0,40); b.Position=UDim2.new(0,14,0,posY)
         b.BackgroundColor3=T.vidro; b.BackgroundTransparency=0.88; b.Font=Enum.Font.GothamBold; b.Text=txt; b.AutoButtonColor=false
         b.TextColor3=T.text; b.TextSize=12; b.BorderSizePixel=0; mkC(20,b); mkS(1,BRANCO,b,V.borda)
         hover(b); press(b); ripple(b)
@@ -1694,7 +1808,7 @@ do
     UnloadButton=mkCB("ENCERRAR TUDO",152)
     UnloadButton.BackgroundColor3=T.perigo; UnloadButton.BackgroundTransparency=0.25; UnloadButton.TextColor3=T.perigoTxt
     ConfigCloseButton=mkCB("FECHAR",212)
-    cfgBtn.MouseButton1Click:Connect(function()
+    GS.conectar(cfgBtn.MouseButton1Click,function()
         if ConfigFrame.Visible then
             ConfigFrame.Visible=false
         else
@@ -1702,13 +1816,13 @@ do
             cfgScale.Scale=0.8*escalaBase; tw(cfgScale,{Scale=escalaBase},0.35,Enum.EasingStyle.Back)
         end
     end)
-    ConfigCloseButton.MouseButton1Click:Connect(function() ConfigFrame.Visible=false end)
+    GS.conectar(ConfigCloseButton.MouseButton1Click,function() ConfigFrame.Visible=false end)
 
     -- Botao config invisivel (compatibilidade)
-    ConfigTabButton=Instance.new("TextButton",ScreenGui); ConfigTabButton.Visible=false
+    ConfigTabButton=GS.novaInstancia("TextButton",ScreenGui); ConfigTabButton.Visible=false
 
     -- Abrir/fechar pela tecla tambem anima
-    MainFrame:GetPropertyChangedSignal("Visible"):Connect(function()
+    GS.conectar(MainFrame:GetPropertyChangedSignal("Visible"),function()
         if MainFrame.Visible then
             abrirScale.Scale=escalaBase*0.9; tw(abrirScale,{Scale=escalaBase},0.35,Enum.EasingStyle.Back)
         else
@@ -1721,10 +1835,10 @@ end  -- fim do bloco do
 -- Keybind
 teclaMenu = Enum.KeyCode.RightControl
 escutandoTecla = false
-KeybindButton.MouseButton1Click:Connect(function()
+GS.conectar(KeybindButton.MouseButton1Click,function()
     escutandoTecla=true; KeybindButton.Text="[PRESSIONE UMA TECLA]"
 end)
-UserInputService.InputBegan:Connect(function(input,_gp)
+GS.conectar(UserInputService.InputBegan,function(input,_gp)
     if escutandoTecla then
         if input.UserInputType==Enum.UserInputType.Keyboard then
             teclaMenu=input.KeyCode; escutandoTecla=false
@@ -1744,6 +1858,27 @@ end)
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
+GS.humanoides=setmetatable({}, {__mode="k"})
+function GS.salvarHumanoide(char)
+    local function salvar(h)
+        if not h:IsA("Humanoid") or GS.humanoides[h] then return end
+        local r={props={},estados={}}
+        for _,p in ipairs({"WalkSpeed","JumpPower","JumpHeight","UseJumpPower","HipHeight",
+            "AutoRotate","PlatformStand","Sit","RequiresNeck","BreakJointsOnDeath","MaxHealth"}) do
+            pcall(function() r.props[p]=h[p] end)
+        end
+        for _,estado in ipairs(Enum.HumanoidStateType:GetEnumItems()) do
+            pcall(function() r.estados[estado]=h:GetStateEnabled(estado) end)
+        end
+        GS.humanoides[h]=r
+    end
+    if not char then return end
+    local h=char:FindFirstChildOfClass("Humanoid")
+    if h then salvar(h) end
+    GS.conectar(char.ChildAdded,salvar)
+end
+GS.salvarHumanoide(LocalPlayer.Character)
+GS.conectar(LocalPlayer.CharacterAdded,GS.salvarHumanoide)
 local noclipAtivado = false
 local noclipConnection = nil
 
@@ -1796,15 +1931,15 @@ local function alternarNoclip()
                 root.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
             end
         end
-        noclipConnection = RunService.Stepped:Connect(atravessar)
-        GS.noclipConn2 = RunService.Heartbeat:Connect(function()
+        noclipConnection = GS.conectar(RunService.Stepped,atravessar)
+        GS.noclipConn2 = GS.conectar(RunService.Heartbeat,function()
             atravessar()
             pcall(nuncaCai)
         end)
         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
         local r = hum and hum.RootPart
         if r and r.Anchored then
-            task.delay(0.4, function() NoclipButton.Text = "⚠ O jogo ancorou seu boneco (não dá pra mover)" end)
+            GS.delay(0.4, function() NoclipButton.Text = "⚠ O jogo ancorou seu boneco (não dá pra mover)" end)
         end
     else
         NoclipButton.Text = "WALLHACK: OFF"
@@ -1850,7 +1985,7 @@ local function alternarBrilho()
         Lighting.Brightness = 1.8
         Lighting.FogEnd = 999999
         if root and not localLight then
-            localLight = Instance.new("PointLight")
+            localLight = GS.novaInstancia("PointLight")
             localLight.Range = 200
             localLight.Brightness = 4
             localLight.Color = Color3.fromRGB(255, 255, 255)
@@ -1867,7 +2002,7 @@ local function alternarBrilho()
     end
 end
 
-Lighting.Changed:Connect(function()
+GS.conectar(Lighting.Changed,function()
     if fullbrightAtivado then
         Lighting.Ambient = Color3.fromRGB(140, 140, 140)
         Lighting.OutdoorAmbient = Color3.fromRGB(140, 140, 140)
@@ -1893,7 +2028,7 @@ local function alternarSpeed()
         SpeedButton.Text = "SPEED: ON"
         if speedBodyVelocity then speedBodyVelocity:Destroy() speedBodyVelocity = nil end
         local avisouAncorado = false
-        speedConnection = RunService.Heartbeat:Connect(function(dt)
+        speedConnection = GS.conectar(RunService.Heartbeat,function(dt)
             local char = LocalPlayer.Character
             local hum  = char and char:FindFirstChildOfClass("Humanoid")
             local r    = (hum and hum.RootPart) or (char and char:FindFirstChild("HumanoidRootPart"))
@@ -1950,7 +2085,7 @@ local function alternarFly()
     flyAtivado = not flyAtivado
     if flyAtivado then
         FlyButton.Text = "MODO LIVRE: ON"
-        flyConnection = RunService.RenderStepped:Connect(function()
+        flyConnection = GS.conectar(RunService.RenderStepped,function()
             -- Atualiza referencias todo frame (jogo pode ter resetado o char)
             local c = LocalPlayer.Character
             local r = c and c:FindFirstChild("HumanoidRootPart")
@@ -1971,7 +2106,7 @@ local function alternarFly()
             if not bodyVelocity or bodyVelocity.Parent ~= r then
                 pcall(function()
                     if bodyVelocity then bodyVelocity:Destroy() end
-                    bodyVelocity = Instance.new("BodyVelocity"); bodyVelocity.Name = "GringoVooVel"
+                    bodyVelocity = GS.novaInstancia("BodyVelocity"); bodyVelocity.Name = "GringoVooVel"
                     bodyVelocity.Velocity   = Vector3.new(0, 0, 0)
                     bodyVelocity.MaxForce   = Vector3.new(math.huge, math.huge, math.huge)
                     bodyVelocity.Parent     = r
@@ -1982,7 +2117,7 @@ local function alternarFly()
             if not bodyGyro or bodyGyro.Parent ~= r then
                 pcall(function()
                     if bodyGyro then bodyGyro:Destroy() end
-                    bodyGyro = Instance.new("BodyGyro"); bodyGyro.Name = "GringoVooGyro"
+                    bodyGyro = GS.novaInstancia("BodyGyro"); bodyGyro.Name = "GringoVooGyro"
                     bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
                     bodyGyro.D         = 100
                     bodyGyro.P         = 30000
@@ -2061,7 +2196,7 @@ local function aplicarTamanho(valor)
 end
 
 -- Reaplica o tamanho quando o personagem renasce (respawn zera a escala)
-LocalPlayer.CharacterAdded:Connect(function(novoChar)
+GS.conectar(LocalPlayer.CharacterAdded,function(novoChar)
     task.wait(0.5)
     pcall(function() aplicarTamanho(tamanhoAtual) end)
 end)
@@ -2111,39 +2246,39 @@ local function teleportarParaPlayer(player)
 end
 
 local function _criarLinhaTP(player)
-    local b = Instance.new("TextButton", TPListaFrame)
+    local b = GS.novaInstancia("TextButton", TPListaFrame)
     b.Size = UDim2.new(1, 0, 0, 40); b.BackgroundColor3 = Color3.fromRGB(26, 26, 31)
     b.BorderSizePixel = 0; b.Text = ""; b.AutoButtonColor = true
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    GS.novaInstancia("UICorner", b).CornerRadius = UDim.new(0, 6)
 
-    local foto = Instance.new("ImageLabel", b)
+    local foto = GS.novaInstancia("ImageLabel", b)
     foto.Size = UDim2.new(0, 32, 0, 32); foto.Position = UDim2.new(0, 4, 0.5, -16)
     foto.BackgroundColor3 = Color3.fromRGB(36, 36, 42); foto.BorderSizePixel = 0
     foto.Image = "rbxthumb://type=AvatarHeadShot&id=" .. player.UserId .. "&w=48&h=48"
-    Instance.new("UICorner", foto).CornerRadius = UDim.new(1, 0)
+    GS.novaInstancia("UICorner", foto).CornerRadius = UDim.new(1, 0)
 
-    local nome = Instance.new("TextLabel", b)
+    local nome = GS.novaInstancia("TextLabel", b)
     nome.Size = UDim2.new(1, -120, 0, 20); nome.Position = UDim2.new(0, 44, 0, 2)
     nome.BackgroundTransparency = 1; nome.Font = Enum.Font.GothamBold; nome.TextSize = 13
     nome.TextColor3 = Color3.fromRGB(236, 236, 240); nome.TextXAlignment = Enum.TextXAlignment.Left
     nome.TextTruncate = Enum.TextTruncate.AtEnd; nome.Text = player.DisplayName
 
-    local user = Instance.new("TextLabel", b)
+    local user = GS.novaInstancia("TextLabel", b)
     user.Size = UDim2.new(1, -120, 0, 16); user.Position = UDim2.new(0, 44, 0, 21)
     user.BackgroundTransparency = 1; user.Font = Enum.Font.Gotham; user.TextSize = 11
     user.TextColor3 = Color3.fromRGB(130, 130, 140); user.TextXAlignment = Enum.TextXAlignment.Left
     user.TextTruncate = Enum.TextTruncate.AtEnd; user.Text = "@" .. player.Name
 
-    local info = Instance.new("TextLabel", b)
+    local info = GS.novaInstancia("TextLabel", b)
     info.Size = UDim2.new(0, 70, 1, 0); info.Position = UDim2.new(1, -74, 0, 0)
     info.BackgroundTransparency = 1; info.Font = Enum.Font.GothamBold; info.TextSize = 12
     info.TextColor3 = Color3.fromRGB(236, 236, 240); info.TextXAlignment = Enum.TextXAlignment.Right
     info.Text = "-- m"
 
-    b.MouseButton1Click:Connect(function()
+    GS.conectar(b.MouseButton1Click,function()
         teleportarParaPlayer(player)
         info.Text = "✔ FOI!"
-        task.delay(0.8, function() pcall(function() info.Text = "-- m" end) end)
+        GS.delay(0.8, function() pcall(function() info.Text = "-- m" end) end)
     end)
     tpLinhas[player] = { botao = b, info = info }
 end
@@ -2173,12 +2308,12 @@ atualizarListaTP = function()
     for i, item in ipairs(ordem) do item.linha.botao.LayoutOrder = i end
 end
 
-Players.PlayerAdded:Connect(function() task.wait(0.5) atualizarListaTP() end)
-Players.PlayerRemoving:Connect(function(player)
+GS.conectar(Players.PlayerAdded,function() task.wait(0.5) atualizarListaTP() end)
+GS.conectar(Players.PlayerRemoving,function(player)
     local linha = tpLinhas[player]
     if linha then linha.botao:Destroy() tpLinhas[player] = nil end
 end)
-task.spawn(function()
+GS.spawn(function()
     while ScreenGui and ScreenGui.Parent do
         pcall(atualizarListaTP)
         task.wait(1)
@@ -2382,16 +2517,16 @@ local function removerHooks()
 end
 
 local function conectorInvencivel(hum, char)
-    ghostHealthConn = hum.HealthChanged:Connect(function()
+    ghostHealthConn = GS.conectar(hum.HealthChanged,function()
         if not ghostAtivado then return end
-        task.spawn(function()
+        GS.spawn(function()
             local h = char and char:FindFirstChildOfClass("Humanoid")
             if h then aplicarVidaBruta(h) end
         end)
     end)
-    ghostDiedConn = hum.Died:Connect(function()
+    ghostDiedConn = GS.conectar(hum.Died,function()
         if not ghostAtivado then return end
-        task.spawn(function()
+        GS.spawn(function()
             task.wait(0.05)
             local c = LocalPlayer.Character
             local h = c and c:FindFirstChildOfClass("Humanoid")
@@ -2432,7 +2567,7 @@ do
             if quebrada and s.p0:IsDescendantOf(c) and s.p1:IsDescendantOf(c) then
                 pcall(function()
                     if j and j.Parent then j:Destroy() end
-                    local novo = Instance.new("Motor6D")
+                    local novo = GS.novaInstancia("Motor6D")
                     novo.Name = s.nome; novo.Part0 = s.p0; novo.Part1 = s.p1
                     novo.C0 = s.c0; novo.C1 = s.c1
                     novo.Parent = (s.pai and s.pai:IsDescendantOf(c)) and s.pai or s.p0
@@ -2505,7 +2640,7 @@ local function alternarGhost()
         end
 
         -- Heartbeat — fallback + anti-grab ativo todo frame
-        ghostConnection = RunService.Heartbeat:Connect(function()
+        ghostConnection = GS.conectar(RunService.Heartbeat,function()
             local c = LocalPlayer.Character
             local h = c and c:FindFirstChildOfClass("Humanoid")
             if not h then return end
@@ -2645,7 +2780,7 @@ local function alternarGhost()
         end)
 
         -- Stepped — segunda frequencia independente
-        ghostSteppedConn = RunService.Stepped:Connect(function()
+        ghostSteppedConn = GS.conectar(RunService.Stepped,function()
             local c = LocalPlayer.Character
             local h = c and c:FindFirstChildOfClass("Humanoid")
             if not h then return end
@@ -2657,7 +2792,7 @@ local function alternarGhost()
         end)
 
         -- Reconecta apos respawn
-        LocalPlayer.CharacterAdded:Connect(function(newChar)
+        GS.conectar(LocalPlayer.CharacterAdded,function(newChar)
             if not ghostAtivado then return end
             task.wait(0.3)
             local newHum = newChar:FindFirstChildOfClass("Humanoid")
@@ -2801,22 +2936,22 @@ local function _criarEntrada(model, tipo)
     local anc = _ancoragem(model)
     local cor = tipo == "monstro" and ESP_CFG.COR_MONSTRO or ESP_CFG.COR_NPC
 
-    local hl = Instance.new("Highlight")
+    local hl = GS.novaInstancia("Highlight")
     hl.FillColor = cor; hl.FillTransparency = 0.55
     hl.OutlineColor = Color3.fromRGB(255, 255, 255); hl.OutlineTransparency = 0
     hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     hl.Adornee = model; hl.Enabled = false; hl.Parent = ESP.gui
 
-    local bgui = Instance.new("BillboardGui")
+    local bgui = GS.novaInstancia("BillboardGui")
     bgui.AlwaysOnTop = true; bgui.Size = UDim2.new(0, 200, 0, 58)
     bgui.StudsOffset = Vector3.new(0, 4, 0); bgui.Adornee = anc
     bgui.LightInfluence = 0; bgui.Parent = ESP.gui
-    local bg = Instance.new("Frame", bgui)
+    local bg = GS.novaInstancia("Frame", bgui)
     bg.Size = UDim2.new(1, 0, 1, 0); bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     bg.BackgroundTransparency = 0.5; bg.BorderSizePixel = 0
-    Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 4)
+    GS.novaInstancia("UICorner", bg).CornerRadius = UDim.new(0, 4)
     local function lbl(y, h, fonte, tam, c)
-        local l = Instance.new("TextLabel", bgui)
+        local l = GS.novaInstancia("TextLabel", bgui)
         l.Size = UDim2.new(1, -6, 0, h); l.Position = UDim2.new(0, 3, 0, y)
         l.BackgroundTransparency = 1; l.Font = fonte; l.TextSize = tam; l.TextColor3 = c
         l.TextStrokeColor3 = Color3.fromRGB(0, 0, 0); l.TextStrokeTransparency = 0.3
@@ -2830,7 +2965,7 @@ local function _criarEntrada(model, tipo)
 
     local linha
     if tipo == "monstro" then
-        linha = Instance.new("Frame", ESP.gui)
+        linha = GS.novaInstancia("Frame", ESP.gui)
         linha.AnchorPoint = Vector2.new(0.5, 0.5); linha.BorderSizePixel = 0
         linha.BackgroundColor3 = cor; linha.BackgroundTransparency = 0.2; linha.Visible = false
     end
@@ -2903,21 +3038,21 @@ local function alternarEsp()
     end
     EspButton.Text = "RASTREAR MONSTRO: ON"
 
-    ESP.gui = Instance.new("ScreenGui")
+    ESP.gui = GS.novaInstancia("ScreenGui")
     ESP.gui.Name = "GringoESP"; ESP.gui.IgnoreGuiInset = true
     ESP.gui.ResetOnSpawn = false; ESP.gui.DisplayOrder = 98
     ESP.gui.Parent = GS.pai
 
-    ESP.hud = Instance.new("TextLabel", ESP.gui)
+    ESP.hud = GS.novaInstancia("TextLabel", ESP.gui)
     ESP.hud.Size = UDim2.new(0, 360, 0, 30); ESP.hud.Position = UDim2.new(0.5, -180, 0, 40)
     ESP.hud.BackgroundColor3 = Color3.fromRGB(0, 0, 0); ESP.hud.BackgroundTransparency = 0.35
     ESP.hud.Font = Enum.Font.GothamBold; ESP.hud.TextSize = 15; ESP.hud.BorderSizePixel = 0
     ESP.hud.TextColor3 = Color3.fromRGB(255, 255, 255); ESP.hud.Text = "👹 PROCURANDO MONSTRO..."
-    Instance.new("UICorner", ESP.hud).CornerRadius = UDim.new(0, 8)
+    GS.novaInstancia("UICorner", ESP.hud).CornerRadius = UDim.new(0, 8)
 
     ESP.timer = ESP_CFG.RESCAN   -- varre ja no primeiro frame
-    ESP.addConn = workspace.DescendantAdded:Connect(function(obj)
-        task.defer(function()
+    ESP.addConn = GS.conectar(workspace.DescendantAdded,function(obj)
+        GS.defer(function()
             pcall(function()
                 local m = _candidato(obj)
                 if m then _adicionar(m) end
@@ -2925,7 +3060,7 @@ local function alternarEsp()
         end)
     end)
 
-    ESP.conn = RunService.Heartbeat:Connect(function(dt)
+    ESP.conn = GS.conectar(RunService.Heartbeat,function(dt)
         local meuChar = LocalPlayer.Character
         local meuRoot = meuChar and meuChar:FindFirstChild("HumanoidRootPart")
         if not meuRoot then return end
@@ -3039,7 +3174,7 @@ local function alternarAntiTrava()
         -- BodyGyro: trava a rotacao do boneco nos eixos X e Z (nao deixa tombar)
         -- MaxTorque Y = 0 para nao interferir na rotacao do personagem ao andar
         if root then
-            antiTravaGyro = Instance.new("BodyGyro"); antiTravaGyro.Name = "GringoAntiTravaGyro"
+            antiTravaGyro = GS.novaInstancia("BodyGyro"); antiTravaGyro.Name = "GringoAntiTravaGyro"
             antiTravaGyro.MaxTorque = Vector3.new(math.huge, 0, math.huge)
             antiTravaGyro.P = 9999999  -- rigidez maxima
             antiTravaGyro.D = 1000     -- amortecimento para nao vibrar
@@ -3047,7 +3182,7 @@ local function alternarAntiTrava()
             antiTravaGyro.Parent = root
         end
 
-        antiTravaConnection = RunService.Heartbeat:Connect(function()
+        antiTravaConnection = GS.conectar(RunService.Heartbeat,function()
             local c   = LocalPlayer.Character
             local h   = c and c:FindFirstChildOfClass("Humanoid")
             local r   = c and c:FindFirstChild("HumanoidRootPart")
@@ -3068,7 +3203,7 @@ local function alternarAntiTrava()
 
             -- Recria o BodyGyro se o servidor destruiu
             if not antiTravaGyro or not antiTravaGyro.Parent then
-                antiTravaGyro = Instance.new("BodyGyro"); antiTravaGyro.Name = "GringoAntiTravaGyro"
+                antiTravaGyro = GS.novaInstancia("BodyGyro"); antiTravaGyro.Name = "GringoAntiTravaGyro"
                 antiTravaGyro.MaxTorque = Vector3.new(math.huge, 0, math.huge)
                 antiTravaGyro.P = 9999999
                 antiTravaGyro.D = 1000
@@ -3183,7 +3318,7 @@ do
             PX.reg[d] = true
             -- VACINA 1: monstro recriado e preso no instante em que nasce
             if PX.ativo then
-                task.defer(function()
+                GS.defer(function()
                     local m = d.Parent
                     if not PX.ativo or not m or PX.ctrl[m] then return end
                     local ok, hh, r = ehNPC(m, LocalPlayer.Character)
@@ -3196,12 +3331,12 @@ do
         if PX.regConns then return end
         PX.regConns = {}
         for _, d in ipairs(workspace:GetDescendants()) do registrar(d) end
-        table.insert(PX.regConns, workspace.DescendantAdded:Connect(registrar))
-        table.insert(PX.regConns, workspace.DescendantRemoving:Connect(function(d)
+        table.insert(PX.regConns, GS.conectar(workspace.DescendantAdded,registrar))
+        table.insert(PX.regConns, GS.conectar(workspace.DescendantRemoving,function(d)
             PX.reg[d] = nil; PX.cordasReg[d] = nil
         end))
     end
-    ScreenGui.Destroying:Connect(function()
+    GS.conectar(ScreenGui.Destroying,function()
         for _, c in ipairs(PX.regConns or {}) do pcall(function() c:Disconnect() end) end
         PX.regConns = nil
     end)
@@ -3242,13 +3377,13 @@ do
                 end
             end
         end
-        c.conn = m.DescendantAdded:Connect(function(d) neutralizar(c, d) end)
-        c.att = Instance.new("Attachment"); c.att.Name = "GringoPuxarAtt"; c.att.Parent = r
-        c.ap = Instance.new("AlignPosition"); c.ap.Name = "GringoPuxarAP"
+        c.conn = GS.conectar(m.DescendantAdded,function(d) neutralizar(c, d) end)
+        c.att = GS.novaInstancia("Attachment"); c.att.Name = "GringoPuxarAtt"; c.att.Parent = r
+        c.ap = GS.novaInstancia("AlignPosition"); c.ap.Name = "GringoPuxarAP"
         c.ap.Mode = Enum.PositionAlignmentMode.OneAttachment
         c.ap.Attachment0 = c.att; c.ap.RigidityEnabled = true
         c.ap.Position = r.Position; c.ap.Parent = r
-        c.ao = Instance.new("AlignOrientation"); c.ao.Name = "GringoPuxarAO"
+        c.ao = GS.novaInstancia("AlignOrientation"); c.ao.Name = "GringoPuxarAO"
         c.ao.Mode = Enum.OrientationAlignmentMode.OneAttachment
         c.ao.Attachment0 = c.att; c.ao.RigidityEnabled = true
         c.ao.CFrame = r.CFrame; c.ao.Parent = r
@@ -3571,18 +3706,18 @@ do
     end
     if GS.puxarBox and GS.ui then
         local U = GS.ui
-        local grade = Instance.new("Frame", GS.puxarBox)
+        local grade = GS.novaInstancia("Frame", GS.puxarBox)
         grade.Size = UDim2.new(1, 0, 0, 0); grade.AutomaticSize = Enum.AutomaticSize.Y
         grade.BackgroundTransparency = 1; grade.LayoutOrder = 4
-        local gl = Instance.new("UIGridLayout", grade)
+        local gl = GS.novaInstancia("UIGridLayout", grade)
         gl.CellSize = UDim2.new(1/3, -6, 0, 30); gl.CellPadding = UDim2.new(0, 8, 0, 8)
         gl.SortOrder = Enum.SortOrder.LayoutOrder
         for i, nome in ipairs(PX.DANCAS) do
-            local b = Instance.new("TextButton", grade)
+            local b = GS.novaInstancia("TextButton", grade)
             b.Text = nome; b.Font = Enum.Font.GothamBold; b.TextSize = 10; b.AutoButtonColor = false
             b.BackgroundColor3 = U.T.card; b.TextColor3 = U.T.dim; b.BorderSizePixel = 0; b.LayoutOrder = i
             U.mkC(8, b); U.mkS(1, U.T.stroke, b); U.press(b)
-            b.MouseButton1Click:Connect(function()
+            GS.conectar(b.MouseButton1Click,function()
                 PX.danca = nome; PX.t0 = os.clock()
                 pintarDancas()
                 GS.toast("💃  Dança: " .. nome, true)
@@ -3595,17 +3730,17 @@ do
         local fMenos, fMais, fLbl = U.ctrl(GS.puxarBox, "Raio da fuga (studs)", tostring(PX.raioFuga), 11)
         local togToque = U.tog(GS.puxarBox, "Anti-toque (encostar não mata)", 12, "shield")
         togFuga.Text = "FUGA: ON"; togToque.Text = "ANTI-TOQUE: ON"
-        togFuga.MouseButton1Click:Connect(function()
+        GS.conectar(togFuga.MouseButton1Click,function()
             PX.fuga = not PX.fuga
             togFuga.Text = PX.fuga and "FUGA: ON" or "FUGA: OFF"
         end)
-        togToque.MouseButton1Click:Connect(function()
+        GS.conectar(togToque.MouseButton1Click,function()
             PX.antiToque = not PX.antiToque
             togToque.Text = PX.antiToque and "ANTI-TOQUE: ON" or "ANTI-TOQUE: OFF"
             if not PX.antiToque then PX.restaurarToque() else PX.ultimoToque = 0 end
         end)
-        fMenos.MouseButton1Click:Connect(function() PX.raioFuga = math.max(8, PX.raioFuga - 2); fLbl.Text = tostring(PX.raioFuga) end)
-        fMais.MouseButton1Click:Connect(function() PX.raioFuga = math.min(60, PX.raioFuga + 2); fLbl.Text = tostring(PX.raioFuga) end)
+        GS.conectar(fMenos.MouseButton1Click,function() PX.raioFuga = math.max(8, PX.raioFuga - 2); fLbl.Text = tostring(PX.raioFuga) end)
+        GS.conectar(fMais.MouseButton1Click,function() PX.raioFuga = math.min(60, PX.raioFuga + 2); fLbl.Text = tostring(PX.raioFuga) end)
     end
 
     GS.alternarDanca = function()
@@ -3637,7 +3772,7 @@ local function alternarPuxar()
         PuxarButton.Text = "PUXAR TODOS: ON"
         PX.t0 = os.clock(); PX.avisou = false
         if puxarConnection then puxarConnection:Disconnect() end
-        puxarConnection = RunService.Heartbeat:Connect(function(dt)
+        puxarConnection = GS.conectar(RunService.Heartbeat,function(dt)
             if not PX.regConns then return end
             local ok, err = pcall(PX.passo, dt)
             if not ok and not PX.avisou then
@@ -3645,11 +3780,11 @@ local function alternarPuxar()
                 warn("[GRINGO PUXAR] " .. tostring(err))
             end
         end)
-        task.defer(PX.iniciarRegistro)   -- varre o mapa 1 vez so, sem travar o clique
+        GS.defer(PX.iniciarRegistro)   -- varre o mapa 1 vez so, sem travar o clique
         -- VACINA 2: re-trava ANTES da fisica — se o servidor teleportar o
         -- monstro, ele volta pro lugar no mesmo passo
         if PX.stepConn then PX.stepConn:Disconnect() end
-        PX.stepConn = RunService.Stepped:Connect(function()
+        PX.stepConn = GS.conectar(RunService.Stepped,function()
             for _, c in pairs(PX.ctrl) do
                 if c.cf and c.root.Parent then
                     pcall(function()
@@ -3741,7 +3876,7 @@ local function alternarPuxarUm()
         pcall(function()
             local original = PuxarUmButton.Text
             PuxarUmButton.Text = "❌ JOGADOR NÃO ENCONTRADO"
-            task.delay(1.5, function()
+            GS.delay(1.5, function()
                 pcall(function()
                     if not puxarUmAtivado then PuxarUmButton.Text = original end
                 end)
@@ -3754,7 +3889,7 @@ local function alternarPuxarUm()
     puxarUmAlvo    = alvo
     PuxarUmButton.Text = "🧲  PUXANDO: " .. alvo.Name
 
-    puxarUmConn = RunService.Heartbeat:Connect(function()
+    puxarUmConn = GS.conectar(RunService.Heartbeat,function()
         -- Se o alvo saiu do jogo, desliga sozinho
         if not (puxarUmAlvo and puxarUmAlvo.Parent) then
             _limparPuxarUm()
@@ -3879,7 +4014,7 @@ do
         local st = { m=m, h=h, r=r, movers={}, inicio=os.clock(), animT=0 }
         if h then st.orig = { ws=h.WalkSpeed, jp=h.JumpPower, jh=h.JumpHeight, ar=h.AutoRotate, ps=h.PlatformStand } end
         for _, d in ipairs(m:GetDescendants()) do neutralizar(st, d) end
-        st.conn = m.DescendantAdded:Connect(function(d) neutralizar(st, d) end)
+        st.conn = GS.conectar(m.DescendantAdded,function(d) neutralizar(st, d) end)
 
         -- chao embaixo do monstro + altura do pe
         rp.FilterDescendantsInstances = { LocalPlayer.Character, m }
@@ -3899,16 +4034,16 @@ do
         st.deitado = CFrame.new(st.chao + fora * (st.alturaPe * 0.6) + Vector3.new(0, espessura, 0))
                    * CFrame.fromAxisAngle(eixo, -math.pi / 2) * st.yaw  -- cabeca pra longe de voce
 
-        st.att = Instance.new("Attachment"); st.att.Name = "GringoDerrubaAtt"; st.att.Parent = r
-        st.ap = Instance.new("AlignPosition"); st.ap.Name = "GringoDerrubaAP"
+        st.att = GS.novaInstancia("Attachment"); st.att.Name = "GringoDerrubaAtt"; st.att.Parent = r
+        st.ap = GS.novaInstancia("AlignPosition"); st.ap.Name = "GringoDerrubaAP"
         st.ap.Mode = Enum.PositionAlignmentMode.OneAttachment; st.ap.Attachment0 = st.att
         st.ap.RigidityEnabled = true; st.ap.Position = de; st.ap.Parent = r
-        st.ao = Instance.new("AlignOrientation"); st.ao.Name = "GringoDerrubaAO"
+        st.ao = GS.novaInstancia("AlignOrientation"); st.ao.Name = "GringoDerrubaAO"
         st.ao.Mode = Enum.OrientationAlignmentMode.OneAttachment; st.ao.Attachment0 = st.att
         st.ao.RigidityEnabled = true; st.ao.CFrame = r.CFrame; st.ao.Parent = r
         DR.caidos[m] = st
 
-        st.loop = RunService.Heartbeat:Connect(function(dt)
+        st.loop = GS.conectar(RunService.Heartbeat,function(dt)
             local ok = pcall(function()
                 if not m:IsDescendantOf(workspace) or not r.Parent or (h and h.Health <= 0) then
                     levantar(m); return
@@ -3969,7 +4104,7 @@ do
     end
 
     -- re-trava ANTES da fisica (servidor teleportou → volta no mesmo passo)
-    DR.stepConn = RunService.Stepped:Connect(function()
+    DR.stepConn = GS.conectar(RunService.Stepped,function()
         for _, st in pairs(DR.caidos) do
             if st.cf and st.r.Parent then
                 pcall(function() st.r.CFrame = st.cf; st.r.AssemblyLinearVelocity = ZERO end)
@@ -3980,7 +4115,7 @@ do
     DR.limpar = function()
         for m in pairs(DR.caidos) do levantar(m) end
     end
-    ScreenGui.Destroying:Connect(function()
+    GS.conectar(ScreenGui.Destroying,function()
         DR.limpar()
         if DR.stepConn then DR.stepConn:Disconnect() DR.stepConn = nil end
     end)
@@ -3988,11 +4123,11 @@ do
     -- botao pra escolher a tecla
     if GS.derrubaTeclaBtn then
         local b = GS.derrubaTeclaBtn
-        b.MouseButton1Click:Connect(function()
+        GS.conectar(b.MouseButton1Click,function()
             DR.escutando = true
             b.Text = "[APERTE A TECLA]"
         end)
-        UserInputService.InputBegan:Connect(function(input)
+        GS.conectar(UserInputService.InputBegan,function(input)
             if DR.escutando and input.UserInputType == Enum.UserInputType.Keyboard then
                 DR.escutando = false
                 DR.tecla = input.KeyCode
@@ -4006,7 +4141,7 @@ local function alternarDerruba()
     DR.ativo = not DR.ativo
     if DR.ativo then
         DerrubaButton.Text = "DERRUBA: ON"
-        derrubaXConn = UserInputService.InputBegan:Connect(function(input, gp)
+        derrubaXConn = GS.conectar(UserInputService.InputBegan,function(input, gp)
             if DR.escutando or UserInputService:GetFocusedTextBox() then return end
             if input.KeyCode == DR.tecla then DR.executar() end
         end)
@@ -4086,7 +4221,7 @@ local function alternarBikeAntiQueda()
         BikeAntiQuedaButton.Text = "ANTI-QUEDA [" .. ANTI_QUEDA_KEY.Name .. "]: ON"
 
         -- Tecla: TOGGLE — 1a pressao trava no angulo atual, 2a solta
-        bikeAntiQuedaKeyConn = UserInputService.InputBegan:Connect(function(input, _)
+        bikeAntiQuedaKeyConn = GS.conectar(UserInputService.InputBegan,function(input, _)
             if input.KeyCode ~= ANTI_QUEDA_KEY then return end
             if escutandoAntiQuedaKey then return end
 
@@ -4124,7 +4259,7 @@ local function alternarBikeAntiQueda()
                     if bikeGyroAntiQueda and bikeGyroAntiQueda.Parent then
                         bikeGyroAntiQueda:Destroy()
                     end
-                    bikeGyroAntiQueda = Instance.new("BodyGyro"); bikeGyroAntiQueda.Name = "GringoBikeGyro"
+                    bikeGyroAntiQueda = GS.novaInstancia("BodyGyro"); bikeGyroAntiQueda.Name = "GringoBikeGyro"
                     bikeGyroAntiQueda.MaxTorque = Vector3.new(math.huge, 0, math.huge)
                     bikeGyroAntiQueda.D = 20000  -- D altissimo: mata spin residual na hora
                     bikeGyroAntiQueda.P = 200000 -- P bruto: segura forte mesmo contra fisica
@@ -4141,7 +4276,7 @@ local function alternarBikeAntiQueda()
         end)
 
         -- Loop: mantém o gyro atualizado (Y muda ao virar, tilt fixo por CFrame)
-        bikeAntiQuedaConn = RunService.Heartbeat:Connect(function()
+        bikeAntiQuedaConn = GS.conectar(RunService.Heartbeat,function()
             if not antiQuedaTravado or not antiQuedaCapturaCF then return end
 
             local seat = obterSeatPart()
@@ -4154,7 +4289,7 @@ local function alternarBikeAntiQueda()
             -- Recria gyro se o jogo destruiu (sem precisar recriar do zero)
             if not bikeGyroAntiQueda or not bikeGyroAntiQueda.Parent then
                 pcall(function()
-                    bikeGyroAntiQueda = Instance.new("BodyGyro"); bikeGyroAntiQueda.Name = "GringoBikeGyro"
+                    bikeGyroAntiQueda = GS.novaInstancia("BodyGyro"); bikeGyroAntiQueda.Name = "GringoBikeGyro"
                     bikeGyroAntiQueda.MaxTorque = Vector3.new(math.huge, 0, math.huge)
                     bikeGyroAntiQueda.D = 20000
                     bikeGyroAntiQueda.P = 200000
@@ -4221,14 +4356,14 @@ end
 -- ─────────────────────────────────────────────
 -- CONFIGURAR TECLA DO ANTI-QUEDA
 -- ─────────────────────────────────────────────
-BikeAntiQuedaKeyButton.MouseButton1Click:Connect(function()
+GS.conectar(BikeAntiQuedaKeyButton.MouseButton1Click,function()
     if bikeAntiQuedaAtivado then return end
     escutandoAntiQuedaKey = true
     BikeAntiQuedaKeyButton.Text = "[PRESSIONE TECLA]"
     BikeAntiQuedaKeyButton.TextColor3 = Color3.fromRGB(255, 255, 0)
 end)
 
-UserInputService.InputBegan:Connect(function(input, _)
+GS.conectar(UserInputService.InputBegan,function(input, _)
     if not escutandoAntiQuedaKey then return end
     if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
     escutandoAntiQuedaKey = false
@@ -4279,7 +4414,7 @@ local function alternarParede()
         ParedeButton.Text = "PAREDE: ON"
 
         -- Cria a caixa fantasma de preview (segue o mouse)
-        paredePreview = Instance.new("Part")
+        paredePreview = GS.novaInstancia("Part")
         paredePreview.Name = "GringoParedePreview"
         paredePreview.Size = PAREDE_TAMANHO
         paredePreview.Anchored = true
@@ -4290,7 +4425,7 @@ local function alternarParede()
         paredePreview.Parent = workspace
 
         local mouse = LocalPlayer:GetMouse()
-        paredeRenderConn = RunService.RenderStepped:Connect(function()
+        paredeRenderConn = GS.conectar(RunService.RenderStepped,function()
             if not paredePreview then return end
             local hitPos = mouse.Hit and mouse.Hit.Position
             if not hitPos then return end
@@ -4313,7 +4448,7 @@ local function alternarParede()
     end
 end
 
-ParedeConfirmButton.MouseButton1Click:Connect(function()
+GS.conectar(ParedeConfirmButton.MouseButton1Click,function()
     if not paredeAtiva or not paredePreview then return end
 
     -- Cria a parede de verdade: solida (CanCollide) e invisivel (Transparency 1)
@@ -4321,7 +4456,7 @@ ParedeConfirmButton.MouseButton1Click:Connect(function()
     -- por script local nao existe pro servidor nem pros outros clients, entao
     -- e fisicamente impossivel travar outros jogadores com ela — isso nao e
     -- um bug, e uma limitacao de seguranca do proprio Roblox.
-    local parede = Instance.new("Part")
+    local parede = GS.novaInstancia("Part")
     parede.Name = "GringoParedeInvisivel"
     parede.Size = paredePreview.Size
     parede.CFrame = paredePreview.CFrame
@@ -4340,7 +4475,7 @@ ParedeConfirmButton.MouseButton1Click:Connect(function()
     _limparParedePreview()
 end)
 
-ParedeRemoverButton.MouseButton1Click:Connect(function()
+GS.conectar(ParedeRemoverButton.MouseButton1Click,function()
     for _, p in ipairs(paredesCriadas) do
         if p and p.Parent then
             pcall(function() p:Destroy() end)
@@ -4437,7 +4572,7 @@ end
 local function _dispararRemote(remote, args)
     if remote:IsA("RemoteFunction") then
         -- InvokeServer trava esperando resposta: roda separado
-        task.spawn(function() pcall(function() remote:InvokeServer(table.unpack(args)) end) end)
+        GS.spawn(function() pcall(function() remote:InvokeServer(table.unpack(args)) end) end)
     else
         pcall(function() remote:FireServer(table.unpack(args)) end)
     end
@@ -4473,7 +4608,7 @@ local function alternarCorGlobal()
     if corGlobalAtivado then
         CorGlobalButton.Text = "COR GLOBAL: ON"
         corRemotes = _procurarRemotesCor()   -- varre de novo (o jogo pode ter carregado mais coisa)
-        task.spawn(function()
+        GS.spawn(function()
             while corGlobalAtivado do
                 aplicarCorGlobal()
                 task.wait(COR_REPETIR_RATE)
@@ -4485,9 +4620,9 @@ local function alternarCorGlobal()
 end
 
 for _, sw in ipairs(CorSwatches) do
-    sw.botao.MouseButton1Click:Connect(function() definirCorEscolhida(sw.cor) end)
+    GS.conectar(sw.botao.MouseButton1Click,function() definirCorEscolhida(sw.cor) end)
 end
-CorHexInput.FocusLost:Connect(function()
+GS.conectar(CorHexInput.FocusLost,function()
     local txt = CorHexInput.Text:gsub("#", ""):gsub("%s", "")
     if #txt == 6 and txt:match("^%x+$") then
         definirCorEscolhida(Color3.fromHex(txt))
@@ -4600,7 +4735,7 @@ local function ligarSinal(nome)
     pcall(function()
         local char = LocalPlayer.Character
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
-        local animator = hum and (hum:FindFirstChildOfClass("Animator") or Instance.new("Animator", hum))
+        local animator = hum and (hum:FindFirstChildOfClass("Animator") or GS.novaInstancia("Animator", hum))
         local anim = _animacaoDoSinal(char, nome)
         if not (animator and anim) then
             print("[GRINGO CARREGAR] sinal '" .. nome .. "' indisponivel (jogo sem Animate padrao)")
@@ -4716,14 +4851,14 @@ local function _comecarSerCarregado(carregador, costas)
         ligarSinal(CFG.SINAL_CARREGADO)
         setStatus("NO BRAÇO DE " .. carregador.Name:upper() .. " (G SOLTA)")
     end
-    C.colConn = RunService.Stepped:Connect(function()
+    C.colConn = GS.conectar(RunService.Stepped,function()
         _semColisao(LocalPlayer.Character)
     end)
     -- PreSimulation roda ANTES da fisica (1 frame a menos de atraso que o
     -- Heartbeat). Executor/cliente antigo sem ele → Stepped (mesmo momento).
     local sinalFrame = RunService.Stepped
     pcall(function() sinalFrame = RunService.PreSimulation end)
-    C.conn = sinalFrame:Connect(function()
+    C.conn = GS.conectar(sinalFrame,function()
         local meuChar = LocalPlayer.Character
         local meuRoot = meuChar and meuChar:FindFirstChild("HumanoidRootPart")
         local hum     = meuChar and meuChar:FindFirstChildOfClass("Humanoid")
@@ -4775,7 +4910,7 @@ local function _comecarCarregar(alvo)
     ligarSinal(CFG.SINAL_CARREGANDO)
     setStatus("CARREGANDO " .. alvo.Name:upper() .. " (G SOLTA)")
     -- no SEU client o boneco dela nao pode te empurrar
-    C.colConn = RunService.Stepped:Connect(function()
+    C.colConn = GS.conectar(RunService.Stepped,function()
         if C.carregando and C.carregando.Character then
             _semColisao(C.carregando.Character)
         end
@@ -4800,7 +4935,7 @@ local function pedirCarregar()
     ligarSinal(CFG.SINAL_PEDIR)
     enviarChat(CFG.PREFIXO .. " pedir " .. alvo.Name)
     setStatus("PEDIDO ENVIADO PRA " .. alvo.Name:upper() .. "...")
-    task.delay(CFG.TIMEOUT, function()
+    GS.delay(CFG.TIMEOUT, function()
         if C.pendente and C.pendente.alvo == alvo and not C.carregando then
             C.pendente = nil
             desligarSinal(CFG.SINAL_PEDIR)
@@ -4812,23 +4947,23 @@ end
 -- ── Janelinha de ACEITAR / RECUSAR (aparece na tela dela) ──
 local P = {}
 do
-    P.frame = Instance.new("Frame")
+    P.frame = GS.novaInstancia("Frame")
     P.frame.Name = "PopupCarregar"
     P.frame.Size = UDim2.new(0, 320, 0, 120); P.frame.Position = UDim2.new(0.5, -160, 0, 80)
     P.frame.BackgroundColor3 = Color3.fromRGB(16, 16, 19); P.frame.BorderSizePixel = 0
     P.frame.Visible = false; P.frame.ZIndex = 50; P.frame.Parent = ScreenGui
-    Instance.new("UICorner", P.frame).CornerRadius = UDim.new(0, 12)
-    local st = Instance.new("UIStroke", P.frame); st.Thickness = 2; st.Color = Color3.fromRGB(200, 200, 210)
-    P.texto = Instance.new("TextLabel", P.frame)
+    GS.novaInstancia("UICorner", P.frame).CornerRadius = UDim.new(0, 12)
+    local st = GS.novaInstancia("UIStroke", P.frame); st.Thickness = 2; st.Color = Color3.fromRGB(200, 200, 210)
+    P.texto = GS.novaInstancia("TextLabel", P.frame)
     P.texto.Size = UDim2.new(1, -20, 0, 56); P.texto.Position = UDim2.new(0, 10, 0, 6)
     P.texto.BackgroundTransparency = 1; P.texto.Font = Enum.Font.GothamBold; P.texto.TextWrapped = true
     P.texto.TextColor3 = Color3.fromRGB(255, 255, 255); P.texto.TextSize = 15; P.texto.ZIndex = 51
     local function botao(txt, cor, x)
-        local b = Instance.new("TextButton", P.frame)
+        local b = GS.novaInstancia("TextButton", P.frame)
         b.Size = UDim2.new(0.5, -15, 0, 40); b.Position = UDim2.new(x, x == 0 and 10 or 5, 1, -50)
         b.BackgroundColor3 = cor; b.Font = Enum.Font.GothamBold; b.Text = txt
         b.TextColor3 = Color3.fromRGB(255, 255, 255); b.TextSize = 14; b.BorderSizePixel = 0; b.ZIndex = 51
-        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+        GS.novaInstancia("UICorner", b).CornerRadius = UDim.new(0, 8)
         return b
     end
     P.aceitar = botao("✔ ACEITAR", Color3.fromRGB(0, 160, 70), 0)
@@ -4840,7 +4975,7 @@ local function _mostrarPedido(remetente)
     C.recebido = remetente
     P.texto.Text = "💞 " .. remetente.DisplayName .. " quer te carregar no braço!"
     P.frame.Visible = true
-    task.delay(CFG.TIMEOUT, function()
+    GS.delay(CFG.TIMEOUT, function()
         if C.recebido == remetente then
             C.recebido = nil
             P.frame.Visible = false
@@ -4848,7 +4983,7 @@ local function _mostrarPedido(remetente)
     end)
 end
 
-P.aceitar.MouseButton1Click:Connect(function()
+GS.conectar(P.aceitar.MouseButton1Click,function()
     local quem = C.recebido
     C.recebido = nil
     P.frame.Visible = false
@@ -4857,7 +4992,7 @@ P.aceitar.MouseButton1Click:Connect(function()
     enviarChat(CFG.PREFIXO .. " aceito " .. quem.Name)
     _comecarSerCarregado(quem)
 end)
-P.recusar.MouseButton1Click:Connect(function()
+GS.conectar(P.recusar.MouseButton1Click,function()
     local quem = C.recebido
     C.recebido = nil
     P.frame.Visible = false
@@ -4895,22 +5030,22 @@ end
 
 pcall(function()
     if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
-        table.insert(C.conns, TextChatService.MessageReceived:Connect(function(msg)
+        table.insert(C.conns, GS.conectar(TextChatService.MessageReceived,function(msg)
             local src = msg.TextSource
             if src then processarMensagemCarregar(Players:GetPlayerByUserId(src.UserId), msg.Text) end
         end))
     else
         local function ouvir(p)
-            table.insert(C.conns, p.Chatted:Connect(function(m) processarMensagemCarregar(p, m) end))
+            table.insert(C.conns, GS.conectar(p.Chatted,function(m) processarMensagemCarregar(p, m) end))
         end
         for _, p in ipairs(Players:GetPlayers()) do ouvir(p) end
-        table.insert(C.conns, Players.PlayerAdded:Connect(ouvir))
+        table.insert(C.conns, GS.conectar(Players.PlayerAdded,ouvir))
     end
 end)
 
 -- ── Recebe pelo SINAL DE ANIMACAO (checa 4x por segundo) ──
 local TOLERANCIA_SINAL = 2   -- s sem o sinal do outro antes de soltar
-task.spawn(function()
+GS.spawn(function()
     while ScreenGui and ScreenGui.Parent do
         pcall(function()
             if C.carregadoPor then
@@ -4957,7 +5092,7 @@ local function _comecarSegurar()
     local agora = tick()
     C.segurandoDesde = agora
     setStatus("SEGURANDO...")
-    task.delay(CFG.SEGURAR, function()
+    GS.delay(CFG.SEGURAR, function()
         if C.segurandoDesde == agora then
             C.segurandoDesde = nil
             pedirCarregar()
@@ -4971,22 +5106,22 @@ local function _soltarSegurar()
     end
 end
 
-table.insert(C.conns, UserInputService.InputBegan:Connect(function(input, gp)
+table.insert(C.conns, GS.conectar(UserInputService.InputBegan,function(input, gp)
     if gp or escutandoTecla then return end
     if input.KeyCode == CFG.TECLA then _comecarSegurar() end
 end))
-table.insert(C.conns, UserInputService.InputEnded:Connect(function(input)
+table.insert(C.conns, GS.conectar(UserInputService.InputEnded,function(input)
     if input.KeyCode == CFG.TECLA then _soltarSegurar() end
 end))
-CarregarSegurarButton.MouseButton1Down:Connect(_comecarSegurar)
+GS.conectar(CarregarSegurarButton.MouseButton1Down,_comecarSegurar)
 local function _ajustarCostas(campo, delta, lbl)
     CFG[campo] = math.clamp(math.floor((CFG[campo] + delta) * 10 + 0.5) / 10, -2, 5)
     lbl.Text = string.format("%.1f", CFG[campo])
 end
-CostasCtrl.atrasMenos.MouseButton1Click:Connect(function()  _ajustarCostas("COSTAS_ATRAS", -0.1, CostasCtrl.atrasLbl) end)
-CostasCtrl.atrasMais.MouseButton1Click:Connect(function()   _ajustarCostas("COSTAS_ATRAS",  0.1, CostasCtrl.atrasLbl) end)
-CostasCtrl.alturaMenos.MouseButton1Click:Connect(function() _ajustarCostas("COSTAS_ALTURA", -0.1, CostasCtrl.alturaLbl) end)
-CostasCtrl.alturaMais.MouseButton1Click:Connect(function()  _ajustarCostas("COSTAS_ALTURA",  0.1, CostasCtrl.alturaLbl) end)
+GS.conectar(CostasCtrl.atrasMenos.MouseButton1Click,function()  _ajustarCostas("COSTAS_ATRAS", -0.1, CostasCtrl.atrasLbl) end)
+GS.conectar(CostasCtrl.atrasMais.MouseButton1Click,function()   _ajustarCostas("COSTAS_ATRAS",  0.1, CostasCtrl.atrasLbl) end)
+GS.conectar(CostasCtrl.alturaMenos.MouseButton1Click,function() _ajustarCostas("COSTAS_ALTURA", -0.1, CostasCtrl.alturaLbl) end)
+GS.conectar(CostasCtrl.alturaMais.MouseButton1Click,function()  _ajustarCostas("COSTAS_ALTURA",  0.1, CostasCtrl.alturaLbl) end)
 local function _ajustarDelay(delta)
     -- AUTO (-1) → 0 → 20 → 40 ... 400; abaixo de 0 volta pro AUTO
     local v = CFG.COSTAS_LEAD_MS
@@ -4995,9 +5130,9 @@ local function _ajustarDelay(delta)
     CFG.COSTAS_LEAD_MS = math.min(v, 400)
     CostasCtrl.delayLbl.Text = CFG.COSTAS_LEAD_MS < 0 and "AUTO" or tostring(CFG.COSTAS_LEAD_MS)
 end
-CostasCtrl.delayMenos.MouseButton1Click:Connect(function() _ajustarDelay(-20) end)
-CostasCtrl.delayMais.MouseButton1Click:Connect(function()  _ajustarDelay(20)  end)
-CostasButton.MouseButton1Click:Connect(function()
+GS.conectar(CostasCtrl.delayMenos.MouseButton1Click,function() _ajustarDelay(-20) end)
+GS.conectar(CostasCtrl.delayMais.MouseButton1Click,function()  _ajustarDelay(20)  end)
+GS.conectar(CostasButton.MouseButton1Click,function()
     if C.carregadoPor and C.costas then _pararDeSerCarregado() return end
     if C.carregando or C.carregadoPor then soltarCarregar() end
     local alvo = localizarJogadorPorNome(CarregarNomeInput.Text) or _maisPerto()
@@ -5007,8 +5142,8 @@ CostasButton.MouseButton1Click:Connect(function()
     end
     _comecarSerCarregado(alvo, true)
 end)
-CarregarSegurarButton.MouseButton1Up:Connect(_soltarSegurar)
-CarregarSegurarButton.MouseLeave:Connect(_soltarSegurar)
+GS.conectar(CarregarSegurarButton.MouseButton1Up,_soltarSegurar)
+GS.conectar(CarregarSegurarButton.MouseLeave,_soltarSegurar)
 
 GS.limparCarregar = function()
     soltarCarregar()
@@ -5027,21 +5162,21 @@ local function atualizar()
     local selecionado = string.lower(CarregarNomeInput.Text or "")
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and not linhas[player] then
-            local b = Instance.new("TextButton", CarregarListaFrame)
+            local b = GS.novaInstancia("TextButton", CarregarListaFrame)
             b.Size = UDim2.new(1, 0, 0, 34); b.BorderSizePixel = 0; b.Text = ""
-            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
-            local foto = Instance.new("ImageLabel", b)
+            GS.novaInstancia("UICorner", b).CornerRadius = UDim.new(0, 6)
+            local foto = GS.novaInstancia("ImageLabel", b)
             foto.Size = UDim2.new(0, 26, 0, 26); foto.Position = UDim2.new(0, 4, 0.5, -13)
             foto.BackgroundColor3 = Color3.fromRGB(36, 36, 42); foto.BorderSizePixel = 0
             foto.Image = "rbxthumb://type=AvatarHeadShot&id=" .. player.UserId .. "&w=48&h=48"
-            Instance.new("UICorner", foto).CornerRadius = UDim.new(1, 0)
-            local nome = Instance.new("TextLabel", b)
+            GS.novaInstancia("UICorner", foto).CornerRadius = UDim.new(1, 0)
+            local nome = GS.novaInstancia("TextLabel", b)
             nome.Name = "Nome"
             nome.Size = UDim2.new(1, -40, 1, 0); nome.Position = UDim2.new(0, 36, 0, 0)
             nome.BackgroundTransparency = 1; nome.Font = Enum.Font.GothamBold; nome.TextSize = 12
             nome.TextXAlignment = Enum.TextXAlignment.Left; nome.TextTruncate = Enum.TextTruncate.AtEnd
             nome.Text = player.DisplayName .. "  (@" .. player.Name .. ")"
-            b.MouseButton1Click:Connect(function()
+            GS.conectar(b.MouseButton1Click,function()
                 CarregarNomeInput.Text = player.Name
                 atualizar()
             end)
@@ -5058,9 +5193,9 @@ local function atualizar()
         end
     end
 end
-Players.PlayerAdded:Connect(function() task.wait(0.5) pcall(atualizar) end)
-Players.PlayerRemoving:Connect(function() task.wait() pcall(atualizar) end)
-CarregarNomeInput:GetPropertyChangedSignal("Text"):Connect(function() pcall(atualizar) end)
+GS.conectar(Players.PlayerAdded,function() task.wait(0.5) pcall(atualizar) end)
+GS.conectar(Players.PlayerRemoving,function() task.wait() pcall(atualizar) end)
+GS.conectar(CarregarNomeInput:GetPropertyChangedSignal("Text"),function() pcall(atualizar) end)
 pcall(atualizar)
 end  -- fim LISTA DO CARREGAR
 
@@ -5133,7 +5268,7 @@ local function regenerar()
     pcall(function() if GS.limparCarregar then GS.limparCarregar() end end)
     pcall(function() if flyAtivado then alternarFly() end end)
 
-    task.spawn(function()
+    GS.spawn(function()
         bypassHealthBlock = true
         pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, true) end)
         pcall(function() hum.BreakJointsOnDeath = true end)
@@ -5166,7 +5301,7 @@ local function regenerar()
         end
         informar("RENASCIDO · no ponto de spawn")
         R.morrendo = false
-        task.delay(2, function()
+        GS.delay(2, function()
             if ScreenGui.Parent and not R.morrendo then
                 RegenUI.regenerar.Text = "RENASCER"
             end
@@ -5176,7 +5311,7 @@ end
 GS.renascer = regenerar
 
 -- Grava o ultimo chao seguro + anti-void
-task.spawn(function()
+GS.spawn(function()
     while ScreenGui and ScreenGui.Parent do
         pcall(function()
             local _, root, hum = _rootEHum()
@@ -5197,16 +5332,16 @@ task.spawn(function()
     end
 end)
 
-RegenUI.regenerar.MouseButton1Click:Connect(regenerar)
-RegenUI.voltar.MouseButton1Click:Connect(function()
+GS.conectar(RegenUI.regenerar.MouseButton1Click,regenerar)
+GS.conectar(RegenUI.voltar.MouseButton1Click,function()
     RegenUI.voltar.Text = voltarProChao() and "⬆ VOLTEI!" or "⬆ SEM CHÃO SALVO"
-    task.delay(1.2, function() pcall(function() RegenUI.voltar.Text = "⬆ VOLTAR PRO ÚLTIMO CHÃO (TECLA L)" end) end)
+    GS.delay(1.2, function() pcall(function() RegenUI.voltar.Text = "⬆ VOLTAR PRO ÚLTIMO CHÃO (TECLA L)" end) end)
 end)
-RegenUI.antiVoid.MouseButton1Click:Connect(function()
+GS.conectar(RegenUI.antiVoid.MouseButton1Click,function()
     R.antiVoid = not R.antiVoid
     RegenUI.antiVoid.Text = R.antiVoid and "ANTI-VOID: ON" or "ANTI-VOID: OFF"
 end)
-UserInputService.InputBegan:Connect(function(input, gp)
+GS.conectar(UserInputService.InputBegan,function(input, gp)
     if gp or escutandoTecla or UserInputService:GetFocusedTextBox()
         or (GS.retornoSeguro and GS.retornoSeguro.escolhendo) then return end
     if input.KeyCode == Enum.KeyCode.K then
@@ -5218,88 +5353,102 @@ end  -- fim REGENERAR
 -- ═══════════════════════════════════
 --   EVENTOS DE CLIQUE
 -- ═══════════════════════════════════
-SpeedUpButton.MouseButton1Click:Connect(function()
+GS.conectar(SpeedUpButton.MouseButton1Click,function()
     velocidadeCustomizada = math.min(800, velocidadeCustomizada + (velocidadeCustomizada < 100 and 10 or 50))
     SpeedLabel.Text = "VEL: " .. tostring(velocidadeCustomizada)
 end)
-SpeedDownButton.MouseButton1Click:Connect(function()
+GS.conectar(SpeedDownButton.MouseButton1Click,function()
     velocidadeCustomizada = math.max(16, velocidadeCustomizada - (velocidadeCustomizada <= 100 and 10 or 50))
     SpeedLabel.Text = "VEL: " .. tostring(velocidadeCustomizada)
 end)
-FlyUpButton.MouseButton1Click:Connect(function()
+GS.conectar(FlyUpButton.MouseButton1Click,function()
     velocidadeVoo = math.min(300, velocidadeVoo + 25)
     FlyLabel.Text = "VOO: " .. tostring(velocidadeVoo)
 end)
-FlyDownButton.MouseButton1Click:Connect(function()
+GS.conectar(FlyDownButton.MouseButton1Click,function()
     velocidadeVoo = math.max(10, velocidadeVoo - 25)
     FlyLabel.Text = "VOO: " .. tostring(velocidadeVoo)
 end)
 
-UnloadButton.MouseButton1Click:Connect(function()
-    pcall(function() aplicarTamanho(1) end)
-    if noclipConnection  then noclipConnection:Disconnect() end
-    if GS.noclipConn2    then GS.noclipConn2:Disconnect() end
-    for part in pairs(GS.noclipOrig or {}) do pcall(function() if part.Parent then part.CanCollide = true end end) end
-    if speedConnection   then speedConnection:Disconnect() end
-    if speedBodyVelocity then speedBodyVelocity:Destroy() speedBodyVelocity = nil end
-    if flyConnection     then flyConnection:Disconnect() end
-    if ghostConnection   then ghostConnection:Disconnect() end
-    if ghostHealthConn   then ghostHealthConn:Disconnect() end
-    if antiTravaConnection then antiTravaConnection:Disconnect() end
-    if antiTravaGyro     then antiTravaGyro:Destroy() antiTravaGyro = nil end
-    if puxarConnection   then puxarConnection:Disconnect() end
-    _limparPuxar()
-    _limparPuxarUm()
-    if derrubaXConn      then derrubaXConn:Disconnect() derrubaXConn = nil end
-    if bikeAntiQuedaConn    then bikeAntiQuedaConn:Disconnect()    bikeAntiQuedaConn    = nil end
-    if bikeAntiQuedaKeyConn then bikeAntiQuedaKeyConn:Disconnect() bikeAntiQuedaKeyConn = nil end
-    if bikeGyroAntiQueda and bikeGyroAntiQueda.Parent then pcall(function() bikeGyroAntiQueda:Destroy() end) end
-    GS.pararCorGlobal()
-    GS.limparCarregar()
-    _limparParedePreview()
-    for _, p in ipairs(paredesCriadas) do
-        if p and p.Parent then pcall(function() p:Destroy() end) end
+function GS.encerrar()
+    if not GS.pararRecursos() then return end
+    -- Cada etapa e isolada: uma funcao ausente nao interrompe as demais.
+    GS.emLimpeza=true
+    for _,nome in ipairs({"pararFarmaFrascos","pararFarmaLucky","pararFarmaTesouro","pararFarmaNome",
+        "pararCorGlobal","limparCarregar","limparESP"}) do
+        if type(GS[nome])=="function" then GS.tentar(nome,GS[nome]) end
     end
-    paredesCriadas = {}
-    GS.limparESP()
-    if bodyVelocity then bodyVelocity:Destroy() end
-    if bodyGyro     then bodyGyro:Destroy() end
-    local character = LocalPlayer.Character
-    local humanoid  = character and character:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        humanoid.WalkSpeed = 16
-        humanoid.PlatformStand = false
-        humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, true)
-        for _, estado in ipairs(ESTADOS_QUEDA) do
-            humanoid:SetStateEnabled(estado, true)
+    GS.tentar("hooks",removerHooks)
+    if GS.valeRush then
+        GS.tentar("Vale Rush camera",GS.valeRush.visao,false)
+        GS.tentar("Vale Rush mapa",GS.valeRush.otimizar,false)
+        GS.tentar("Vale Rush box",GS.valeRush.boxes,false)
+    end
+    GS.tentar("tamanho",function() aplicarTamanho(1) end)
+    noclipAtivado=false; speedAtivado=false; flyAtivado=false
+    fullbrightAtivado=false; ghostAtivado=false
+    GS.farmaDirecao=nil
+    GS.tentar("puxar",_limparPuxar)
+    GS.tentar("puxar jogador",_limparPuxarUm)
+    GS.tentar("parede preview",_limparParedePreview)
+    for _,p in ipairs(paredesCriadas) do GS.tentar("parede",function() p:Destroy() end) end
+    paredesCriadas={}
+    for part,original in pairs(GS.noclipOrig or {}) do
+        GS.tentar("colisao",function()
+            if part.Parent then part.CanCollide=type(original)=="boolean" and original or true end
+        end)
+    end
+    GS.tentar("personagem",function()
+        local char=LocalPlayer.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        if hum then
+            local original=GS.humanoides[hum]
+            if original then
+                for prop,valor in pairs(original.props) do GS.tentar(prop,function() hum[prop]=valor end) end
+                for estado,ativo in pairs(original.estados) do GS.tentar("estado",function() hum:SetStateEnabled(estado,ativo) end) end
+            else
+                hum.PlatformStand=false
+                hum.WalkSpeed=16
+            end
         end
+        if root then root.AssemblyLinearVelocity=Vector3.zero; root.AssemblyAngularVelocity=Vector3.zero end
+    end)
+    GS.tentar("iluminacao",function()
+        Lighting.Ambient=originalAmbient; Lighting.OutdoorAmbient=originalOutdoorAmbient
+        Lighting.Brightness=originalBrightness; Lighting.FogEnd=originalFog
+    end)
+    GS.emLimpeza=false
+    GS.finalizarRecursos()
+    if GS.ambiente and GS.ambiente.__GringoEncerrar==GS.encerrar then
+        GS.ambiente.__GringoEncerrar=nil
     end
-    Lighting.Ambient = originalAmbient
-    Lighting.OutdoorAmbient = originalOutdoorAmbient
-    Lighting.Brightness = originalBrightness
-    Lighting.FogEnd = originalFog
-    if localLight then localLight:Destroy() end
-    ScreenGui:Destroy()
+end
+GS.conectar(UnloadButton.MouseButton1Click,GS.encerrar)
+GS.conectar(ScreenGui.Destroying,GS.encerrar)
+pcall(function()
+    GS.ambiente=type(getgenv)=="function" and getgenv() or _G
+    GS.ambiente.__GringoEncerrar=GS.encerrar
 end)
 
-NoclipButton.MouseButton1Click:Connect(alternarNoclip)
-BrightnessButton.MouseButton1Click:Connect(alternarBrilho)
-SpeedButton.MouseButton1Click:Connect(alternarSpeed)
-FlyButton.MouseButton1Click:Connect(alternarFly)
-TPButton.MouseButton1Click:Connect(executarTeleporte)
-TPNameInput:GetPropertyChangedSignal("Text"):Connect(atualizarListaTP)
-GhostButton.MouseButton1Click:Connect(alternarGhost)
-EspButton.MouseButton1Click:Connect(GS.alternarEsp)
-AntiTravaButton.MouseButton1Click:Connect(alternarAntiTrava)
-PuxarButton.MouseButton1Click:Connect(alternarPuxar)
-GS.dancaBtn.MouseButton1Click:Connect(GS.alternarDanca)
-PuxarUmButton.MouseButton1Click:Connect(alternarPuxarUm)
-TamanhoSlider.Changed:Connect(aplicarTamanho)
-DerrubaButton.MouseButton1Click:Connect(alternarDerruba)
-BikeAntiQuedaButton.MouseButton1Click:Connect(alternarBikeAntiQueda)
-ParedeButton.MouseButton1Click:Connect(alternarParede)
-CorAplicarButton.MouseButton1Click:Connect(GS.aplicarCorGlobal)
-CorGlobalButton.MouseButton1Click:Connect(GS.alternarCorGlobal)
+GS.conectar(NoclipButton.MouseButton1Click,alternarNoclip)
+GS.conectar(BrightnessButton.MouseButton1Click,alternarBrilho)
+GS.conectar(SpeedButton.MouseButton1Click,alternarSpeed)
+GS.conectar(FlyButton.MouseButton1Click,alternarFly)
+GS.conectar(TPButton.MouseButton1Click,executarTeleporte)
+GS.conectar(TPNameInput:GetPropertyChangedSignal("Text"),atualizarListaTP)
+GS.conectar(GhostButton.MouseButton1Click,alternarGhost)
+GS.conectar(EspButton.MouseButton1Click,GS.alternarEsp)
+GS.conectar(AntiTravaButton.MouseButton1Click,alternarAntiTrava)
+GS.conectar(PuxarButton.MouseButton1Click,alternarPuxar)
+GS.conectar(GS.dancaBtn.MouseButton1Click,GS.alternarDanca)
+GS.conectar(PuxarUmButton.MouseButton1Click,alternarPuxarUm)
+GS.conectar(TamanhoSlider.Changed,aplicarTamanho)
+GS.conectar(DerrubaButton.MouseButton1Click,alternarDerruba)
+GS.conectar(BikeAntiQuedaButton.MouseButton1Click,alternarBikeAntiQueda)
+GS.conectar(ParedeButton.MouseButton1Click,alternarParede)
+GS.conectar(CorAplicarButton.MouseButton1Click,GS.aplicarCorGlobal)
+GS.conectar(CorGlobalButton.MouseButton1Click,GS.alternarCorGlobal)
 
 -- ═══════════════════════════════════════════════════════════════
 --   ABA COMBATE — CONECTAR + AIMBOT (4 MODOS) + ESP
@@ -5319,7 +5468,7 @@ GS.ehAmigo = function(plr)
     local v = GS.amigos[plr.UserId]
     if v == nil then
         GS.amigos[plr.UserId] = "?"
-        task.spawn(function()
+        GS.spawn(function()
             local ok, sim = pcall(function() return LocalPlayer:IsFriendsWith(plr.UserId) end)
             GS.amigos[plr.UserId] = (ok and sim) and true or false
         end)
@@ -5328,7 +5477,7 @@ GS.ehAmigo = function(plr)
     return v ~= false
 end
 for _, p in ipairs(Players:GetPlayers()) do GS.ehAmigo(p) end
-Players.PlayerAdded:Connect(function(p) GS.ehAmigo(p) end)
+GS.conectar(Players.PlayerAdded,function(p) GS.ehAmigo(p) end)
 
 -- DONO DO BONECO: personagem normal OU boneco clonado com o nome do player
 -- (tem jogo que clona o personagem e GetPlayerFromCharacter devolve nil:
@@ -5389,26 +5538,26 @@ GS.iniciarCombate = function()
     status.AutoButtonColor = false; status.TextColor3 = T.dim
     local btnConectar = U.acao(painel, "CONECTAR AO JOGO", "🔌", 3)
 
-    local conteudo = Instance.new("Frame", painel)
+    local conteudo = GS.novaInstancia("Frame", painel)
     conteudo.Size = UDim2.new(1,0,0,1); conteudo.AutomaticSize = Enum.AutomaticSize.Y
     conteudo.BackgroundTransparency = 1; conteudo.LayoutOrder = 4; conteudo.Visible = false
     do
-        local l = Instance.new("UIListLayout", conteudo); l.SortOrder = Enum.SortOrder.LayoutOrder
+        local l = GS.novaInstancia("UIListLayout", conteudo); l.SortOrder = Enum.SortOrder.LayoutOrder
         l.Padding = UDim.new(0,8); l.HorizontalAlignment = Enum.HorizontalAlignment.Center
     end
 
     U.sec(conteudo, "AIMBOT", "🎯", 1)
     local togAim = U.tog(conteudo, "AIMBOT", 2)
 
-    local grade = Instance.new("Frame", conteudo)
+    local grade = GS.novaInstancia("Frame", conteudo)
     grade.Size = UDim2.new(1,0,0,36); grade.BackgroundTransparency = 1; grade.LayoutOrder = 3
     do
-        local gl = Instance.new("UIGridLayout", grade)
+        local gl = GS.novaInstancia("UIGridLayout", grade)
         gl.CellSize = UDim2.new(0.25,-6,1,0); gl.CellPadding = UDim2.new(0,8,0,0)
         gl.SortOrder = Enum.SortOrder.LayoutOrder
     end
 
-    local descModo = Instance.new("TextLabel", conteudo)
+    local descModo = GS.novaInstancia("TextLabel", conteudo)
     descModo.Size = UDim2.new(1,0,0,16); descModo.AutomaticSize = Enum.AutomaticSize.Y
     descModo.BackgroundTransparency = 1; descModo.Font = Enum.Font.Gotham; descModo.TextSize = 11
     descModo.TextColor3 = T.mute; descModo.TextWrapped = true
@@ -5423,11 +5572,11 @@ GS.iniciarCombate = function()
         descModo.Text = MODOS[C.modo].desc
     end
     for i, nome in ipairs(ORDEM_MODOS) do
-        local b = Instance.new("TextButton", grade)
+        local b = GS.novaInstancia("TextButton", grade)
         b.Text = nome; b.Font = Enum.Font.GothamBold; b.TextSize = 11; b.AutoButtonColor = false
         b.BackgroundColor3 = T.card; b.TextColor3 = T.dim; b.BorderSizePixel = 0; b.LayoutOrder = i
         U.mkC(9, b); U.mkS(1, T.stroke, b); U.press(b)
-        b.MouseButton1Click:Connect(function()
+        GS.conectar(b.MouseButton1Click,function()
             C.modo = nome; C.alvoAtual = nil
             pintarModos()
             GS.toast("🎯  Modo " .. nome, true)
@@ -5490,7 +5639,7 @@ GS.iniciarCombate = function()
 
     -- ── ESP ─────────────────────────────────────────────────────
     local function novoFrame(pai, cor, z)
-        local f = Instance.new("Frame")
+        local f = GS.novaInstancia("Frame")
         f.BorderSizePixel = 0; f.BackgroundColor3 = cor; f.ZIndex = z or 1; f.Visible = false
         f.Parent = pai
         return f
@@ -5499,9 +5648,9 @@ GS.iniciarCombate = function()
     local function criarESP(h)
         local e = {}
         e.sombra = novoFrame(camada, Color3.new(0,0,0), 1); e.sombra.BackgroundTransparency = 1
-        local s1 = Instance.new("UIStroke", e.sombra); s1.Thickness = 3.5; s1.Color = Color3.new(0,0,0); s1.Transparency = 0.45
+        local s1 = GS.novaInstancia("UIStroke", e.sombra); s1.Thickness = 3.5; s1.Color = Color3.new(0,0,0); s1.Transparency = 0.45
         e.box = novoFrame(camada, Color3.new(1,1,1), 2); e.box.BackgroundTransparency = 1
-        e.boxStroke = Instance.new("UIStroke", e.box); e.boxStroke.Thickness = 1.5
+        e.boxStroke = GS.novaInstancia("UIStroke", e.box); e.boxStroke.Thickness = 1.5
 
         e.linha = novoFrame(camada, Color3.new(1,1,1), 2)
         e.linha.AnchorPoint = Vector2.new(0.5,0.5); e.linha.BackgroundTransparency = 0.15
@@ -5510,7 +5659,7 @@ GS.iniciarCombate = function()
         e.vida = novoFrame(e.vidaFundo, Color3.new(0,1,0), 3); e.vida.Visible = true
         e.vida.AnchorPoint = Vector2.new(0,1); e.vida.Position = UDim2.new(0,1,1,-1)
 
-        e.nome = Instance.new("TextLabel")
+        e.nome = GS.novaInstancia("TextLabel")
         e.nome.BackgroundTransparency = 1; e.nome.Font = Enum.Font.GothamBold; e.nome.TextSize = 12
         e.nome.TextColor3 = Color3.new(1,1,1); e.nome.TextStrokeTransparency = 0.3
         e.nome.AnchorPoint = Vector2.new(0.5,1); e.nome.Size = UDim2.fromOffset(220,14)
@@ -5689,7 +5838,7 @@ GS.iniciarCombate = function()
         C.conectado = false; C.aimbot = false; C.esp = false; C.alvoAtual = nil
     end
     GS.limparCombate = limpar
-    ScreenGui.Destroying:Connect(limpar)
+    GS.conectar(ScreenGui.Destroying,limpar)
 
     -- ── Conectar ────────────────────────────────────────────────
     local function conectar(nomeJogo)
@@ -5699,20 +5848,20 @@ GS.iniciarCombate = function()
         btnConectar.Visible = false
         conteudo.Visible = true
 
-        camada = Instance.new("Frame")
+        camada = GS.novaInstancia("Frame")
         camada.Name = "GringoESP"; camada.Size = UDim2.new(1,0,1,0)
         camada.BackgroundTransparency = 1; camada.ZIndex = 0; camada.Parent = ScreenGui
 
-        circuloFov = Instance.new("Frame", camada)
+        circuloFov = GS.novaInstancia("Frame", camada)
         circuloFov.AnchorPoint = Vector2.new(0.5,0.5); circuloFov.BackgroundTransparency = 1
         circuloFov.Visible = false; U.redondo(circuloFov)
-        local st = Instance.new("UIStroke", circuloFov); st.Thickness = 1; st.Color = Color3.new(1,1,1); st.Transparency = 0.4
+        local st = GS.novaInstancia("UIStroke", circuloFov); st.Thickness = 1; st.Color = Color3.new(1,1,1); st.Transparency = 0.4
 
         for _, d in ipairs(workspace:GetDescendants()) do registrar(d) end
-        table.insert(C.conns, workspace.DescendantAdded:Connect(registrar))
+        table.insert(C.conns, GS.conectar(workspace.DescendantAdded,registrar))
 
         pcall(function() RunService:UnbindFromRenderStep("GringoCombate") end)
-        RunService:BindToRenderStep("GringoCombate", Enum.RenderPriority.Camera.Value + 1, function(dt)
+        GS.bindRender(RunService,"GringoCombate", Enum.RenderPriority.Camera.Value + 1, function(dt)
             local ok, err = pcall(passo, dt)
             if not ok and not C.avisou then
                 C.avisou = true
@@ -5723,11 +5872,11 @@ GS.iniciarCombate = function()
         GS.toast("🔌  Conectado: " .. nomeJogo, true)
     end
 
-    btnConectar.MouseButton1Click:Connect(function()
+    GS.conectar(btnConectar.MouseButton1Click,function()
         if C.conectado or C.conectando then return end
         C.conectando = true
         status.Text = "STATUS: CONECTANDO..."; status.TextColor3 = T.dim
-        task.spawn(function()
+        GS.spawn(function()
             local nome = "JOGO"
             local ok, info = pcall(function() return MarketplaceService:GetProductInfo(game.PlaceId) end)
             if ok and type(info) == "table" and type(info.Name) == "string" then nome = info.Name end
@@ -5738,12 +5887,12 @@ GS.iniciarCombate = function()
         end)
     end)
 
-    togAim.MouseButton1Click:Connect(function()
+    GS.conectar(togAim.MouseButton1Click,function()
         C.aimbot = not C.aimbot
         if not C.aimbot then C.alvoAtual = nil end
         togAim.Text = C.aimbot and "AIMBOT: ON" or "AIMBOT: OFF"
     end)
-    togEsp.MouseButton1Click:Connect(function()
+    GS.conectar(togEsp.MouseButton1Click,function()
         C.esp = not C.esp
         togEsp.Text = C.esp and "ESP: ON" or "ESP: OFF"
     end)
@@ -5882,18 +6031,18 @@ GS.iniciarRastreio = function()
     local function criarItem(alvo, cat, rotulo)
         local parte = parteDe(alvo)
         if not parte then return end
-        local g = Instance.new("BillboardGui")
+        local g = GS.novaInstancia("BillboardGui")
         g.AlwaysOnTop = true; g.Size = UDim2.fromOffset(180, 32); g.StudsOffset = Vector3.new(0, 1.5, 0)
         g.MaxDistance = math.huge; g.LightInfluence = 0; g.Adornee = parte; g.Enabled = false
-        local bg = Instance.new("Frame", g)
+        local bg = GS.novaInstancia("Frame", g)
         bg.Size = UDim2.new(1, 0, 1, 0); bg.BackgroundColor3 = Color3.new(0, 0, 0)
         bg.BackgroundTransparency = 0.45; bg.BorderSizePixel = 0
-        Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 5)
-        local barra = Instance.new("Frame", bg)
+        GS.novaInstancia("UICorner", bg).CornerRadius = UDim.new(0, 5)
+        local barra = GS.novaInstancia("Frame", bg)
         barra.Size = UDim2.new(0, 3, 1, -8); barra.Position = UDim2.new(0, 4, 0, 4)
         barra.BackgroundColor3 = cat.cor; barra.BorderSizePixel = 0
         local function lbl(y, h, fonte, tam, cor)
-            local l = Instance.new("TextLabel", bg)
+            local l = GS.novaInstancia("TextLabel", bg)
             l.Size = UDim2.new(1, -16, 0, h); l.Position = UDim2.new(0, 12, 0, y)
             l.BackgroundTransparency = 1; l.Font = fonte; l.TextSize = tam; l.TextColor3 = cor
             l.TextStrokeTransparency = 0.4; l.TextXAlignment = Enum.TextXAlignment.Left
@@ -5974,14 +6123,14 @@ GS.iniciarRastreio = function()
     end
 
     local function ligar()
-        R.gui = Instance.new("ScreenGui")
+        R.gui = GS.novaInstancia("ScreenGui")
         R.gui.Name = "GringoItens"; R.gui.ResetOnSpawn = false; R.gui.DisplayOrder = 97
         R.gui.Parent = GS.pai
 
-        table.insert(R.conns, workspace.DescendantAdded:Connect(function(obj)
-            task.defer(function() pcall(adicionar, obj) end)
+        table.insert(R.conns, GS.conectar(workspace.DescendantAdded,function(obj)
+            GS.defer(function() pcall(adicionar, obj) end)
         end))
-        table.insert(R.conns, RunService.Heartbeat:Connect(function(dt)
+        table.insert(R.conns, GS.conectar(RunService.Heartbeat,function(dt)
             R.t = R.t + dt
             if R.t < 0.2 then return end
             R.t = 0
@@ -5992,7 +6141,7 @@ GS.iniciarRastreio = function()
         -- varredura inicial em pedacos de 2500 objetos por frame
         local guiAtual = R.gui
         R.varrendo = true
-        task.spawn(function()
+        GS.spawn(function()
             local todos = workspace:GetDescendants()
             for i, obj in ipairs(todos) do
                 if R.gui ~= guiAtual then return end
@@ -6003,22 +6152,23 @@ GS.iniciarRastreio = function()
         end)
     end
 
-    togItens.MouseButton1Click:Connect(function()
+    GS.conectar(togItens.MouseButton1Click,function()
         R.ativo = not R.ativo
         togItens.Text = R.ativo and "ESP ITENS: ON" or "ESP ITENS: OFF"
         if R.ativo then ligar() else desligar() end
     end)
-    togInter.MouseButton1Click:Connect(function()
+    GS.conectar(togInter.MouseButton1Click,function()
         R.interagir = not R.interagir
         togInter.Text = R.interagir and "INTERAGÍVEIS: ON" or "INTERAGÍVEIS: OFF"
     end)
-    ScreenGui.Destroying:Connect(desligar)
+    GS.conectar(ScreenGui.Destroying,desligar)
 end
 GS.rodar("Rastreio", GS.iniciarRastreio, GS.painelRastrear)
 
 -- ═══════════════════════════════════════════════════════════════
 --   FARMAR VIBES — coleta local para playtest
 -- ═══════════════════════════════════════════════════════════════
+-- Vale Rush: controles visuais locais, reversiveis e independentes da coleta.
 -- Vale Rush: controles visuais locais, reversiveis e independentes da coleta.
 GS.iniciarValeRush = function()
     local U,painel=GS.ui,GS.painelValeRush
@@ -6029,16 +6179,17 @@ GS.iniciarValeRush = function()
     local jogador=Players.LocalPlayer
     local V={camera=false,leve=false,fov=95,epoch=0,busy=false,vivo=true,
         salvos=setmetatable({}, {__mode="k"}),cameras=setmetatable({}, {__mode="k"}),
-        conns={},fila={},pendentes=setmetatable({}, {__mode="k"}),head=1,mudancas=0}
+        conns={},fila={},pendentes=setmetatable({}, {__mode="k"}),head=1,mudancas=0,box=false,boxPlayers={},velocidades=setmetatable({}, {__mode="k"})}
     U.sec(painel,"VALE RUSH · HUSS VALLEY","gauge",1)
     local cameraBtn=U.tog(painel,"VISÃO AMPLIADA: OFF",2,"eye")
     local menos,mais,fovLabel=U.ctrl(painel,"Campo de visão (graus)",V.fov,3)
     local leveBtn=U.tog(painel,"MAPA LEVE: OFF",4,"zap")
-    local info=U.pequeno(painel,"Texturas simples · menos sombras e efeitos",nil,5,"info")
+    local info=U.pequeno(painel,"Modo intenso · gráficos mínimos · velocidade 31",nil,5,"info")
     info.AutoButtonColor=false
     local contador=U.pequeno(painel,"FPS: medindo...",nil,6,"gauge")
     contador.AutoButtonColor=false
-    local restaurarBtn=U.acao(painel,"RESTAURAR VISUAL ORIGINAL","refresh-cw",7)
+    local boxBtn=U.tog(painel,"BOX DOS JOGADORES: OFF",7,"users")
+    local restaurarBtn=U.acao(painel,"RESTAURAR TUDO","refresh-cw",8)
 
     -- Guarda apenas propriedades que conseguiu alterar; nada e destruido.
     function V.alterar(obj,prop,valor)
@@ -6069,7 +6220,6 @@ GS.iniciarValeRush = function()
     function V.aplicar(obj)
         if not V.leve or not obj.Parent or V.protegido(obj) then return end
         if obj:IsA("BasePart") then
-            if not obj.Anchored then return end
             -- Materiais tambem definem atrito: conserva a fisica efetiva do piso.
             local podeMaterial=obj.CustomPhysicalProperties~=nil
             if not podeMaterial then
@@ -6087,6 +6237,9 @@ GS.iniciarValeRush = function()
             end
         elseif obj:IsA("Decal") or obj:IsA("Texture") then
             V.alterar(obj,"Transparency",1)
+            V.alterar(obj,"Texture","")
+        elseif obj:IsA("SpecialMesh") then
+            V.alterar(obj,"TextureId","")
         elseif obj:IsA("SurfaceAppearance") then
             for _,prop in ipairs({"ColorMap","NormalMap","MetalnessMap","RoughnessMap"}) do
                 V.alterar(obj,prop,"")
@@ -6094,7 +6247,7 @@ GS.iniciarValeRush = function()
         elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
             or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
             V.alterar(obj,"Enabled",false)
-        elseif obj:IsA("BloomEffect") or obj:IsA("BlurEffect")
+        elseif obj:IsA("PostEffect") or obj:IsA("BloomEffect") or obj:IsA("BlurEffect")
             or obj:IsA("DepthOfFieldEffect") or obj:IsA("SunRaysEffect") then
             V.alterar(obj,"Enabled",false)
         elseif obj:IsA("Light") then
@@ -6111,6 +6264,128 @@ GS.iniciarValeRush = function()
         V.fila[#V.fila+1]=obj
     end
 
+    -- A velocidade usa WalkSpeed, sem deslocamentos extras de CFrame.
+    function V.velocidade(ativo)
+        if ativo then
+            local char=jogador.Character
+            local hum=char and char:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health>0 then
+                if not V.velocidades[hum] then V.velocidades[hum]={original=hum.WalkSpeed} end
+                if hum.WalkSpeed~=31 then hum.WalkSpeed=31 end
+            end
+        else
+            for hum,r in pairs(V.velocidades) do
+                pcall(function() if hum.WalkSpeed==31 then hum.WalkSpeed=r.original end end)
+            end
+            V.velocidades=setmetatable({}, {__mode="k"})
+            if V.speedAnterior and velocidadeCustomizada==31 then
+                velocidadeCustomizada=V.speedAnterior
+                if SpeedLabel then SpeedLabel.Text="VEL: "..velocidadeCustomizada end
+            end
+            V.speedAnterior=nil
+        end
+    end
+
+    function V.limparBox(player)
+        local r=V.boxPlayers[player]
+        if not r then return end
+        if r.visual then r.visual:Destroy(); r.visual=nil end
+    end
+    function V.desenharBox(player,char)
+        if not V.box or player==jogador then return end
+        local r=V.boxPlayers[player]
+        if not r then return end
+        V.limparBox(player)
+        r.char=char
+        if not char then return end
+        local root=char:FindFirstChild("HumanoidRootPart")
+        if not root then return end -- DescendantAdded tenta novamente quando carregar.
+        local pasta=GS.novaInstancia("Folder")
+        pasta.Name="ValeRushJogador"
+        pasta.Parent=V.boxFolder
+        local box=GS.novaInstancia("BoxHandleAdornment")
+        box.Name="Box"
+        box.Adornee=root
+        box.Size=Vector3.new(4,6,3)
+        box.CFrame=CFrame.new(0,0,0)
+        box.Color3=Color3.fromRGB(70,255,210)
+        box.Transparency=0.72
+        box.AlwaysOnTop=false
+        box.Parent=pasta
+        local brilho=GS.novaInstancia("Highlight")
+        brilho.Adornee=char
+        brilho.FillColor=Color3.fromRGB(70,255,210)
+        brilho.OutlineColor=Color3.fromRGB(210,255,245)
+        brilho.FillTransparency=0.9
+        brilho.OutlineTransparency=0
+        brilho.DepthMode=Enum.HighlightDepthMode.Occluded
+        brilho.Parent=pasta
+        local nome=GS.novaInstancia("BillboardGui")
+        nome.Adornee=root; nome.Size=UDim2.fromOffset(180,26)
+        nome.StudsOffset=Vector3.new(0,4,0)
+        nome.AlwaysOnTop=false; nome.LightInfluence=0; nome.MaxDistance=600
+        nome.Parent=pasta
+        local label=GS.novaInstancia("TextLabel")
+        label.Size=UDim2.fromScale(1,1); label.BackgroundTransparency=1
+        label.Text=player.DisplayName.." (@"..player.Name..")"
+        label.TextColor3=Color3.fromRGB(210,255,245)
+        label.TextStrokeTransparency=0.2; label.TextSize=13; label.Font=Enum.Font.GothamBold
+        label.Parent=nome
+        r.visual=pasta
+    end
+    function V.seguirPlayer(player)
+        if player==jogador or V.boxPlayers[player] then return end
+        local r={}; V.boxPlayers[player]=r
+        function r.ligarChar(char)
+            if r.desc then r.desc:Disconnect(); r.desc=nil end
+            if r.descRemove then r.descRemove:Disconnect(); r.descRemove=nil end
+            if char then
+                r.desc=GS.conectar(char.DescendantAdded,function(obj)
+                    if obj.Name=="HumanoidRootPart" then V.desenharBox(player,char) end
+                end)
+                r.descRemove=GS.conectar(char.DescendantRemoving,function(obj)
+                    if obj.Name=="HumanoidRootPart" then V.limparBox(player) end
+                end)
+            end
+            V.desenharBox(player,char)
+        end
+        r.add=GS.conectar(player.CharacterAdded,r.ligarChar)
+        r.remove=GS.conectar(player.CharacterRemoving,function()
+            V.limparBox(player)
+            if r.desc then r.desc:Disconnect(); r.desc=nil end
+            if r.descRemove then r.descRemove:Disconnect(); r.descRemove=nil end
+            r.char=nil
+        end)
+        r.ligarChar(player.Character)
+    end
+    function V.removerPlayer(player)
+        local r=V.boxPlayers[player]
+        if not r then return end
+        V.limparBox(player)
+        for _,nome in ipairs({"add","remove","desc","descRemove"}) do if r[nome] then r[nome]:Disconnect() end end
+        V.boxPlayers[player]=nil
+    end
+    function V.boxes(ativo)
+        if V.box==ativo then return end
+        V.box=ativo
+        if ativo then
+            V.boxFolder=GS.novaInstancia("Folder")
+            V.boxFolder.Name="ValeRushBoxes"; V.boxFolder.Parent=ScreenGui
+            V.playerAdd=GS.conectar(Players.PlayerAdded,V.seguirPlayer)
+            V.playerRemove=GS.conectar(Players.PlayerRemoving,V.removerPlayer)
+            for _,p in ipairs(Players:GetPlayers()) do V.seguirPlayer(p) end
+        else
+            if V.playerAdd then V.playerAdd:Disconnect(); V.playerAdd=nil end
+            if V.playerRemove then V.playerRemove:Disconnect(); V.playerRemove=nil end
+            local lista={}
+            for p in pairs(V.boxPlayers) do table.insert(lista,p) end
+            for _,p in ipairs(lista) do V.removerPlayer(p) end
+            if V.boxFolder then V.boxFolder:Destroy(); V.boxFolder=nil end
+        end
+        boxBtn.Text=ativo and "BOX DOS JOGADORES: ON" or "BOX DOS JOGADORES: OFF"
+        print("[DEBUG-BOT]: Vale Rush: box",ativo)
+    end
+
     function V.otimizar(ativo)
         if V.busy or V.leve==ativo then return end
         V.leve=ativo
@@ -6120,11 +6395,12 @@ GS.iniciarValeRush = function()
         V.fila={}; V.head=1
         V.pendentes=setmetatable({}, {__mode="k"})
         if not ativo then
+            V.velocidade(false)
             local salvos=V.salvos
             V.salvos=setmetatable({}, {__mode="k"})
             V.busy=true
             leveBtn.Text="MAPA LEVE: RESTAURANDO..."
-            task.spawn(function()
+            GS.spawn(function()
                 local n=0
                 for obj,props in pairs(salvos) do
                     for prop,r in pairs(props) do
@@ -6142,9 +6418,19 @@ GS.iniciarValeRush = function()
             end)
             return
         end
-        leveBtn.Text="MAPA LEVE: ON"
+        leveBtn.Text="MAPA LEVE INTENSO: ON · VEL 31"
+        if speedAtivado then
+            V.speedAnterior=velocidadeCustomizada
+            velocidadeCustomizada=31
+            if SpeedLabel then SpeedLabel.Text="VEL: 31" end
+        end
+        V.velocidade(true)
         V.mudancas=0
         V.alterar(Lighting,"GlobalShadows",false)
+        pcall(function()
+            local graficos=UserSettings():GetService("UserGameSettings")
+            V.alterar(graficos,"SavedQualityLevel",Enum.SavedQualitySetting.QualityLevel1)
+        end)
         local terreno=workspace:FindFirstChildOfClass("Terrain")
         if terreno then
             V.alterar(terreno,"Decoration",false)
@@ -6152,24 +6438,33 @@ GS.iniciarValeRush = function()
             V.alterar(terreno,"WaterWaveSpeed",0)
             V.alterar(terreno,"WaterReflectance",0)
         end
-        table.insert(V.conns,workspace.DescendantAdded:Connect(V.enfileirar))
-        table.insert(V.conns,Lighting.DescendantAdded:Connect(V.enfileirar))
+        table.insert(V.conns,GS.conectar(workspace.DescendantAdded,V.enfileirar))
+        table.insert(V.conns,GS.conectar(Lighting.DescendantAdded,V.enfileirar))
         local epoch=V.epoch
-        task.spawn(function()
+        GS.spawn(function()
             for _,raiz in ipairs({workspace,Lighting}) do
-                for _,obj in ipairs(raiz:GetDescendants()) do V.enfileirar(obj) end
+                for i,obj in ipairs(raiz:GetDescendants()) do
+                    if not V.leve or V.epoch~=epoch or not V.vivo then return end
+                    V.enfileirar(obj)
+                    if i%500==0 then task.wait() end
+                end
             end
             while V.leve and V.vivo and V.epoch==epoch do
-                local limite=math.min(#V.fila,V.head+99)
-                for i=V.head,limite do
-                    local obj=V.fila[i]
+                local inicio,feitos=os.clock(),0
+                while V.head<=#V.fila and feitos<100 do
+                    local obj=V.fila[V.head]
                     V.pendentes[obj]=nil
                     local ok,erro=pcall(V.aplicar,obj)
                     if not ok then warn("[DEBUG-BOT]: Vale Rush:",erro) end
+                    V.head=V.head+1; feitos=feitos+1
+                    if os.clock()-inicio>=0.002 then break end
                 end
-                V.head=limite+1
-                if V.head>#V.fila then V.fila={}; V.head=1 end
-                task.wait()
+                if V.head>#V.fila then
+                    V.fila={}; V.head=1
+                    task.wait(0.1)
+                else
+                    task.wait()
+                end
             end
         end)
         print("[DEBUG-BOT]: Vale Rush: otimizacao visual ativa")
@@ -6182,7 +6477,7 @@ GS.iniciarValeRush = function()
         if not V.cameras[camera] then V.cameras[camera]={original=camera.FieldOfView} end
         V.cameras[camera].aplicado=V.fov
         camera.FieldOfView=V.fov
-        V.fovConn=camera:GetPropertyChangedSignal("FieldOfView"):Connect(function()
+        V.fovConn=GS.conectar(camera:GetPropertyChangedSignal("FieldOfView"),function()
             if V.camera and camera.FieldOfView~=V.fov then camera.FieldOfView=V.fov end
         end)
     end
@@ -6204,30 +6499,33 @@ GS.iniciarValeRush = function()
         fovLabel.Text=tostring(V.fov)
         if V.camera then V.ligarCamera() end
     end
-    cameraBtn.MouseButton1Click:Connect(function() V.visao(not V.camera) end)
-    menos.MouseButton1Click:Connect(function() V.ajustar(-5) end)
-    mais.MouseButton1Click:Connect(function() V.ajustar(5) end)
-    leveBtn.MouseButton1Click:Connect(function() V.otimizar(not V.leve) end)
-    restaurarBtn.MouseButton1Click:Connect(function() V.visao(false); V.otimizar(false) end)
-    local cameraConn=workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    GS.conectar(cameraBtn.MouseButton1Click,function() V.visao(not V.camera) end)
+    GS.conectar(menos.MouseButton1Click,function() V.ajustar(-5) end)
+    GS.conectar(mais.MouseButton1Click,function() V.ajustar(5) end)
+    GS.conectar(leveBtn.MouseButton1Click,function() V.otimizar(not V.leve) end)
+    GS.conectar(boxBtn.MouseButton1Click,function() V.boxes(not V.box) end)
+    GS.conectar(restaurarBtn.MouseButton1Click,function() V.visao(false); V.otimizar(false); V.boxes(false) end)
+    local cameraConn=GS.conectar(workspace:GetPropertyChangedSignal("CurrentCamera"),function()
         V.ligarCamera()
         if V.leve and workspace.CurrentCamera then
             for _,obj in ipairs(workspace.CurrentCamera:GetDescendants()) do V.enfileirar(obj) end
         end
     end)
     local tempo,frames=0,0
-    local fpsConn=Run.RenderStepped:Connect(function(dt)
+    local fpsConn=GS.conectar(Run.RenderStepped,function(dt)
         tempo=tempo+dt; frames=frames+1
         if tempo>=0.5 then
+            if V.leve then V.velocidade(true) end
             contador.Text=string.format("FPS: %.0f · Alterações visuais: %d",frames/tempo,V.mudancas)
             tempo=0; frames=0
         end
     end)
-    ScreenGui.Destroying:Connect(function()
+    GS.conectar(ScreenGui.Destroying,function()
         V.vivo=false
         cameraConn:Disconnect(); fpsConn:Disconnect()
         V.visao(false)
         V.otimizar(false)
+        V.boxes(false)
     end)
     GS.valeRush=V
     print("[DEBUG-BOT]: Vale Rush: painel pronto")
@@ -6239,7 +6537,7 @@ GS.prepararTelaFarma = function()
     if not U or not painel then return end
     local layout=painel:FindFirstChildOfClass("UIListLayout")
     if layout then layout.Padding=UDim.new(0,6) end
-    local barra=Instance.new("Frame")
+    local barra=GS.novaInstancia("Frame")
     barra.Name="ModosFarma"
     barra.Size=UDim2.new(1,0,0,36)
     barra.LayoutOrder=-1
@@ -6257,17 +6555,17 @@ GS.prepararTelaFarma = function()
         if scroll and scroll:IsA("ScrollingFrame") then scroll.CanvasPosition=Vector2.zero end
     end
     for i,nome in ipairs(nomes) do
-        local tela=Instance.new("Frame")
+        local tela=GS.novaInstancia("Frame")
         tela.Name="Farma"..i
         tela.BackgroundTransparency=1
         tela.Size=UDim2.new(1,0,0,0)
         tela.AutomaticSize=Enum.AutomaticSize.Y
         tela.LayoutOrder=i
         tela.Parent=painel
-        local lista=Instance.new("UIListLayout",tela)
+        local lista=GS.novaInstancia("UIListLayout",tela)
         lista.Padding=UDim.new(0,6)
         lista.SortOrder=Enum.SortOrder.LayoutOrder
-        local botao=Instance.new("TextButton")
+        local botao=GS.novaInstancia("TextButton")
         botao.Size=UDim2.new(1/#nomes,-4,1,0)
         botao.Position=UDim2.new((i-1)/#nomes,2,0,0)
         botao.BackgroundColor3=U.T.on
@@ -6279,7 +6577,7 @@ GS.prepararTelaFarma = function()
         U.mkC(10,botao)
         telas[i]=tela
         botoes[i]=botao
-        botao.MouseButton1Click:Connect(function() selecionar(i) end)
+        GS.conectar(botao.MouseButton1Click,function() selecionar(i) end)
     end
     GS.painelFarmaFrascos=telas[1]
     GS.painelFarmaLucky=telas[2]
@@ -6317,9 +6615,9 @@ local Settings = {
 local LastSafeCFrame
 
 -- Criação do Painel Simples
-local ScreenGui = Instance.new("ScreenGui")
-local MainFrame = Instance.new("Frame")
-local ToggleButton = Instance.new("TextButton")
+local ScreenGui = GS.novaInstancia("ScreenGui")
+local MainFrame = GS.novaInstancia("Frame")
+local ToggleButton = GS.novaInstancia("TextButton")
 
 ScreenGui.Name = "NoclipPanel"
 ScreenGui.Parent = game.CoreGui
@@ -6400,7 +6698,7 @@ local function BindCharacter(character)
     if CapturarPersonagem then CapturarPersonagem(character) end
     print("[DEBUG-BOT]: Character bound")
 
-    task.spawn(function()
+    GS.spawn(function()
         while ModuloAtivo and character.Parent and LocalPlayer.Character == character do
             SaveSafePosition(character)
             RecoverFromVoid(character)
@@ -6414,9 +6712,9 @@ local function BindCharacter(character)
     end)
 end
 
-table.insert(Conexoes, ToggleButton.MouseButton1Click:Connect(ToggleNoclip))
+table.insert(Conexoes, GS.conectar(ToggleButton.MouseButton1Click,ToggleNoclip))
 
-local conexaoTecla = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+local conexaoTecla = GS.conectar(UserInputService.InputBegan,function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Settings.ToggleKey then
         ToggleNoclip()
@@ -6427,7 +6725,7 @@ if LocalPlayer.Character then
     BindCharacter(LocalPlayer.Character)
 end
 
-table.insert(Conexoes, LocalPlayer.CharacterAdded:Connect(BindCharacter))
+table.insert(Conexoes, GS.conectar(LocalPlayer.CharacterAdded,BindCharacter))
 
 print("[DEBUG-BOT]: Anti-void controller active")
     table.insert(Conexoes,conexaoTecla)
@@ -6442,7 +6740,7 @@ print("[DEBUG-BOT]: Anti-void controller active")
         for _,obj in ipairs(char:GetDescendants()) do guardarParte(obj) end
         if observados[char] then return end
         observados[char]=true
-        table.insert(Conexoes,char.DescendantAdded:Connect(function(obj)
+        table.insert(Conexoes,GS.conectar(char.DescendantAdded,function(obj)
             if next(donos) then guardarParte(obj) end
         end))
     end
@@ -6479,7 +6777,7 @@ print("[DEBUG-BOT]: Anti-void controller active")
             end
         end,
     }
-    table.insert(Conexoes,LocalPlayer.CharacterAdded:Connect(function(char)
+    table.insert(Conexoes,GS.conectar(LocalPlayer.CharacterAdded,function(char)
         if next(donos) then guardarPersonagem(char) end
     end))
     -- Reaproveita o mesmo botao do arquivo dentro da tela Farma.
@@ -6497,7 +6795,7 @@ print("[DEBUG-BOT]: Anti-void controller active")
     ToggleButton.Font=Enum.Font.GothamBold
     ToggleButton.TextSize=12
     GS.ui.mkC(9,ToggleButton)
-    local legenda=Instance.new("TextLabel",MainFrame)
+    local legenda=GS.novaInstancia("TextLabel",MainFrame)
     legenda.Size=UDim2.new(1,-180,1,0)
     legenda.Position=UDim2.fromOffset(14,0)
     legenda.BackgroundTransparency=1
@@ -6515,7 +6813,7 @@ print("[DEBUG-BOT]: Anti-void controller active")
     end
     UpdateUI()
     ScreenGui:Destroy()
-    guiPainel.Destroying:Connect(function()
+    GS.conectar(guiPainel.Destroying,function()
         ModuloAtivo=false
         Settings.Enabled=false
         Settings.AntiVoid=false
@@ -6593,7 +6891,7 @@ GS.iniciarFarma = function()
     status.AutoButtonColor = false
 
     local function texto(nome, altura, ordem)
-        local label = Instance.new("TextLabel")
+        local label = GS.novaInstancia("TextLabel")
         label.Name = nome
         label.Size = UDim2.new(1,-16,0,altura)
         label.LayoutOrder = ordem
@@ -6613,7 +6911,7 @@ GS.iniciarFarma = function()
     local historico = texto("HistoricoFarma", 140, 7)
     historico.Visible=false
     local detalhes=U.pequeno(painel,"MOSTRAR HISTÓRICO",nil,6.5,"info")
-    detalhes.MouseButton1Click:Connect(function()
+    GS.conectar(detalhes.MouseButton1Click,function()
         historico.Visible=not historico.Visible
         detalhes.Text=historico.Visible and "OCULTAR HISTÓRICO" or "MOSTRAR HISTÓRICO"
     end)
@@ -6684,7 +6982,7 @@ GS.iniciarFarma = function()
     end
 
     local function marcar(obj,p)
-        local gui = Instance.new("BillboardGui")
+        local gui = GS.novaInstancia("BillboardGui")
         gui.Name = "FarmaFrascoV4"
         gui.Adornee = p
         gui.Size = UDim2.fromOffset(168,36)
@@ -6694,7 +6992,7 @@ GS.iniciarFarma = function()
         gui.LightInfluence = 0
         gui.Enabled = false
         gui.Parent = R.gui
-        local label = Instance.new("TextLabel")
+        local label = GS.novaInstancia("TextLabel")
         label.Size = UDim2.fromScale(1,1)
         label.BackgroundColor3 = Color3.fromRGB(4,24,18)
         label.BackgroundTransparency = 0.18
@@ -6703,7 +7001,7 @@ GS.iniciarFarma = function()
         label.TextSize = 12
         label.TextWrapped = true
         label.Parent = gui
-        Instance.new("UICorner",label).CornerRadius = UDim.new(0,8)
+        GS.novaInstancia("UICorner",label).CornerRadius = UDim.new(0,8)
         return gui,label
     end
 
@@ -6763,7 +7061,7 @@ GS.iniciarFarma = function()
         for _, obj in ipairs(char:GetChildren()) do
             if obj:IsA("Tool") then R.ferramentas[obj] = true end
         end
-        table.insert(R.conns,char.ChildAdded:Connect(inventario))
+        table.insert(R.conns,GS.conectar(char.ChildAdded,inventario))
     end
 
     local function retirar(obj,it)
@@ -6852,7 +7150,7 @@ GS.iniciarFarma = function()
     end
 
     local function atualizarResumo(total)
-        status.Text = "V50.14 · " .. R.fase .. " · LOCALIZADOS: " .. total
+        status.Text = "V50.16 · " .. R.fase .. " · LOCALIZADOS: " .. total
         local limite = workspace.StreamingEnabled
             and "Streaming ativo: aparição no cliente não prova spawn no servidor."
             or "Streaming desligado: novas aparições são observações locais."
@@ -7346,7 +7644,7 @@ GS.iniciarFarma = function()
         local worker,token=s.worker,s.token
         s.batida=os.clock()
         s.workerPendente=true
-        task.spawn(function()
+        GS.spawn(function()
             if s.worker==worker and s.token==token then s.workerPendente=false end
             Nav.loopAtividade(g,a,token,worker)
         end)
@@ -7410,7 +7708,7 @@ GS.iniciarFarma = function()
         local ok,servico=pcall(function() return game:GetService("VirtualUser") end)
         s.servico=ok and servico or nil
         R.atividadeTexto="Entrada local iniciada · nao confirma aceitacao pelo motor"
-        s.conn=LocalPlayer.Idled:Connect(function(tempo)
+        s.conn=GS.conectar(LocalPlayer.Idled,function(tempo)
             if not s.ativo or s.token~=token then return end
             s.idleEventos=s.idleEventos+1
             s.ultimoIdle=os.clock()
@@ -7424,7 +7722,7 @@ GS.iniciarFarma = function()
             Nav.estadoAtividade("motor_sinalizou_AFK")
             Nav.pulsoAtividade(g,a,"Idled")
         end)
-        s.vigiaConn=RunService.Heartbeat:Connect(function()
+        s.vigiaConn=GS.conectar(RunService.Heartbeat,function()
             local ok,erro=pcall(Nav.vigiarAtividade,g,a,token)
             if not ok then
                 s.erroCanal=tostring(erro)
@@ -8031,7 +8329,7 @@ GS.iniciarFarma = function()
         local disparou = false
         Nav.estado.prompt = prompt
         Nav.estado.tokenPrompt = token
-        local conn = prompt.Triggered:Connect(function(player)
+        local conn = GS.conectar(prompt.Triggered,function(player)
             if player == LocalPlayer and Nav.vivo(ctx) then
                 disparou = true
             end
@@ -8824,7 +9122,7 @@ GS.iniciarFarma = function()
         m.proximaCarga=os.clock()+Nav.mundoCfg.intervaloCarga
         m.carregando=true
         local token=m.token
-        task.spawn(function()
+        GS.spawn(function()
             if Nav.mundo~=m or m.token~=token or not Nav.vivo(ctx) then
                 m.carregando=false
                 return
@@ -9115,7 +9413,7 @@ GS.iniciarFarma = function()
         if GS.noclipArquivo then GS.noclipArquivo.ativar("frascos") end
         autoBtn.Text = "AUTOMÁTICO: ON · VOO 500"
         registrar("AUTO","Patrulha em voo 500; rotas por altura, laterais, pouso e pulos.")
-        task.spawn(function()
+        GS.spawn(function()
             while autoVivo(g,a) do
                 local ok,err = pcall(function()
                     Nav.passo(g,a)
@@ -9145,7 +9443,7 @@ GS.iniciarFarma = function()
         R.inicial = true
         R.sujo = true
         R.ultimaPos = nil
-        R.gui = Instance.new("Folder")
+        R.gui = GS.novaInstancia("Folder")
         R.gui.Name = "FarmaMarcadores"
         R.gui.Parent = ScreenGui
         local g = R.geracao
@@ -9156,18 +9454,18 @@ GS.iniciarFarma = function()
             for _,obj in ipairs(backpack:GetChildren()) do
                 if obj:IsA("Tool") then R.ferramentas[obj]=true end
             end
-            table.insert(R.conns,backpack.ChildAdded:Connect(inventario))
+            table.insert(R.conns,GS.conectar(backpack.ChildAdded,inventario))
         end
         if LocalPlayer.Character then ligarInventario(LocalPlayer.Character) end
-        table.insert(R.conns,LocalPlayer.CharacterAdded:Connect(function(char)
+        table.insert(R.conns,GS.conectar(LocalPlayer.CharacterAdded,function(char)
             if mesmoCiclo(g) then ligarInventario(char) end
         end))
-        table.insert(R.conns,workspace.DescendantAdded:Connect(function(obj)
+        table.insert(R.conns,GS.conectar(workspace.DescendantAdded,function(obj)
             if not mesmoCiclo(g) then return end
             if R.observarMapa then R.observarMapa(obj) end
             R.sujo = true
             R.pendentes[obj] = os.clock()+1
-            task.defer(function()
+            GS.defer(function()
                 if mesmoCiclo(g) then
                     local ok,err=pcall(examinar,obj,g,R.inicial)
                     if not ok then warn("[DEBUG-BOT]: Registro:",err) end
@@ -9175,7 +9473,7 @@ GS.iniciarFarma = function()
             end)
         end))
         registrar("MONITOR","Ativo; somente PotionTemplate. Histórico não determina a regra do servidor.")
-        task.spawn(function()
+        GS.spawn(function()
             local ultima = 0
             while mesmoCiclo(g) do
                 local ok,err = pcall(function()
@@ -9224,10 +9522,10 @@ GS.iniciarFarma = function()
     end
 
     GS.pararFarmaFrascos = desligarAuto
-    monitorBtn.MouseButton1Click:Connect(function()
+    GS.conectar(monitorBtn.MouseButton1Click,function()
         if R.monitor then pararMonitor() else iniciarMonitor() end
     end)
-    autoBtn.MouseButton1Click:Connect(function()
+    GS.conectar(autoBtn.MouseButton1Click,function()
         if R.auto then
             desligarAuto()
         else
@@ -9235,7 +9533,7 @@ GS.iniciarFarma = function()
             iniciarAuto()
         end
     end)
-    ScreenGui.Destroying:Connect(function()
+    GS.conectar(ScreenGui.Destroying,function()
         R.destruindo = true
         pararMonitor()
     end)
@@ -9262,7 +9560,7 @@ GS.iniciarFarmaLucky = function()
     automatico:SetAttribute("Controlado",true)
     automatico.Text="AUTO LUCKY: OFF"
     local busca = U.acao(painel,"REFAZER BUSCA COMPLETA","scan-search",23)
-    local info = Instance.new("TextLabel")
+    local info = GS.novaInstancia("TextLabel")
     info.Size=UDim2.new(1,-16,0,130)
     info.LayoutOrder=24
     info.BackgroundTransparency=1
@@ -9361,7 +9659,7 @@ GS.iniciarFarmaLucky = function()
             if obj:IsDescendantOf(outro) then return end
             if outro:IsDescendantOf(obj) then it.gui:Destroy(); L.itens[outro]=nil end
         end
-        local gui=Instance.new("BillboardGui")
+        local gui=GS.novaInstancia("BillboardGui")
         gui.Name="LuckyLocal"
         gui.Adornee=base
         gui.Size=UDim2.fromOffset(174,38)
@@ -9370,7 +9668,7 @@ GS.iniciarFarmaLucky = function()
         gui.MaxDistance=0
         gui.Enabled=false
         gui.Parent=L.gui
-        local label=Instance.new("TextLabel")
+        local label=GS.novaInstancia("TextLabel")
         label.Size=UDim2.fromScale(1,1)
         label.BackgroundColor3=Color3.fromRGB(35,22,8)
         label.BackgroundTransparency=0.2
@@ -9379,7 +9677,7 @@ GS.iniciarFarmaLucky = function()
         label.Font=Enum.Font.GothamBold
         label.TextWrapped=true
         label.Parent=gui
-        Instance.new("UICorner",label).CornerRadius=UDim.new(0,8)
+        GS.novaInstancia("UICorner",label).CornerRadius=UDim.new(0,8)
         L.itens[obj]={base=base,gui=gui,label=label,prompt=prompt}
         print("[DEBUG-LUCKY]: Encontrado",obj:GetFullName())
     end
@@ -9488,7 +9786,7 @@ GS.iniciarFarmaLucky = function()
         if not hum or not prompt.Enabled then return false end
         if (root.Position-posPrompt(prompt,e.it.base)).Magnitude>prompt.MaxActivationDistance then return false end
         local disparou=false
-        local conn=prompt.Triggered:Connect(function(player)
+        local conn=GS.conectar(prompt.Triggered,function(player)
             if player==LocalPlayer and autoVivo(g,c) then
                 disparou=true
                 L.interacoes=L.interacoes+1
@@ -9656,29 +9954,29 @@ GS.iniciarFarmaLucky = function()
         L.geracao=L.geracao+1
         L.scanEm=0
         local g=L.geracao
-        L.gui=Instance.new("Folder")
+        L.gui=GS.novaInstancia("Folder")
         L.gui.Name="FarmaLuckyMarcadores"
         L.gui.Parent=ScreenGui
         detectar.Text="LUCKY BLOCKS: ON"
         L.fase="BUSCA COMPLETA"
-        table.insert(L.conns,workspace.DescendantAdded:Connect(function(obj)
+        table.insert(L.conns,GS.conectar(workspace.DescendantAdded,function(obj)
             if nomeLucky(obj.Name) or obj:IsA("ProximityPrompt") then
                 L.scanEm=0
-                task.defer(function()
+                GS.defer(function()
                     if not vivo(g) then return end
                     local ok,alvo,base,prompt=pcall(avaliar,obj)
                     if ok and alvo then adicionar(alvo,base,prompt) end
                 end)
             end
         end))
-        table.insert(L.conns,Chat.MessageReceived:Connect(function(msg)
+        table.insert(L.conns,GS.conectar(Chat.MessageReceived,function(msg)
             if nomeLucky(msg.Text) then
                 L.aviso="Chat: "..msg.Text:sub(1,160)
                 L.scanEm=0
                 print("[DEBUG-LUCKY]: Aviso observado; refazendo busca:",msg.Text)
             end
         end))
-        task.spawn(function()
+        GS.spawn(function()
             while vivo(g) do
                 local ok,err=pcall(function()
                     if os.clock()>=L.scanEm then varrer(g) end
@@ -9703,7 +10001,7 @@ GS.iniciarFarmaLucky = function()
         L.ciclo=L.ciclo+1
         local g,c=L.geracao,L.ciclo
         automatico.Text="AUTO LUCKY: ON · TELEPORTE"
-        task.spawn(function()
+        GS.spawn(function()
             while autoVivo(g,c) do
                 local ok,err=pcall(function()
                     local alvo
@@ -9739,18 +10037,18 @@ GS.iniciarFarmaLucky = function()
         info.Text="Busca Lucky Block desligada."
     end
     GS.pararFarmaLucky=pararAuto
-    detectar.MouseButton1Click:Connect(function()
+    GS.conectar(detectar.MouseButton1Click,function()
         if L.ligado then desligar() else ligar() end
     end)
-    automatico.MouseButton1Click:Connect(function()
+    GS.conectar(automatico.MouseButton1Click,function()
         if L.auto then pararAuto() else iniciarAuto() end
     end)
-    busca.MouseButton1Click:Connect(function()
+    GS.conectar(busca.MouseButton1Click,function()
         ligar()
         L.scanEm=0
         L.fase="REFAZENDO BUSCA COMPLETA"
     end)
-    ScreenGui.Destroying:Connect(desligar)
+    GS.conectar(ScreenGui.Destroying,desligar)
 end
 GS.rodar("Farma Lucky Block",GS.iniciarFarmaLucky,GS.painelFarma)
 
@@ -9773,7 +10071,7 @@ GS.iniciarFarmaTesouro = function()
     automatico:SetAttribute("Controlado",true)
     automatico.Text="AUTO TESOURO: OFF"
     local busca = U.acao(painel,"REFAZER BUSCA COMPLETA","scan-search",23)
-    local info = Instance.new("TextLabel")
+    local info = GS.novaInstancia("TextLabel")
     info.Size=UDim2.new(1,-16,0,130)
     info.LayoutOrder=24
     info.BackgroundTransparency=1
@@ -9882,7 +10180,7 @@ GS.iniciarFarmaTesouro = function()
             if obj:IsDescendantOf(outro) then return end
             if outro:IsDescendantOf(obj) then it.gui:Destroy(); L.itens[outro]=nil end
         end
-        local gui=Instance.new("BillboardGui")
+        local gui=GS.novaInstancia("BillboardGui")
         gui.Name="TesouroLocal"
         gui.Adornee=base
         gui.Size=UDim2.fromOffset(174,38)
@@ -9891,7 +10189,7 @@ GS.iniciarFarmaTesouro = function()
         gui.MaxDistance=0
         gui.Enabled=false
         gui.Parent=L.gui
-        local label=Instance.new("TextLabel")
+        local label=GS.novaInstancia("TextLabel")
         label.Size=UDim2.fromScale(1,1)
         label.BackgroundColor3=Color3.fromRGB(35,22,8)
         label.BackgroundTransparency=0.2
@@ -9900,7 +10198,7 @@ GS.iniciarFarmaTesouro = function()
         label.Font=Enum.Font.GothamBold
         label.TextWrapped=true
         label.Parent=gui
-        Instance.new("UICorner",label).CornerRadius=UDim.new(0,8)
+        GS.novaInstancia("UICorner",label).CornerRadius=UDim.new(0,8)
         L.itens[obj]={base=base,gui=gui,label=label,prompt=prompt}
         print("[DEBUG-TESOURO]: Encontrado",obj:GetFullName())
     end
@@ -10009,7 +10307,7 @@ GS.iniciarFarmaTesouro = function()
         if not hum or not prompt.Enabled then return false end
         if (root.Position-posPrompt(prompt,e.it.base)).Magnitude>prompt.MaxActivationDistance then return false end
         local disparou=false
-        local conn=prompt.Triggered:Connect(function(player)
+        local conn=GS.conectar(prompt.Triggered,function(player)
             if player==LocalPlayer and autoVivo(g,c) then
                 disparou=true
                 L.interacoes=L.interacoes+1
@@ -10151,29 +10449,29 @@ GS.iniciarFarmaTesouro = function()
         L.geracao=L.geracao+1
         L.scanEm=0
         local g=L.geracao
-        L.gui=Instance.new("Folder")
+        L.gui=GS.novaInstancia("Folder")
         L.gui.Name="FarmaTesouroMarcadores"
         L.gui.Parent=ScreenGui
         detectar.Text="TESOURO: ON"
         L.fase="BUSCA COMPLETA"
-        table.insert(L.conns,workspace.DescendantAdded:Connect(function(obj)
+        table.insert(L.conns,GS.conectar(workspace.DescendantAdded,function(obj)
             if nomeTesouro(obj.Name) or obj:IsA("ProximityPrompt") then
                 L.scanEm=0
-                task.defer(function()
+                GS.defer(function()
                     if not vivo(g) then return end
                     local ok,alvo,base,prompt=pcall(avaliar,obj)
                     if ok and alvo then adicionar(alvo,base,prompt) end
                 end)
             end
         end))
-        table.insert(L.conns,Chat.MessageReceived:Connect(function(msg)
+        table.insert(L.conns,GS.conectar(Chat.MessageReceived,function(msg)
             if nomeTesouro(msg.Text) then
                 L.aviso="Chat: "..msg.Text:sub(1,160)
                 L.scanEm=0
                 print("[DEBUG-TESOURO]: Aviso observado; refazendo busca:",msg.Text)
             end
         end))
-        task.spawn(function()
+        GS.spawn(function()
             while vivo(g) do
                 local ok,err=pcall(function()
                     if os.clock()>=L.scanEm then varrer(g) end
@@ -10198,7 +10496,7 @@ GS.iniciarFarmaTesouro = function()
         L.ciclo=L.ciclo+1
         local g,c=L.geracao,L.ciclo
         automatico.Text="AUTO TESOURO: ON · 90"
-        task.spawn(function()
+        GS.spawn(function()
             while autoVivo(g,c) do
                 local ok,err=pcall(function()
                     local alvo
@@ -10234,18 +10532,18 @@ GS.iniciarFarmaTesouro = function()
         info.Text="Busca do tesouro desligada."
     end
     GS.pararFarmaTesouro=pararAuto
-    detectar.MouseButton1Click:Connect(function()
+    GS.conectar(detectar.MouseButton1Click,function()
         if L.ligado then desligar() else ligar() end
     end)
-    automatico.MouseButton1Click:Connect(function()
+    GS.conectar(automatico.MouseButton1Click,function()
         if L.auto then pararAuto() else iniciarAuto() end
     end)
-    busca.MouseButton1Click:Connect(function()
+    GS.conectar(busca.MouseButton1Click,function()
         ligar()
         L.scanEm=0
         L.fase="REFAZENDO BUSCA COMPLETA"
     end)
-    ScreenGui.Destroying:Connect(desligar)
+    GS.conectar(ScreenGui.Destroying,desligar)
 end
 GS.rodar("Farma Treasure Chest",GS.iniciarFarmaTesouro,GS.painelFarmaTesouro)
 
@@ -10266,7 +10564,7 @@ GS.iniciarFarmaNome=function()
     ir.Text="SEGUIR NOME: OFF"
     local estado=U.pequeno(painel,"Ative os nomes e clique em um resultado.",nil,5,"info")
     estado.AutoButtonColor=false
-    local lista=Instance.new("ScrollingFrame")
+    local lista=GS.novaInstancia("ScrollingFrame")
     lista.Name="ListaNomes"
     lista.Size=UDim2.new(1,0,0,128)
     lista.BackgroundColor3=U.T.bg
@@ -10279,17 +10577,17 @@ GS.iniciarFarmaNome=function()
     lista.LayoutOrder=6
     lista.Parent=painel
     U.mkC(10,lista)
-    local layout=Instance.new("UIListLayout",lista)
+    local layout=GS.novaInstancia("UIListLayout",lista)
     layout.Padding=UDim.new(0,4)
     layout.SortOrder=Enum.SortOrder.LayoutOrder
     local linhas={}
-    local paginador=Instance.new("Frame")
+    local paginador=GS.novaInstancia("Frame")
     paginador.Size=UDim2.new(1,0,0,30)
     paginador.LayoutOrder=7
     paginador.BackgroundTransparency=1
     paginador.Parent=painel
     for i,titulo in ipairs({"Anterior","Próxima"}) do
-        local b=Instance.new("TextButton")
+        local b=GS.novaInstancia("TextButton")
         b.Size=UDim2.new(0.5,-3,1,0)
         b.Position=UDim2.new((i-1)*0.5,0,0,0)
         b.BackgroundColor3=U.T.card
@@ -10300,12 +10598,12 @@ GS.iniciarFarmaNome=function()
         b.Text=titulo
         b.Parent=paginador
         U.mkC(6,b)
-        b.MouseButton1Click:Connect(function()
+        GS.conectar(b.MouseButton1Click,function()
             N.pagina=math.clamp(N.pagina+(i==1 and -1 or 1),1,N.paginas)
         end)
     end
     for i=1,30 do
-        local b=Instance.new("TextButton")
+        local b=GS.novaInstancia("TextButton")
         b.Size=UDim2.new(1,-8,0,28)
         b.BackgroundColor3=U.T.card
         b.BackgroundTransparency=0.3
@@ -10318,7 +10616,7 @@ GS.iniciarFarmaNome=function()
         b.Visible=false
         b.Parent=lista
         U.mkC(6,b)
-        b.MouseButton1Click:Connect(function()
+        GS.conectar(b.MouseButton1Click,function()
             if b:GetAttribute("NomeExato") then campo.Text=b:GetAttribute("NomeExato") end
         end)
         linhas[i]=b
@@ -10394,14 +10692,14 @@ GS.iniciarFarmaNome=function()
     local function marcador(e)
         local m=N.marcas[e.obj]
         if m then return m end
-        local gui=Instance.new("BillboardGui")
+        local gui=GS.novaInstancia("BillboardGui")
         gui.Name="NomeModelo"
         gui.Size=UDim2.fromOffset(186,34)
         gui.StudsOffsetWorldSpace=Vector3.new(0,2.5,0)
         gui.MaxDistance=0
         gui.AlwaysOnTop=true
         gui.Parent=ScreenGui
-        local l=Instance.new("TextLabel",gui)
+        local l=GS.novaInstancia("TextLabel",gui)
         l.Size=UDim2.fromScale(1,1)
         l.BackgroundColor3=U.T.bg
         l.BackgroundTransparency=0.2
@@ -10479,8 +10777,8 @@ GS.iniciarFarmaNome=function()
         N.sujo=true
         local g=N.geracao
         mostrar.Text="NOMES: ON"
-        table.insert(N.conns,workspace.DescendantAdded:Connect(function() N.sujo=true end))
-        task.spawn(function()
+        table.insert(N.conns,GS.conectar(workspace.DescendantAdded,function() N.sujo=true end))
+        GS.spawn(function()
             while vivo(g) do
                 local ok,err=pcall(function()
                     if os.clock()-N.ultimoScan>4 or (N.sujo and os.clock()-N.ultimoScan>1) then scan(g) end
@@ -10576,7 +10874,7 @@ GS.iniciarFarmaNome=function()
         local g,c=N.geracao,N.ciclo
         ir.Text="SEGUIR NOME: ON"
         print("[DEBUG-NOMES]: Alvo exato:",nome)
-        task.spawn(function()
+        GS.spawn(function()
             while ativo(g,c) do
                 local ok,err=pcall(function()
                     local e=selecionar(nome)
@@ -10610,17 +10908,17 @@ GS.iniciarFarmaNome=function()
         estado.Text="Ative para explorar os nomes dos objetos carregados."
     end
     GS.pararFarmaNome=pararAuto
-    mostrar.MouseButton1Click:Connect(function()
+    GS.conectar(mostrar.MouseButton1Click,function()
         if N.mostrar then desligar() else ligar() end
     end)
-    ir.MouseButton1Click:Connect(function()
+    GS.conectar(ir.MouseButton1Click,function()
         if N.auto then pararAuto() else iniciarAuto() end
     end)
-    campo:GetPropertyChangedSignal("Text"):Connect(function()
+    GS.conectar(campo:GetPropertyChangedSignal("Text"),function()
         N.pagina=1
         if N.auto then pararAuto() end
     end)
-    ScreenGui.Destroying:Connect(desligar)
+    GS.conectar(ScreenGui.Destroying,desligar)
 end
 GS.rodar("Farma por nome",GS.iniciarFarmaNome,GS.painelFarmaNome)
 
@@ -10668,10 +10966,10 @@ GS.iniciarEscudo = function()
     U.sec(box, "ESCUDO ANTI-MONSTRO", "🛡", 5)
     local togE = U.tog(box, "🛡 ESCUDO ANTI-MONSTRO", 6)
     local menos, mais, valor = U.ctrl(box, "Raio do escudo (m)", 10, 7)
-    local grade = Instance.new("Frame", box)
+    local grade = GS.novaInstancia("Frame", box)
     grade.Size = UDim2.new(1, 0, 0, 32); grade.BackgroundTransparency = 1; grade.LayoutOrder = 8
     do
-        local gl = Instance.new("UIGridLayout", grade)
+        local gl = GS.novaInstancia("UIGridLayout", grade)
         gl.CellSize = UDim2.new(1/3, -6, 1, 0); gl.CellPadding = UDim2.new(0, 8, 0, 0)
         gl.SortOrder = Enum.SortOrder.LayoutOrder
     end
@@ -10689,11 +10987,11 @@ GS.iniciarEscudo = function()
         end
     end
     for i, nome in ipairs({ "ARREMESSAR", "EMPURRAR", "CONGELAR" }) do
-        local b = Instance.new("TextButton", grade)
+        local b = GS.novaInstancia("TextButton", grade)
         b.Text = nome; b.Font = Enum.Font.GothamBold; b.TextSize = 11; b.AutoButtonColor = false
         b.BackgroundColor3 = T.card; b.TextColor3 = T.dim; b.BorderSizePixel = 0; b.LayoutOrder = i
         U.mkC(8, b); U.mkS(1, T.stroke, b); U.press(b)
-        b.MouseButton1Click:Connect(function()
+        GS.conectar(b.MouseButton1Click,function()
             E.modo = nome; pintarModos()
             GS.toast("🛡  Escudo: " .. nome, true)
         end)
@@ -10710,8 +11008,8 @@ GS.iniciarEscudo = function()
         E.raio = math.clamp(r, 2, 200)
         mostrarRaio()
     end
-    mais.MouseButton1Click:Connect(function() passoRaio(true) end)
-    menos.MouseButton1Click:Connect(function() passoRaio(false) end)
+    GS.conectar(mais.MouseButton1Click,function() passoRaio(true) end)
+    GS.conectar(menos.MouseButton1Click,function() passoRaio(false) end)
 
     -- ── Deteccao ──
     local function ehMonstro(m)
@@ -10743,8 +11041,8 @@ GS.iniciarEscudo = function()
     local function iniciarRegistro()
         if E.regConns then return end
         E.regConns = {}
-        table.insert(E.regConns, workspace.DescendantAdded:Connect(registrar))
-        task.spawn(function()
+        table.insert(E.regConns, GS.conectar(workspace.DescendantAdded,registrar))
+        GS.spawn(function()
             for i, d in ipairs(workspace:GetDescendants()) do
                 if not E.regConns then return end
                 registrar(d)
@@ -10781,12 +11079,12 @@ GS.iniciarEscudo = function()
         st.h = h
         if h then st.orig = { ws=h.WalkSpeed, jp=h.JumpPower, jh=h.JumpHeight, ar=h.AutoRotate, ps=h.PlatformStand } end
         for _, d in ipairs(m:GetDescendants()) do neutralizar(st, d) end
-        st.conn = m.DescendantAdded:Connect(function(d) neutralizar(st, d) end)
-        st.att = Instance.new("Attachment"); st.att.Name = "GringoEscudoAtt"; st.att.Parent = r
-        st.ap = Instance.new("AlignPosition"); st.ap.Name = "GringoEscudoAP"
+        st.conn = GS.conectar(m.DescendantAdded,function(d) neutralizar(st, d) end)
+        st.att = GS.novaInstancia("Attachment"); st.att.Name = "GringoEscudoAtt"; st.att.Parent = r
+        st.ap = GS.novaInstancia("AlignPosition"); st.ap.Name = "GringoEscudoAP"
         st.ap.Mode = Enum.PositionAlignmentMode.OneAttachment; st.ap.Attachment0 = st.att
         st.ap.RigidityEnabled = true; st.ap.Position = r.Position; st.ap.Parent = r
-        st.ao = Instance.new("AlignOrientation"); st.ao.Name = "GringoEscudoAO"
+        st.ao = GS.novaInstancia("AlignOrientation"); st.ao.Name = "GringoEscudoAO"
         st.ao.Mode = Enum.OrientationAlignmentMode.OneAttachment; st.ao.Attachment0 = st.att
         st.ao.RigidityEnabled = true; st.ao.CFrame = r.CFrame; st.ao.Parent = r
         E.alvos[m] = st
@@ -10880,7 +11178,7 @@ GS.iniciarEscudo = function()
                 end
             end
             for _, d in ipairs(m:GetDescendants()) do pegar(d) end
-            t.conn = m.DescendantAdded:Connect(function(d) pcall(pegar, d) end)
+            t.conn = GS.conectar(m.DescendantAdded,function(d) pcall(pegar, d) end)
             E.toque[m] = t
         else
             for _, p in ipairs(t.lista) do
@@ -11019,19 +11317,19 @@ GS.iniciarEscudo = function()
 
     local function ligar()
         iniciarRegistro()
-        local b = Instance.new("Part")
+        local b = GS.novaInstancia("Part")
         b.Name = "GringoEscudoBolha"; b.Shape = Enum.PartType.Ball; b.Material = Enum.Material.ForceField
         b.Color = Color3.fromRGB(120, 200, 255); b.Anchored = true; b.CanCollide = false
         b.CanQuery = false; b.CanTouch = false; b.CastShadow = false
         b.Parent = workspace.CurrentCamera
         E.bolha = b
         E.avisou = false
-        table.insert(E.conns, RunService.Heartbeat:Connect(function(dt)
+        table.insert(E.conns, GS.conectar(RunService.Heartbeat,function(dt)
             local ok, err = pcall(passo, dt)
             if not ok and not E.avisou then E.avisou = true warn("[GRINGO ESCUDO] " .. tostring(err)) end
         end))
         -- re-trava antes da fisica (servidor teleportou → volta no mesmo passo)
-        table.insert(E.conns, RunService.Stepped:Connect(function()
+        table.insert(E.conns, GS.conectar(RunService.Stepped,function()
             for _, st in pairs(E.alvos) do
                 if st.cf and st.r.Parent then
                     pcall(function() st.r.CFrame = st.cf; st.r.AssemblyLinearVelocity = ZERO end)
@@ -11040,16 +11338,16 @@ GS.iniciarEscudo = function()
         end))
     end
 
-    togE.MouseButton1Click:Connect(function()
+    GS.conectar(togE.MouseButton1Click,function()
         E.ativo = not E.ativo
         togE.Text = E.ativo and "ESCUDO: ON" or "ESCUDO: OFF"
         if E.ativo then ligar() else desligar() end
     end)
-    togBolha.MouseButton1Click:Connect(function()
+    GS.conectar(togBolha.MouseButton1Click,function()
         E.bolhaOn = not E.bolhaOn
         togBolha.Text = E.bolhaOn and "BOLHA: ON" or "BOLHA: OFF"
     end)
-    ScreenGui.Destroying:Connect(function()
+    GS.conectar(ScreenGui.Destroying,function()
         desligar()
         for _, c in ipairs(E.regConns or {}) do pcall(function() c:Disconnect() end) end
         E.regConns = nil
@@ -11107,7 +11405,7 @@ do
         local vel = root.AssemblyLinearVelocity
         root.AssemblyLinearVelocity = Vector3.new(vel.X, v, vel.Z)
         -- reforco no frame seguinte (alguns jogos zeram a velocidade ao pular)
-        task.defer(function()
+        GS.defer(function()
             pcall(function()
                 if root.AssemblyLinearVelocity.Y < v * 0.8 then
                     local v2 = root.AssemblyLinearVelocity
@@ -11131,8 +11429,8 @@ do
     end
 
     local function ligar()
-        table.insert(P.conns, UserInputService.JumpRequest:Connect(function() pcall(pular) end))
-        table.insert(P.conns, RunService.Heartbeat:Connect(function() pcall(pousoSuave) end))
+        table.insert(P.conns, GS.conectar(UserInputService.JumpRequest,function() pcall(pular) end))
+        table.insert(P.conns, GS.conectar(RunService.Heartbeat,function() pcall(pousoSuave) end))
     end
     local function desligar()
         for _, c in ipairs(P.conns) do pcall(function() c:Disconnect() end) end
@@ -11142,14 +11440,14 @@ do
     if GS.puloBtn then
         GS.puloBtn:SetAttribute("Controlado", true)
         mostrar()
-        GS.puloBtn.MouseButton1Click:Connect(function()
+        GS.conectar(GS.puloBtn.MouseButton1Click,function()
             P.ativo = not P.ativo
             GS.puloBtn.Text = P.ativo and "SUPER PULO: ON" or "SUPER PULO: OFF"
             if P.ativo then ligar() else desligar() end
         end)
-        GS.puloMais.MouseButton1Click:Connect(function() P.idx = math.min(P.idx + 1, #ALTURAS); mostrar() end)
-        GS.puloMenos.MouseButton1Click:Connect(function() P.idx = math.max(P.idx - 1, 1); mostrar() end)
-        ScreenGui.Destroying:Connect(desligar)
+        GS.conectar(GS.puloMais.MouseButton1Click,function() P.idx = math.min(P.idx + 1, #ALTURAS); mostrar() end)
+        GS.conectar(GS.puloMenos.MouseButton1Click,function() P.idx = math.max(P.idx - 1, 1); mostrar() end)
+        GS.conectar(ScreenGui.Destroying,desligar)
     end
 end
 
@@ -11375,7 +11673,7 @@ GS.iniciarResolver = function()
     local function varrer()
         RS.varrendo = true
         local alvo = RS.hud
-        task.spawn(function()
+        GS.spawn(function()
             local todos = workspace:GetDescendants()
             for i, obj in ipairs(todos) do
                 if RS.hud ~= alvo then return end
@@ -11697,36 +11995,36 @@ GS.iniciarResolver = function()
     --  JANELA NA TELA
     -- ─────────────────────────────────────────────────────────────
     local function criarHud()
-        local sg = Instance.new("ScreenGui")
+        local sg = GS.novaInstancia("ScreenGui")
         sg.Name = "GringoResolver"; sg.ResetOnSpawn = false; sg.DisplayOrder = 96; sg.IgnoreGuiInset = true
         sg.Parent = GS.pai
-        local f = Instance.new("Frame", sg)
+        local f = GS.novaInstancia("Frame", sg)
         f.Size = UDim2.fromOffset(360, 300); f.Position = UDim2.new(0, 16, 0.5, -150)
         f.BackgroundColor3 = T.bg; f.BackgroundTransparency = 0.08; f.BorderSizePixel = 0; f.Active = true
         U.mkC(12, f); U.mkS(1, T.strokeHi, f)
-        local topo = Instance.new("TextLabel", f)
+        local topo = GS.novaInstancia("TextLabel", f)
         topo.Size = UDim2.new(1, -16, 0, 30); topo.Position = UDim2.new(0, 10, 0, 4)
         topo.BackgroundTransparency = 1; topo.Font = Enum.Font.GothamBlack; topo.TextSize = 14
         topo.TextColor3 = T.text; topo.TextXAlignment = Enum.TextXAlignment.Left; topo.Text = "🧠 RESOLVER"
-        local sub = Instance.new("TextLabel", f)
+        local sub = GS.novaInstancia("TextLabel", f)
         sub.Size = UDim2.new(1, -16, 0, 14); sub.Position = UDim2.new(0, 10, 0, 30)
         sub.BackgroundTransparency = 1; sub.Font = Enum.Font.Gotham; sub.TextSize = 10
         sub.TextColor3 = T.mute; sub.TextXAlignment = Enum.TextXAlignment.Left; sub.Text = "o que fazer agora"
-        local lista = Instance.new("ScrollingFrame", f)
+        local lista = GS.novaInstancia("ScrollingFrame", f)
         lista.Size = UDim2.new(1, -16, 1, -54); lista.Position = UDim2.new(0, 8, 0, 48)
         lista.BackgroundTransparency = 1; lista.BorderSizePixel = 0; lista.ScrollBarThickness = 3
         lista.CanvasSize = UDim2.new(); lista.AutomaticCanvasSize = Enum.AutomaticSize.Y
-        local ll = Instance.new("UIListLayout", lista); ll.SortOrder = Enum.SortOrder.LayoutOrder; ll.Padding = UDim.new(0, 3)
+        local ll = GS.novaInstancia("UIListLayout", lista); ll.SortOrder = Enum.SortOrder.LayoutOrder; ll.Padding = UDim.new(0, 3)
         -- arrastar pelo topo
         local arr, ini, pos
-        f.InputBegan:Connect(function(i)
+        GS.conectar(f.InputBegan,function(i)
             if (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch)
             and i.Position.Y - f.AbsolutePosition.Y < 46 then
                 arr, ini, pos = true, i.Position, f.Position
-                i.Changed:Connect(function() if i.UserInputState == Enum.UserInputState.End then arr = false end end)
+                GS.conectar(i.Changed,function() if i.UserInputState == Enum.UserInputState.End then arr = false end end)
             end
         end)
-        table.insert(RS.conns, UserInputService.InputChanged:Connect(function(i)
+        table.insert(RS.conns, GS.conectar(UserInputService.InputChanged,function(i)
             if arr and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
                 local d = i.Position - ini
                 f.Position = UDim2.new(pos.X.Scale, pos.X.Offset + d.X, pos.Y.Scale, pos.Y.Offset + d.Y)
@@ -11741,7 +12039,7 @@ GS.iniciarResolver = function()
         for i, tf in ipairs(RS.tarefas) do
             local l = linhasPool[i]
             if not l or not l.Parent then
-                l = Instance.new("TextLabel", RS.lista)
+                l = GS.novaInstancia("TextLabel", RS.lista)
                 l.Size = UDim2.new(1, -6, 0, 0); l.AutomaticSize = Enum.AutomaticSize.Y
                 l.BackgroundTransparency = 1; l.Font = Enum.Font.GothamMedium; l.TextSize = 12
                 l.TextWrapped = true; l.TextXAlignment = Enum.TextXAlignment.Left
@@ -11787,15 +12085,15 @@ GS.iniciarResolver = function()
         for p, tf in pairs(querer) do
             local mk = RS.marcadores[p]
             if not mk then
-                local g = Instance.new("BillboardGui")
+                local g = GS.novaInstancia("BillboardGui")
                 g.Name = "GringoResolverMarca"; g.AlwaysOnTop = true; g.Size = UDim2.fromOffset(200, 36)
                 g.StudsOffset = Vector3.new(0, 3, 0); g.MaxDistance = math.huge; g.LightInfluence = 0; g.Adornee = p
-                local bg = Instance.new("Frame", g)
+                local bg = GS.novaInstancia("Frame", g)
                 bg.Size = UDim2.new(1, 0, 1, 0); bg.BackgroundColor3 = Color3.fromRGB(40, 30, 0)
                 bg.BackgroundTransparency = 0.25; bg.BorderSizePixel = 0
-                Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 6)
-                local s = Instance.new("UIStroke", bg); s.Color = Color3.fromRGB(255, 210, 60); s.Thickness = 1.5
-                local l = Instance.new("TextLabel", bg)
+                GS.novaInstancia("UICorner", bg).CornerRadius = UDim.new(0, 6)
+                local s = GS.novaInstancia("UIStroke", bg); s.Color = Color3.fromRGB(255, 210, 60); s.Thickness = 1.5
+                local l = GS.novaInstancia("TextLabel", bg)
                 l.Size = UDim2.new(1, -8, 1, 0); l.Position = UDim2.new(0, 4, 0, 0); l.BackgroundTransparency = 1
                 l.Font = Enum.Font.GothamBold; l.TextSize = 12; l.TextColor3 = Color3.fromRGB(255, 225, 120)
                 l.TextWrapped = true; l.TextStrokeTransparency = 0.4
@@ -11810,14 +12108,14 @@ GS.iniciarResolver = function()
         if RS.seta and principal and meuRoot then
             if not RS.attEu or RS.attEu.Parent ~= meuRoot then
                 if RS.attEu then RS.attEu:Destroy() end
-                RS.attEu = Instance.new("Attachment"); RS.attEu.Name = "GringoResolverEu"; RS.attEu.Parent = meuRoot
+                RS.attEu = GS.novaInstancia("Attachment"); RS.attEu.Name = "GringoResolverEu"; RS.attEu.Parent = meuRoot
             end
             if not RS.attAlvo or RS.attAlvo.Parent ~= principal.alvo then
                 if RS.attAlvo then RS.attAlvo:Destroy() end
-                RS.attAlvo = Instance.new("Attachment"); RS.attAlvo.Name = "GringoResolverAlvo"; RS.attAlvo.Parent = principal.alvo
+                RS.attAlvo = GS.novaInstancia("Attachment"); RS.attAlvo.Name = "GringoResolverAlvo"; RS.attAlvo.Parent = principal.alvo
             end
             if not RS.beam then
-                local b = Instance.new("Beam")
+                local b = GS.novaInstancia("Beam")
                 b.Name = "GringoResolverSeta"; b.FaceCamera = true; b.Width0 = 0.5; b.Width1 = 0.5
                 b.Color = ColorSequence.new(Color3.fromRGB(255, 210, 60)); b.LightEmission = 1
                 b.Transparency = NumberSequence.new(0.15); b.Segments = 20
@@ -11849,9 +12147,9 @@ GS.iniciarResolver = function()
     local function ligar()
         criarHud()
         varrer()
-        table.insert(RS.conns, workspace.DescendantAdded:Connect(function(o) pcall(indexar, o) end))
+        table.insert(RS.conns, GS.conectar(workspace.DescendantAdded,function(o) pcall(indexar, o) end))
         RS.analiseT, RS.marcaT, RS.limpaT = 99, 0, 0
-        table.insert(RS.conns, RunService.Heartbeat:Connect(function(dt)
+        table.insert(RS.conns, GS.conectar(RunService.Heartbeat,function(dt)
             RS.analiseT = RS.analiseT + dt
             RS.marcaT = RS.marcaT + dt
             RS.limpaT = RS.limpaT + dt
@@ -11886,24 +12184,24 @@ GS.iniciarResolver = function()
     status = U.pequeno(painel, "🧠 DESLIGADO", nil, 7)
     status.AutoButtonColor = false; status.TextColor3 = T.dim; status.TextTruncate = Enum.TextTruncate.AtEnd
 
-    togR.MouseButton1Click:Connect(function()
+    GS.conectar(togR.MouseButton1Click,function()
         RS.ativo = not RS.ativo
         togR.Text = RS.ativo and "RESOLVER: ON" or "RESOLVER: OFF"
         if RS.ativo then ligar() else desligar() end
     end)
-    togM.MouseButton1Click:Connect(function()
+    GS.conectar(togM.MouseButton1Click,function()
         RS.marcar = not RS.marcar
         togM.Text = RS.marcar and "MARCAR: ON" or "MARCAR: OFF"
     end)
-    togS.MouseButton1Click:Connect(function()
+    GS.conectar(togS.MouseButton1Click,function()
         RS.seta = not RS.seta
         togS.Text = RS.seta and "SETA: ON" or "SETA: OFF"
     end)
-    buscaBox.FocusLost:Connect(function()
+    GS.conectar(buscaBox.FocusLost,function()
         RS.busca = norm(buscaBox.Text or "")
         RS.analiseT = 99
     end)
-    copiar.MouseButton1Click:Connect(function()
+    GS.conectar(copiar.MouseButton1Click,function()
         if RS.relatorio == "" then GS.toast("🧠  Liga o RESOLVER primeiro", false) return end
         print(RS.relatorio)
         if setclipboard then
@@ -11913,7 +12211,7 @@ GS.iniciarResolver = function()
             GS.toast("📋  Relatório no F9 (seu executor não copia)", true)
         end
     end)
-    ScreenGui.Destroying:Connect(desligar)
+    GS.conectar(ScreenGui.Destroying,desligar)
 end
 GS.rodar("Resolver", GS.iniciarResolver, GS.painelResolver)
 
@@ -12073,14 +12371,14 @@ GS.iniciarAntiScript = function()
         local cab = p.Character and (p.Character:FindFirstChild("Head") or p.Character:FindFirstChild("HumanoidRootPart"))
         if not cab then return end
         if not m or not m.Parent then
-            m = Instance.new("BillboardGui")
+            m = GS.novaInstancia("BillboardGui")
             m.Name = "GringoAntiScriptMarca"; m.AlwaysOnTop = true; m.Size = UDim2.fromOffset(140, 26)
             m.StudsOffset = Vector3.new(0, 3.5, 0); m.LightInfluence = 0
-            local l = Instance.new("TextLabel", m)
+            local l = GS.novaInstancia("TextLabel", m)
             l.Size = UDim2.new(1, 0, 1, 0); l.BackgroundColor3 = Color3.fromRGB(120, 0, 20)
             l.BackgroundTransparency = 0.2; l.Font = Enum.Font.GothamBlack; l.TextSize = 12
             l.TextColor3 = Color3.new(1, 1, 1); l.Text = "⚠ SCRIPT"
-            Instance.new("UICorner", l).CornerRadius = UDim.new(0, 6)
+            GS.novaInstancia("UICorner", l).CornerRadius = UDim.new(0, 6)
             m.Parent = GS.pai
             A.marcas[p] = m
         end
@@ -12120,11 +12418,11 @@ GS.iniciarAntiScript = function()
     -- ── LIGA / DESLIGA ──
     local function ligar()
         A.bloqueios = 0; A.seguro = nil
-        table.insert(A.conns, RunService.Stepped:Connect(function()
+        table.insert(A.conns, GS.conectar(RunService.Stepped,function()
             pcall(semColisaoComOutros)
             pcall(antiFling)
         end))
-        table.insert(A.conns, RunService.Heartbeat:Connect(function(dt)
+        table.insert(A.conns, GS.conectar(RunService.Heartbeat,function(dt)
             pcall(antiFling)
             pcall(antiDerrubar)
             A.gruT = A.gruT + dt
@@ -12157,12 +12455,12 @@ GS.iniciarAntiScript = function()
         status.Text = "🛡 DESLIGADO"
     end
 
-    togA.MouseButton1Click:Connect(function()
+    GS.conectar(togA.MouseButton1Click,function()
         A.ativo = not A.ativo
         togA.Text = A.ativo and "ANTI-SCRIPTS: ON" or "ANTI-SCRIPTS: OFF"
         if A.ativo then ligar() else desligar() end
     end)
-    ScreenGui.Destroying:Connect(desligar)
+    GS.conectar(ScreenGui.Destroying,desligar)
 end
 GS.painelPlayer = GS.painelProtecao or GS.painelPlayer  -- visual v6: monta na subaba certa
 GS.rodar("AntiScript", GS.iniciarAntiScript)
@@ -12238,7 +12536,7 @@ GS.iniciarAntiAssedio = function()
         if not reg then
             reg = { decals={}, outros={}, motivo=motivo }
             AA.ocultos[p] = reg
-            reg.conn = p.CharacterAdded:Connect(function(c)
+            reg.conn = GS.conectar(p.CharacterAdded,function(c)
                 reg.decals, reg.outros, reg.nome = {}, {}, nil
                 task.wait(0.3)
                 pcall(esconderChar, c, reg)
@@ -12302,7 +12600,7 @@ GS.iniciarAntiAssedio = function()
     local function ehAmigo(p)
         if amigos[p] == nil then
             amigos[p] = false
-            task.spawn(function()
+            GS.spawn(function()
                 local ok, sim = pcall(function() return p:IsFriendsWith(LocalPlayer.UserId) end)
                 amigos[p] = ok and sim or false
             end)
@@ -12365,7 +12663,7 @@ GS.iniciarAntiAssedio = function()
 
     -- ── Liga / desliga ──
     local function ligar()
-        table.insert(AA.conns, RunService.Heartbeat:Connect(function(dt)
+        table.insert(AA.conns, GS.conectar(RunService.Heartbeat,function(dt)
             pcall(analisar, dt)
             AA.reaplicaT = AA.reaplicaT + dt
             if AA.reaplicaT >= 0.5 then
@@ -12392,22 +12690,22 @@ GS.iniciarAntiAssedio = function()
         status.Text = "🚫 DESLIGADO"
     end
 
-    togAA.MouseButton1Click:Connect(function()
+    GS.conectar(togAA.MouseButton1Click,function()
         AA.ativo = not AA.ativo
         togAA.Text = AA.ativo and "ANTI-ASSÉDIO: ON" or "ANTI-ASSÉDIO: OFF"
         if AA.ativo then ligar() else desligar() end
     end)
-    togF.MouseButton1Click:Connect(function()
+    GS.conectar(togF.MouseButton1Click,function()
         AA.fugir = not AA.fugir
         togF.Text = AA.fugir and "FUGIR: ON" or "FUGIR: OFF"
     end)
-    mostrarBtn.MouseButton1Click:Connect(function()
+    GS.conectar(mostrarBtn.MouseButton1Click,function()
         local n = 0
         for p in pairs(AA.ocultos) do mostrar(p); n = n + 1 end
         AA.dados = {}
         GS.toast("👁  " .. n .. " jogador(es) visível(is) de novo", true)
     end)
-    ScreenGui.Destroying:Connect(desligar)
+    GS.conectar(ScreenGui.Destroying,desligar)
 end
 GS.painelPlayer = GS.painelProtecao or GS.painelPlayer  -- visual v6: monta na subaba certa
 GS.rodar("AntiAssedio", GS.iniciarAntiAssedio)
@@ -12452,15 +12750,15 @@ GS.iniciarChao = function()
     status.AutoButtonColor = false; status.TextColor3 = T.dim
     local togG = U.tog(GS.painelPlayer, "↘ DESCER DEGRAUS ANDANDO (ESCADA)", 63)
     togG:SetAttribute("Controlado", true)
-    togG.MouseButton1Click:Connect(function()
+    GS.conectar(togG.MouseButton1Click,function()
         CH.seguirDegraus = not CH.seguirDegraus
         togG.Text = CH.seguirDegraus and "DEGRAUS: ON" or "DEGRAUS: OFF"
     end)
 
     local function mostrarTamanho() valor.Text = CH.tamanho .. " m" end
     mostrarTamanho()
-    mais.MouseButton1Click:Connect(function() CH.tamanho = math.min(CH.tamanho + 2, 60); mostrarTamanho() end)
-    menos.MouseButton1Click:Connect(function() CH.tamanho = math.max(CH.tamanho - 2, 4); mostrarTamanho() end)
+    GS.conectar(mais.MouseButton1Click,function() CH.tamanho = math.min(CH.tamanho + 2, 60); mostrarTamanho() end)
+    GS.conectar(menos.MouseButton1Click,function() CH.tamanho = math.max(CH.tamanho - 2, 4); mostrarTamanho() end)
 
     -- ── Utilidades ──
     local rp = RaycastParams.new()
@@ -12489,7 +12787,7 @@ GS.iniciarChao = function()
     end
 
     local function criarPlataforma()
-        local p = Instance.new("Part")
+        local p = GS.novaInstancia("Part")
         p.Name = "GringoChaoInvisivel"; p.Anchored = true; p.CanCollide = true; p.CanTouch = false
         p.CastShadow = false; p.Material = Enum.Material.ForceField
         p.Color = Color3.fromRGB(120, 200, 255); p.TopSurface = Enum.SurfaceType.Smooth
@@ -12500,20 +12798,20 @@ GS.iniciarChao = function()
 
     -- ── Botoes ⬆ ⬇ na tela (PC e celular) ──
     local function criarBotoes()
-        local sg = Instance.new("ScreenGui")
+        local sg = GS.novaInstancia("ScreenGui")
         sg.Name = "GringoChaoBotoes"; sg.ResetOnSpawn = false; sg.DisplayOrder = 95; sg.Parent = GS.pai
         local function botao(txt, y, campo)
-            local b = Instance.new("TextButton", sg)
+            local b = GS.novaInstancia("TextButton", sg)
             b.Size = UDim2.fromOffset(54, 54); b.Position = UDim2.new(1, -74, 0.5, y)
             b.BackgroundColor3 = T.card; b.BackgroundTransparency = 0.15; b.Text = txt
             b.Font = Enum.Font.GothamBlack; b.TextSize = 22; b.TextColor3 = T.text; b.AutoButtonColor = false
             U.mkC(14, b); U.mkS(1, T.strokeHi, b)
-            b.InputBegan:Connect(function(i)
+            GS.conectar(b.InputBegan,function(i)
                 if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
                     CH[campo] = true; b.BackgroundColor3 = T.on; b.TextColor3 = T.knobOn
                 end
             end)
-            b.InputEnded:Connect(function(i)
+            GS.conectar(b.InputEnded,function(i)
                 if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
                     CH[campo] = false; b.BackgroundColor3 = T.card; b.TextColor3 = T.text
                 end
@@ -12612,28 +12910,28 @@ GS.iniciarChao = function()
         criarPlataforma()
         criarBotoes()
         CH.nivel = nil
-        table.insert(CH.conns, RunService.Heartbeat:Connect(function(dt)
+        table.insert(CH.conns, GS.conectar(RunService.Heartbeat,function(dt)
             local ok, err = pcall(passo, dt)
             if not ok and not CH.avisou then CH.avisou = true warn("[GRINGO CHAO] " .. tostring(err)) end
         end))
         -- renasceu: recomeca na altura nova
-        table.insert(CH.conns, LocalPlayer.CharacterAdded:Connect(function() CH.nivel = nil end))
+        table.insert(CH.conns, GS.conectar(LocalPlayer.CharacterAdded,function() CH.nivel = nil end))
     end
 
-    togC.MouseButton1Click:Connect(function()
+    GS.conectar(togC.MouseButton1Click,function()
         CH.ativo = not CH.ativo
         togC.Text = CH.ativo and "CHÃO: ON" or "CHÃO: OFF"
         if CH.ativo then ligar() else desligar() end
     end)
-    togD.MouseButton1Click:Connect(function()
+    GS.conectar(togD.MouseButton1Click,function()
         CH.degrau = not CH.degrau
         togD.Text = CH.degrau and "DEGRAU: ON" or "DEGRAU: OFF"
     end)
-    togV.MouseButton1Click:Connect(function()
+    GS.conectar(togV.MouseButton1Click,function()
         CH.mostrar = not CH.mostrar
         togV.Text = CH.mostrar and "MOSTRAR: ON" or "MOSTRAR: OFF"
     end)
-    ScreenGui.Destroying:Connect(desligar)
+    GS.conectar(ScreenGui.Destroying,desligar)
 end
 GS.painelPlayer = GS.painelMovimento or GS.painelPlayer  -- visual v6: monta na subaba certa
 GS.rodar("Chao", GS.iniciarChao)
@@ -12671,10 +12969,10 @@ GS.iniciarAutoToque = function()
     local togCl = U.tog(painel, "⚡ MODO CLASH (TOQUE RÁPIDO COLADO)", 22)
     togAT:SetAttribute("Controlado", true); togCl:SetAttribute("Controlado", true)
     togCl.Text = "CLASH: ON"
-    local grade = Instance.new("Frame", painel)
+    local grade = GS.novaInstancia("Frame", painel)
     grade.Size = UDim2.new(1, 0, 0, 32); grade.BackgroundTransparency = 1; grade.LayoutOrder = 23
     do
-        local gl = Instance.new("UIGridLayout", grade)
+        local gl = GS.novaInstancia("UIGridLayout", grade)
         gl.CellSize = UDim2.new(0.5, -4, 1, 0); gl.CellPadding = UDim2.new(0, 8, 0, 0)
         gl.SortOrder = Enum.SortOrder.LayoutOrder
     end
@@ -12690,18 +12988,18 @@ GS.iniciarAutoToque = function()
         end
     end
     for i, nome in ipairs({ "TECLA F", "CLIQUE" }) do
-        local b = Instance.new("TextButton", grade)
+        local b = GS.novaInstancia("TextButton", grade)
         b.Text = nome; b.Font = Enum.Font.GothamBold; b.TextSize = 11; b.AutoButtonColor = false
         b.BackgroundColor3 = T.card; b.TextColor3 = T.dim; b.BorderSizePixel = 0; b.LayoutOrder = i
         U.mkC(8, b); U.mkS(1, T.stroke, b); U.press(b)
-        b.MouseButton1Click:Connect(function() AT.modo = nome; pintar() end)
+        GS.conectar(b.MouseButton1Click,function() AT.modo = nome; pintar() end)
         botoesModo[nome] = b
     end
     pintar()
     local function mostrarAnt() valor.Text = math.floor(AT.antecedencia * 1000 + 0.5) .. "" end
     mostrarAnt()
-    mais.MouseButton1Click:Connect(function() AT.antecedencia = math.min(AT.antecedencia + 0.02, 0.8); mostrarAnt() end)
-    menos.MouseButton1Click:Connect(function() AT.antecedencia = math.max(AT.antecedencia - 0.02, 0.08); mostrarAnt() end)
+    GS.conectar(mais.MouseButton1Click,function() AT.antecedencia = math.min(AT.antecedencia + 0.02, 0.8); mostrarAnt() end)
+    GS.conectar(menos.MouseButton1Click,function() AT.antecedencia = math.max(AT.antecedencia - 0.02, 0.08); mostrarAnt() end)
 
     -- ── Apertar o botao do jogo ──
     local function tocar()
@@ -12808,7 +13106,7 @@ GS.iniciarAutoToque = function()
         if not VIM and not mouse1click and not keypress then
             GS.toast("⚠  Seu executor não simula tecla/clique — o auto toque não consegue apertar", false)
         end
-        table.insert(AT.conns, RunService.Heartbeat:Connect(function(dt)
+        table.insert(AT.conns, GS.conectar(RunService.Heartbeat,function(dt)
             local ok, err = pcall(passo, dt)
             if not ok and not AT.avisou then AT.avisou = true warn("[GRINGO AUTO TOQUE] " .. tostring(err)) end
         end))
@@ -12819,16 +13117,16 @@ GS.iniciarAutoToque = function()
         status.Text = "🔴 DESLIGADO"
     end
 
-    togAT.MouseButton1Click:Connect(function()
+    GS.conectar(togAT.MouseButton1Click,function()
         AT.ativo = not AT.ativo
         togAT.Text = AT.ativo and "AUTO TOQUE: ON" or "AUTO TOQUE: OFF"
         if AT.ativo then ligar() else desligar() end
     end)
-    togCl.MouseButton1Click:Connect(function()
+    GS.conectar(togCl.MouseButton1Click,function()
         AT.clash = not AT.clash
         togCl.Text = AT.clash and "CLASH: ON" or "CLASH: OFF"
     end)
-    ScreenGui.Destroying:Connect(desligar)
+    GS.conectar(ScreenGui.Destroying,desligar)
 end
 do  -- visual v6: AUTO TOQUE monta na aba DUELO DA BOLA (a funcao le GS.painelCombate)
     local combate = GS.painelCombate
@@ -12856,7 +13154,7 @@ do
         GS.toast("Emotes: " .. string.lower(string.gsub(txt, "^STATUS: ", "")), false)
     end
     if GS.emotesBtn then
-        GS.emotesBtn.MouseButton1Click:Connect(function()
+        GS.conectar(GS.emotesBtn.MouseButton1Click,function()
             if carregando then return end
             if _G.EmotesGUIRunning then
                 status("STATUS: JÁ ESTÁ ABERTO")
@@ -12870,7 +13168,7 @@ do
             end
             carregando = true
             status("STATUS: BAIXANDO...")
-            task.spawn(function()
+            GS.spawn(function()
                 local ok, codigo = pcall(function() return game:HttpGet(URL_EMOTES) end)
                 if not ok or type(codigo) ~= "string" or codigo == "" then
                     return falhou("STATUS: FALHOU AO BAIXAR (VEJA F9)", codigo)
@@ -12953,9 +13251,9 @@ GS.iniciarSilentAim = function()
 
     -- ── UI ──────────────────────────────────────────────────────
     local function seletor(pai, ord, nomes, campo, aoMudar)
-        local grade = Instance.new("Frame", pai)
+        local grade = GS.novaInstancia("Frame", pai)
         grade.Size = UDim2.new(1, 0, 0, 34); grade.BackgroundTransparency = 1; grade.LayoutOrder = ord
-        local gl = Instance.new("UIGridLayout", grade)
+        local gl = GS.novaInstancia("UIGridLayout", grade)
         gl.CellSize = UDim2.new(1 / #nomes, -math.ceil(10 * (#nomes - 1) / #nomes), 1, 0)
         gl.CellPadding = UDim2.new(0, 10, 0, 0); gl.SortOrder = Enum.SortOrder.LayoutOrder
         local botoes = {}
@@ -12966,11 +13264,11 @@ GS.iniciarSilentAim = function()
             end
         end
         for i, par in ipairs(nomes) do
-            local b = Instance.new("TextButton", grade)
+            local b = GS.novaInstancia("TextButton", grade)
             b.Text = par[2]; b.Font = Enum.Font.GothamBold; b.TextSize = 11; b.AutoButtonColor = false
             b.BackgroundColor3 = T.card; b.TextColor3 = T.dim; b.BorderSizePixel = 0; b.LayoutOrder = i
             U.mkC(9, b); U.mkS(1, T.stroke, b); U.press(b)
-            b.MouseButton1Click:Connect(function()
+            GS.conectar(b.MouseButton1Click,function()
                 S[campo] = par[1]; S.alvo = nil
                 pintar()
                 if aoMudar then aoMudar(par[2]) end
@@ -13012,30 +13310,30 @@ GS.iniciarSilentAim = function()
     togF.Text = "FOV: ON"; togP.Text = "PAREDE: ON"; togPv.Text = "PREVISAO: ON"; togD.Text = "DESTAQUE: ON"
     togCt.Text = GS.fovCentro and "CENTRO: ON" or "CENTRO: OFF"
     -- vale pro FOV do Silent E do aimbot do Combate
-    togCt.MouseButton1Click:Connect(function()
+    GS.conectar(togCt.MouseButton1Click,function()
         GS.fovCentro = not GS.fovCentro
         togCt.Text = GS.fovCentro and "CENTRO: ON" or "CENTRO: OFF"
     end)
 
     -- ── Desenhos: circulo do FOV, marcador e destaque do alvo ──
-    local circulo = Instance.new("Frame")
+    local circulo = GS.novaInstancia("Frame")
     circulo.Name = "GringoSilentFov"; circulo.AnchorPoint = Vector2.new(0.5, 0.5)
     circulo.BackgroundTransparency = 1; circulo.Visible = false; circulo.ZIndex = 0
     U.redondo(circulo)
     local circuloBorda = U.mkS(1.5, T.on, circulo, 0.25)
     circulo.Parent = ScreenGui
-    local marcador = Instance.new("Frame")
+    local marcador = GS.novaInstancia("Frame")
     marcador.Name = "GringoSilentAlvo"; marcador.AnchorPoint = Vector2.new(0.5, 0.5)
     marcador.Size = UDim2.fromOffset(18, 18); marcador.BackgroundTransparency = 1; marcador.Visible = false
     U.redondo(marcador); U.mkS(2, T.on, marcador, 0)
     do
-        local ponto = Instance.new("Frame", marcador)
+        local ponto = GS.novaInstancia("Frame", marcador)
         ponto.AnchorPoint = Vector2.new(0.5, 0.5); ponto.Position = UDim2.fromScale(0.5, 0.5)
         ponto.Size = UDim2.fromOffset(4, 4); ponto.BackgroundColor3 = T.on; ponto.BorderSizePixel = 0
         U.redondo(ponto)
     end
     marcador.Parent = ScreenGui
-    local destaque = Instance.new("Highlight")
+    local destaque = GS.novaInstancia("Highlight")
     destaque.Name = "GringoSilentDestaque"; destaque.FillColor = T.on; destaque.FillTransparency = 0.55
     destaque.OutlineColor = Color3.new(1, 1, 1); destaque.OutlineTransparency = 0
     destaque.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; destaque.Enabled = false
@@ -13287,7 +13585,7 @@ GS.iniciarSilentAim = function()
         if mouse1press and mouse1release then
             if mouseEmCimaDoPainel(seta) then return end
             S.tiroAte = os.clock() + 0.3
-            mouse1press(); task.delay(0.03, function() pcall(mouse1release) end)
+            mouse1press(); GS.delay(0.03, function() pcall(mouse1release) end)
         elseif mouse1click then
             if mouseEmCimaDoPainel(seta) then return end
             S.tiroAte = os.clock() + 0.3
@@ -13296,7 +13594,7 @@ GS.iniciarSilentAim = function()
             if mouseEmCimaDoPainel(pos) then return end
             S.tiroAte = os.clock() + 0.3
             VIM:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
-            task.delay(0.03, function() pcall(function() VIM:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0) end) end)
+            GS.delay(0.03, function() pcall(function() VIM:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0) end) end)
         end
     end
 
@@ -13363,18 +13661,18 @@ GS.iniciarSilentAim = function()
             registrar(o)
             if o:IsA("Humanoid") then nAlvos = nAlvos + 1 end
         end
-        table.insert(S.conns, workspace.DescendantAdded:Connect(registrar))
-        table.insert(S.conns, RunService.RenderStepped:Connect(function() pcall(passo) end))
+        table.insert(S.conns, GS.conectar(workspace.DescendantAdded,registrar))
+        table.insert(S.conns, GS.conectar(RunService.RenderStepped,function() pcall(passo) end))
         -- janela de tiro: clique (PC) ou toque (celular). Fica aberta um
         -- pouquinho depois de soltar, pra bala que sai no soltar do botao
         local function ehTiro(io)
             local t = io.UserInputType
             return t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch
         end
-        table.insert(S.conns, UserInputService.InputBegan:Connect(function(io)
+        table.insert(S.conns, GS.conectar(UserInputService.InputBegan,function(io)
             if ehTiro(io) then S.mouseBaixo = true; S.tiroAte = os.clock() + 0.4 end
         end))
-        table.insert(S.conns, UserInputService.InputEnded:Connect(function(io)
+        table.insert(S.conns, GS.conectar(UserInputService.InputEnded,function(io)
             if ehTiro(io) then S.mouseBaixo = false; S.tiroAte = os.clock() + 0.25 end
         end))
         S.mouseBaixo = false
@@ -13398,16 +13696,16 @@ GS.iniciarSilentAim = function()
 
     -- ── Cliques ─────────────────────────────────────────────────
     local function chave(btn, campo, nome, aoMudar)
-        btn.MouseButton1Click:Connect(function()
+        GS.conectar(btn.MouseButton1Click,function()
             S[campo] = not S[campo]
             btn.Text = nome .. (S[campo] and ": ON" or ": OFF")
             if aoMudar then aoMudar(S[campo]) end
         end)
     end
-    togS.MouseButton1Click:Connect(function()
+    GS.conectar(togS.MouseButton1Click,function()
         if S.ativo then desligar() else ligar() end
     end)
-    togJ.MouseButton1Click:Connect(function()
+    GS.conectar(togJ.MouseButton1Click,function()
         if not S.liberado then
             S.jogadores = false
             togJ.Text = "SÓ FUNCIONA NOS SEUS JOGOS (VEJA MEUS_JOGOS)"
@@ -13435,24 +13733,24 @@ GS.iniciarSilentAim = function()
     local function atualizarFov()
         fovLbl.Text = S.fov >= 1000 and "TELA TODA" or (S.fov .. " px")
     end
-    fovMenos.MouseButton1Click:Connect(function()
+    GS.conectar(fovMenos.MouseButton1Click,function()
         S.fov = S.fov >= 1000 and 600 or math.max(50, S.fov - 25); atualizarFov()
     end)
-    fovMais.MouseButton1Click:Connect(function()
+    GS.conectar(fovMais.MouseButton1Click,function()
         S.fov = S.fov >= 600 and 1000 or math.min(600, S.fov + 25); atualizarFov()
     end)
-    chMenos.MouseButton1Click:Connect(function() S.chance = math.max(10, S.chance - 10); chLbl.Text = S.chance .. "%" end)
-    chMais.MouseButton1Click:Connect(function() S.chance = math.min(100, S.chance + 10); chLbl.Text = S.chance .. "%" end)
-    cpsMenos.MouseButton1Click:Connect(function() S.cps = math.max(2, S.cps - 2); cpsLbl.Text = tostring(S.cps) end)
-    cpsMais.MouseButton1Click:Connect(function() S.cps = math.min(30, S.cps + 2); cpsLbl.Text = tostring(S.cps) end)
+    GS.conectar(chMenos.MouseButton1Click,function() S.chance = math.max(10, S.chance - 10); chLbl.Text = S.chance .. "%" end)
+    GS.conectar(chMais.MouseButton1Click,function() S.chance = math.min(100, S.chance + 10); chLbl.Text = S.chance .. "%" end)
+    GS.conectar(cpsMenos.MouseButton1Click,function() S.cps = math.max(2, S.cps - 2); cpsLbl.Text = tostring(S.cps) end)
+    GS.conectar(cpsMais.MouseButton1Click,function() S.cps = math.min(30, S.cps + 2); cpsLbl.Text = tostring(S.cps) end)
     local function atualizarHitbox()
         hbLbl.Text = tostring(S.tamHitbox)
         if S.hitbox then S.proximaHitbox = 0 end
     end
-    hbMenos.MouseButton1Click:Connect(function() S.tamHitbox = math.max(3, S.tamHitbox - 1); atualizarHitbox() end)
-    hbMais.MouseButton1Click:Connect(function() S.tamHitbox = math.min(20, S.tamHitbox + 1); atualizarHitbox() end)
+    GS.conectar(hbMenos.MouseButton1Click,function() S.tamHitbox = math.max(3, S.tamHitbox - 1); atualizarHitbox() end)
+    GS.conectar(hbMais.MouseButton1Click,function() S.tamHitbox = math.min(20, S.tamHitbox + 1); atualizarHitbox() end)
 
-    ScreenGui.Destroying:Connect(function()
+    GS.conectar(ScreenGui.Destroying,function()
         desligar()
         removerHooks()
         pcall(function() destaque:Destroy() end)
@@ -13662,7 +13960,7 @@ GS.iniciarNoRecoil = function()
         if R.varrendo or type(getgc) ~= "function" then return end
         R.varrendo = true
         local minha = R.geracao
-        task.spawn(function()
+        GS.spawn(function()
             local ok, lista = pcall(getgc, true)
             if ok and type(lista) == "table" then
                 for i = 1, #lista do
@@ -13766,25 +14064,25 @@ GS.iniciarNoRecoil = function()
         R.ativo = true; R.pitch = nil; R.segurados = 0
         R.loopId = R.loopId + 1
         local meuLoop = R.loopId
-        table.insert(R.conns, RunService.RenderStepped:Connect(function() pcall(passoCamera) end))
+        table.insert(R.conns, GS.conectar(RunService.RenderStepped,function() pcall(passoCamera) end))
         pcall(function()
-            RunService:BindToRenderStep("GringoNoRecoil", Enum.RenderPriority.Last.Value + 1,
+            GS.bindRender(RunService,"GringoNoRecoil", Enum.RenderPriority.Last.Value + 1,
                 function() pcall(passoCamera) end)
         end)
-        table.insert(R.conns, RunService.Heartbeat:Connect(function() pcall(manter) end))
+        table.insert(R.conns, GS.conectar(RunService.Heartbeat,function() pcall(manter) end))
         -- equipou/trocou de arma: varre na hora
         local function aoPersonagem(char)
-            table.insert(R.conns, char.ChildAdded:Connect(function(o)
+            table.insert(R.conns, GS.conectar(char.ChildAdded,function(o)
                 if o:IsA("Tool") then
-                    task.delay(0.35, function() if R.ativo then aplicarArma() end end)
+                    GS.delay(0.35, function() if R.ativo then aplicarArma() end end)
                 end
             end))
         end
         if LocalPlayer.Character then aoPersonagem(LocalPlayer.Character) end
-        table.insert(R.conns, LocalPlayer.CharacterAdded:Connect(aoPersonagem))
+        table.insert(R.conns, GS.conectar(LocalPlayer.CharacterAdded,aoPersonagem))
         aplicarArma()
         -- status + revarredura (arma que recria a config ao atirar/recarregar)
-        task.spawn(function()
+        GS.spawn(function()
             local proxVarredura = os.clock() + 15
             while R.ativo and R.loopId == meuLoop do
                 task.wait(0.5)
@@ -13801,10 +14099,10 @@ GS.iniciarNoRecoil = function()
         setStatus("ON · PROCURANDO A ARMA...")
         GS.toast("No Recoil ON", true)
         if type(getgc) ~= "function" then
-            task.delay(0.6, function() GS.toast("Sem getgc: só câmera + Tools", false) end)
+            GS.delay(0.6, function() GS.toast("Sem getgc: só câmera + Tools", false) end)
         end
         if not UserInputService.MouseEnabled then
-            task.delay(1.2, function() GS.toast("Celular: câmera fica de fora", false) end)
+            GS.delay(1.2, function() GS.toast("Celular: câmera fica de fora", false) end)
         end
     end
     local function desligar(silencioso)
@@ -13821,7 +14119,7 @@ GS.iniciarNoRecoil = function()
     end
 
     -- ── Cliques ─────────────────────────────────────────────────
-    togR.MouseButton1Click:Connect(function()
+    GS.conectar(togR.MouseButton1Click,function()
         if R.ativo then desligar() else ligar() end
     end)
     local function reaplicar()
@@ -13829,24 +14127,24 @@ GS.iniciarNoRecoil = function()
         restaurar()
         aplicarArma()
     end
-    togC.MouseButton1Click:Connect(function()
+    GS.conectar(togC.MouseButton1Click,function()
         R.camera = not R.camera; R.pitch = nil
         togC.Text = R.camera and "CAMERA: ON" or "CAMERA: OFF"
     end)
-    togA.MouseButton1Click:Connect(function()
+    GS.conectar(togA.MouseButton1Click,function()
         R.arma = not R.arma
         togA.Text = R.arma and "ARMA: ON" or "ARMA: OFF"
         reaplicar()
     end)
-    togB.MouseButton1Click:Connect(function()
+    GS.conectar(togB.MouseButton1Click,function()
         R.bala = not R.bala
         togB.Text = R.bala and "SPREAD: ON" or "SPREAD: OFF"
         reaplicar()
     end)
-    forMenos.MouseButton1Click:Connect(function() R.forca = math.max(10, R.forca - 10); forLbl.Text = R.forca .. "%" end)
-    forMais.MouseButton1Click:Connect(function() R.forca = math.min(100, R.forca + 10); forLbl.Text = R.forca .. "%" end)
+    GS.conectar(forMenos.MouseButton1Click,function() R.forca = math.max(10, R.forca - 10); forLbl.Text = R.forca .. "%" end)
+    GS.conectar(forMais.MouseButton1Click,function() R.forca = math.min(100, R.forca + 10); forLbl.Text = R.forca .. "%" end)
 
-    ScreenGui.Destroying:Connect(function()
+    GS.conectar(ScreenGui.Destroying,function()
         if R.ativo then desligar(true) end
     end)
 end
@@ -14063,7 +14361,7 @@ GS.iniciarMunicao = function()
             if tipo == "tempo" then x.orig = valor end
             -- o jogo mexeu? volta NA HORA (nem aparece o numero caindo)
             local sinal = attr and o:GetAttributeChangedSignal(attr) or o:GetPropertyChangedSignal("Value")
-            table.insert(M.sinais, sinal:Connect(function()
+            table.insert(M.sinais, GS.conectar(sinal,function()
                 if M.ativo then pcall(corrigirInst, o, attr) end
             end))
         elseif tipo == "pente" and valor > x.alvo then
@@ -14120,7 +14418,7 @@ GS.iniciarMunicao = function()
         if M.varrendo or type(getgc) ~= "function" then return end
         M.varrendo = true
         local minha = M.geracao
-        task.spawn(function()
+        GS.spawn(function()
             local ok, lista = pcall(getgc, true)
             if ok and type(lista) == "table" then
                 for i = 1, #lista do
@@ -14197,18 +14495,18 @@ GS.iniciarMunicao = function()
         M.ativo = true; M.ligouEm = os.clock()
         M.loopId = M.loopId + 1
         local meuLoop = M.loopId
-        table.insert(M.conns, RunService.Heartbeat:Connect(function() pcall(manter) end))
+        table.insert(M.conns, GS.conectar(RunService.Heartbeat,function() pcall(manter) end))
         local function aoPersonagem(char)
-            table.insert(M.conns, char.ChildAdded:Connect(function(o)
+            table.insert(M.conns, GS.conectar(char.ChildAdded,function(o)
                 if o:IsA("Tool") then
-                    task.delay(0.35, function() if M.ativo then aplicar() end end)
+                    GS.delay(0.35, function() if M.ativo then aplicar() end end)
                 end
             end))
         end
         if LocalPlayer.Character then aoPersonagem(LocalPlayer.Character) end
-        table.insert(M.conns, LocalPlayer.CharacterAdded:Connect(aoPersonagem))
+        table.insert(M.conns, GS.conectar(LocalPlayer.CharacterAdded,aoPersonagem))
         aplicar()
-        task.spawn(function()
+        GS.spawn(function()
             local proxVarredura = os.clock() + 20
             while M.ativo and M.loopId == meuLoop do
                 task.wait(0.5)
@@ -14230,7 +14528,7 @@ GS.iniciarMunicao = function()
         status.TextColor3 = T.text
         GS.toast("Munição infinita ON", true)
         if type(getgc) ~= "function" then
-            task.delay(0.6, function() GS.toast("Sem getgc: só Values da Tool", false) end)
+            GS.delay(0.6, function() GS.toast("Sem getgc: só Values da Tool", false) end)
         end
     end
     local function desligar(silencioso)
@@ -14245,7 +14543,7 @@ GS.iniciarMunicao = function()
     end
 
     -- ── Cliques ─────────────────────────────────────────────────
-    togM.MouseButton1Click:Connect(function()
+    GS.conectar(togM.MouseButton1Click,function()
         if M.ativo then desligar() else ligar() end
     end)
     local function reaplicar()
@@ -14253,18 +14551,18 @@ GS.iniciarMunicao = function()
         restaurar()
         aplicar()
     end
-    togR.MouseButton1Click:Connect(function()
+    GS.conectar(togR.MouseButton1Click,function()
         M.recarga = not M.recarga
         togR.Text = M.recarga and "RECARGA: ON" or "RECARGA: OFF"
         reaplicar()
     end)
-    togD.MouseButton1Click:Connect(function()
+    GS.conectar(togD.MouseButton1Click,function()
         M.destravar = not M.destravar
         togD.Text = M.destravar and "DESTRAVAR: ON" or "DESTRAVAR: OFF"
         reaplicar()
     end)
 
-    ScreenGui.Destroying:Connect(function()
+    GS.conectar(ScreenGui.Destroying,function()
         if M.ativo then desligar(true) end
     end)
 end
@@ -14626,7 +14924,7 @@ GS.iniciarVelocidade = function()
         e[chave] = x
         if tipo ~= "flag_sim" and tipo ~= "flag_nao" then V.nAcel = V.nAcel + 1 end
         local sinal = attr and o:GetAttributeChangedSignal(attr) or o:GetPropertyChangedSignal("Value")
-        table.insert(V.sinais, sinal:Connect(function()
+        table.insert(V.sinais, GS.conectar(sinal,function()
             if V.ativo then pcall(corrigirInst, o, attr) end
         end))
         pcall(corrigirInst, o, attr)
@@ -14663,7 +14961,7 @@ GS.iniciarVelocidade = function()
         if V.varrendo or type(getgc) ~= "function" then return end
         V.varrendo = true
         local minha = V.geracao
-        task.spawn(function()
+        GS.spawn(function()
             local ok, lista = pcall(getgc, true)
             if ok and type(lista) == "table" then
                 for i = 1, #lista do
@@ -14894,36 +15192,36 @@ GS.iniciarVelocidade = function()
         local meuLoop = V.loopId
         -- PC: clique fora do menu. Celular: toque no BOTAO de tiro (gpe=true);
         -- toque arrastando a camera (gpe=false) nao conta
-        table.insert(V.conns, UserInputService.InputBegan:Connect(function(io, gpe)
+        table.insert(V.conns, GS.conectar(UserInputService.InputBegan,function(io, gpe)
             local atirou = false
             if ehTiroPC(io) then V.mb1 = true; atirou = true
             elseif io.UserInputType == Enum.UserInputType.Touch and gpe then V.toques[io] = true; atirou = true end
             -- comecou a atirar e a ultima varredura e velha: varre a arma da mao
-            if atirou and relogioReal() - V.ultimaVarredura > 4 then task.spawn(aplicar) end
+            if atirou and relogioReal() - V.ultimaVarredura > 4 then GS.spawn(aplicar) end
             -- trocou de arma no teclado (1 a 9): varre a arma nova
             if NUMEROS[io.KeyCode] then
-                task.delay(0.4, function() if V.ativo then aplicar() end end)
+                GS.delay(0.4, function() if V.ativo then aplicar() end end)
             end
         end))
-        table.insert(V.conns, UserInputService.InputEnded:Connect(function(io)
+        table.insert(V.conns, GS.conectar(UserInputService.InputEnded,function(io)
             if io.UserInputType == Enum.UserInputType.MouseButton1 then V.mb1 = false
             elseif io.UserInputType == Enum.UserInputType.Touch then V.toques[io] = nil end
         end))
-        table.insert(V.conns, RunService.Heartbeat:Connect(function(dt)
+        table.insert(V.conns, GS.conectar(RunService.Heartbeat,function(dt)
             pcall(manter)
             pcall(passoRajada, dt)
         end))
         local function aoPersonagem(char)
-            table.insert(V.conns, char.ChildAdded:Connect(function(o)
+            table.insert(V.conns, GS.conectar(char.ChildAdded,function(o)
                 if o:IsA("Tool") then
-                    task.delay(0.35, function() if V.ativo then aplicar() end end)
+                    GS.delay(0.35, function() if V.ativo then aplicar() end end)
                 end
             end))
         end
         if LocalPlayer.Character then aoPersonagem(LocalPlayer.Character) end
-        table.insert(V.conns, LocalPlayer.CharacterAdded:Connect(aoPersonagem))
+        table.insert(V.conns, GS.conectar(LocalPlayer.CharacterAdded,aoPersonagem))
         aplicar()
-        task.spawn(function()
+        GS.spawn(function()
             local proxVarredura = os.clock() + 20
             while V.ativo and V.loopId == meuLoop do
                 task.wait(0.5)
@@ -14942,7 +15240,7 @@ GS.iniciarVelocidade = function()
             end
         end)
         if V.espera and not instalarEspera() then
-            task.delay(1.2, function() GS.toast("Executor sem hookfunction", false) end)
+            GS.delay(1.2, function() GS.toast("Executor sem hookfunction", false) end)
         end
         if V.relogio then instalarRelogio() end
         togV.Text = "VELOCIDADE DA BALA: ON"
@@ -14950,7 +15248,7 @@ GS.iniciarVelocidade = function()
         setStatus("ON · PROCURANDO A ARMA...")
         GS.toast("Velocidade da bala ON", true)
         if not (GS.municao and GS.municao.ativo) then
-            task.delay(0.6, function() GS.toast("Liga a munição infinita junto", true) end)
+            GS.delay(0.6, function() GS.toast("Liga a munição infinita junto", true) end)
         end
     end
     local function desligar(silencioso)
@@ -14966,7 +15264,7 @@ GS.iniciarVelocidade = function()
     end
 
     -- ── Cliques ─────────────────────────────────────────────────
-    togV.MouseButton1Click:Connect(function()
+    GS.conectar(togV.MouseButton1Click,function()
         if V.ativo then desligar() else ligar() end
     end)
     local function reaplicar()
@@ -14975,7 +15273,7 @@ GS.iniciarVelocidade = function()
         aplicar()
     end
     local function chave(btn, campo, nome, refazer)
-        btn.MouseButton1Click:Connect(function()
+        GS.conectar(btn.MouseButton1Click,function()
             V[campo] = not V[campo]
             btn.Text = nome .. (V[campo] and ": ON" or ": OFF")
             if refazer then reaplicar() end
@@ -14992,30 +15290,30 @@ GS.iniciarVelocidade = function()
     -- ate 60: de 5 em 5. Acima: de 10 em 10 ate 120 (2 tiros por quadro).
     -- Nao passa disso: cada tiro e uma mensagem pro servidor, e mais que isso
     -- vira enxurrada (deixa o servidor lento pra todo mundo e da kick).
-    tpsMenos.MouseButton1Click:Connect(function()
+    GS.conectar(tpsMenos.MouseButton1Click,function()
         V.tps = V.tps > 60 and V.tps - 10 or math.max(5, V.tps - 5); atualizarTps()
     end)
-    tpsMais.MouseButton1Click:Connect(function()
+    GS.conectar(tpsMais.MouseButton1Click,function()
         V.tps = V.tps >= 60 and math.min(120, V.tps + 10) or V.tps + 5; atualizarTps()
     end)
-    togE.MouseButton1Click:Connect(function()
+    GS.conectar(togE.MouseButton1Click,function()
         V.espera = not V.espera
         togE.Text = V.espera and "ESPERA: ON" or "ESPERA: OFF"
         if V.espera and V.ativo and not instalarEspera() then GS.toast("Executor sem hookfunction", false) end
     end)
-    togRl.MouseButton1Click:Connect(function()
+    GS.conectar(togRl.MouseButton1Click,function()
         V.relogio = not V.relogio
         togRl.Text = V.relogio and "RELOGIO: ON" or "RELOGIO: OFF"
         if V.relogio and V.ativo and not instalarRelogio() then GS.toast("Executor sem hookfunction", false) end
     end)
-    togU.MouseButton1Click:Connect(function()
+    GS.conectar(togU.MouseButton1Click,function()
         V.universal = not V.universal
         togU.Text = V.universal and "UNIVERSAL: ON" or "UNIVERSAL: OFF"
         table.clear(cacheArma)
         reaplicar()
     end)
 
-    ScreenGui.Destroying:Connect(function()
+    GS.conectar(ScreenGui.Destroying,function()
         if V.ativo then desligar(true) end
     end)
 end
@@ -15195,7 +15493,7 @@ GS.iniciarModoFantasma = function()
     end
     function F.conectar(sinal,callback,lista)
         local ok,conn = pcall(function()
-            return sinal:Connect(callback)
+            return GS.conectar(sinal,callback)
         end)
         if ok and conn then
             table.insert(lista or F.s.conns,conn)
@@ -15611,7 +15909,7 @@ GS.iniciarModoFantasma = function()
         end
     end
     function F.buscarExternos(geracao)
-        task.spawn(function()
+        GS.spawn(function()
             local fontes = {workspace}
             local gui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
             if gui then
@@ -15662,7 +15960,7 @@ GS.iniciarModoFantasma = function()
         F.conectar(
             char.DescendantRemoving,
             function(obj)
-                task.defer(function()
+                GS.defer(function()
                     if s.ciclo ~= ciclo then
                         return
                     end
@@ -15745,7 +16043,7 @@ GS.iniciarModoFantasma = function()
             return nil
         end
         s.remoto = remoto
-        s.remotoConn = remoto.OnClientEvent:Connect(function(comando,dados)
+        s.remotoConn = GS.conectar(remoto.OnClientEvent,function(comando,dados)
             if not s.morto then
                 F.ack(comando,dados)
             end
@@ -15930,7 +16228,7 @@ GS.iniciarModoFantasma = function()
                 or F.classe(obj,"Highlight")
             then
                 local geracao = F.s.geracao
-                task.delay(0.15,function()
+                GS.delay(0.15,function()
                     if F.estaVivo(geracao) then
                         F.externo(obj)
                     end
@@ -15985,7 +16283,7 @@ GS.iniciarRetorno = function()
     GS.retornoSeguro = s
 
     function C.conectar(signal,fn)
-        local conn = signal:Connect(fn)
+        local conn = GS.conectar(signal,fn)
         table.insert(s.conns,conn)
         return conn
     end
@@ -16167,7 +16465,7 @@ GS.iniciarRetorno = function()
         local remoto = rs:FindFirstChild("GringoPanelBridge")
         if not remoto or not remoto:IsA("RemoteEvent") then return nil end
         s.remoto = remoto
-        s.remotoConn = remoto.OnClientEvent:Connect(C.ack)
+        s.remotoConn = GS.conectar(remoto.OnClientEvent,C.ack)
         return remoto
     end
     function C.solicitar()
@@ -16379,7 +16677,7 @@ GS.rodar("Retorno seguro", GS.iniciarRetorno, GS.painelRetorno)
 -- efeito de onda dos cliques e deixa a checagem das chaves mais espacada.
 do
     if GS.leveBtn then
-        GS.leveBtn.MouseButton1Click:Connect(function()
+        GS.conectar(GS.leveBtn.MouseButton1Click,function()
             GS.leve = not GS.leve
             GS.leveBtn.Text = GS.leve and "MODO LEVE: ON" or "MODO LEVE: OFF"
             for _, anim in ipairs(GS.animsInfinitas) do
@@ -16392,7 +16690,7 @@ end
 
 -- SYNC DAS CHAVES: a cada 0.3s toda chave do painel confere o estado real
 -- da funcao (texto ON/OFF) e corrige o desenho se estiver errado.
-task.spawn(function()
+GS.spawn(function()
     while ScreenGui and ScreenGui.Parent do
         for _, f in ipairs(GS.syncToggles or {}) do pcall(f) end
         task.wait(GS.leve and 0.8 or 0.3)
@@ -16402,4 +16700,5 @@ end)
 -- ABERTURA SILENCIOSA: nada liga sozinho (toda funcao principal nasce OFF) e
 -- os avisos de "ativado/desativado" so valem depois que tudo carregou e as
 -- chaves sincronizaram (o sync roda a cada 0.3s; 2s cobre com folga).
-task.delay(2, function() GS.avisosLiberados = true end)
+GS.delay(2, function() GS.avisosLiberados = true end)
+
