@@ -1,4 +1,4 @@
--- GRINGOdll V50.17 · Feito pelo @henrique_system
+-- GRINGOdll V50.19 · Feito pelo @henrique_system
 -- Encerra a execucao anterior quando ela ja possui o registro de recursos.
 do
     local ok,ambiente=pcall(function() return type(getgenv)=="function" and getgenv() or _G end)
@@ -142,7 +142,7 @@ function GS.finalizarRecursos()
     print("[DEBUG-BOT]: Encerrar tudo: tarefas, eventos e objetos locais removidos")
 end
 
-GS.versao = "V50.17"
+GS.versao = "V50.19"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -6188,7 +6188,7 @@ GS.iniciarValeRush = function()
     info.AutoButtonColor=false
     local contador=U.pequeno(painel,"FPS: medindo...",nil,6,"gauge")
     contador.AutoButtonColor=false
-    local boxBtn=U.tog(painel,"BOX DOS JOGADORES: OFF",7,"users")
+    local boxBtn=U.tog(painel,"ESP PROFISSIONAL: OFF",7,"users")
     local focoBtn=U.tog(painel,"FOCAR COM BOTÃO DO MEIO: OFF",8,"crosshair")
     local focoStatus=U.pequeno(painel,"FOCO: DESLIGADO",nil,9,"info")
     focoStatus.AutoButtonColor=false
@@ -6294,6 +6294,7 @@ GS.iniciarValeRush = function()
         local r=V.boxPlayers[player]
         if not r then return end
         if r.visual then r.visual:Destroy(); r.visual=nil end
+        r.ui=nil
     end
     function V.desenharBox(player,char)
         if not V.box or player==jogador then return end
@@ -6302,92 +6303,128 @@ GS.iniciarValeRush = function()
         V.limparBox(player)
         r.char=char
         if not char then return end
-        local root=char:FindFirstChild("HumanoidRootPart")
-        if not root then return end -- DescendantAdded tenta novamente quando carregar.
-        local pasta=GS.novaInstancia("Folder")
-        pasta.Name="ValeRushJogador"
-        pasta.Parent=V.boxFolder
-        local box=GS.novaInstancia("BoxHandleAdornment")
-        box.Name="Box"
-        box.Adornee=root
-        box.Size=Vector3.new(4,6,3)
-        box.CFrame=CFrame.new(0,0,0)
-        box.Color3=Color3.fromRGB(70,255,210)
-        box.Transparency=0.72
-        box.AlwaysOnTop=false
-        box.Parent=pasta
-        local brilho=GS.novaInstancia("Highlight")
-        brilho.Adornee=char
-        brilho.FillColor=Color3.fromRGB(70,255,210)
-        brilho.OutlineColor=Color3.fromRGB(210,255,245)
-        brilho.FillTransparency=0.9
-        brilho.OutlineTransparency=0
-        brilho.DepthMode=Enum.HighlightDepthMode.Occluded
-        brilho.Parent=pasta
-        local nome=GS.novaInstancia("BillboardGui")
-        nome.Adornee=root; nome.Size=UDim2.fromOffset(180,26)
-        nome.StudsOffset=Vector3.new(0,4,0)
-        nome.AlwaysOnTop=false; nome.LightInfluence=0; nome.MaxDistance=600
-        nome.Parent=pasta
-        local label=GS.novaInstancia("TextLabel")
-        label.Size=UDim2.fromScale(1,1); label.BackgroundTransparency=1
-        label.Text=player.DisplayName.." (@"..player.Name..")"
-        label.TextColor3=Color3.fromRGB(210,255,245)
-        label.TextStrokeTransparency=0.2; label.TextSize=13; label.Font=Enum.Font.GothamBold
-        label.Parent=nome
-        r.visual=pasta
+        local pasta=GS.novaInstancia("Folder"); pasta.Name="ESP_"..player.Name; pasta.Parent=V.boxFolder
+        local cor=Color3.fromRGB(70,235,210)
+        local function frame(nome,pai)
+            local f=GS.novaInstancia("Frame");f.Name=nome;f.BorderSizePixel=0;f.BackgroundTransparency=1;f.Parent=pai;return f
+        end
+        local box=frame("Caixa",pasta);box.ZIndex=81
+        local contorno=GS.novaInstancia("UIStroke");contorno.Color=Color3.fromRGB(6,12,20);contorno.Thickness=3;contorno.Parent=box
+        local interno=frame("Borda",box);interno.Size=UDim2.fromScale(1,1);interno.ZIndex=82
+        local stroke=GS.novaInstancia("UIStroke");stroke.Color=cor;stroke.Thickness=1;stroke.Parent=interno
+        local function texto(nome,altura)
+            local t=GS.novaInstancia("TextLabel");t.Name=nome;t.Size=UDim2.new(1,100,0,altura)
+            t.Position=UDim2.new(0,-50,0,-altura-3);t.BackgroundTransparency=1;t.TextColor3=Color3.fromRGB(240,255,255)
+            t.TextStrokeColor3=Color3.fromRGB(0,0,0);t.TextStrokeTransparency=0.15
+            t.Font=Enum.Font.GothamBold;t.TextSize=12;t.ZIndex=84;t.Parent=box;return t
+        end
+        local nome=texto("Nome",18);nome.Text=player.DisplayName.." (@"..player.Name..")"
+        local distancia=texto("Distancia",16);distancia.Position=UDim2.new(0,-50,1,4)
+        local saude=frame("VidaFundo",box);saude.BackgroundTransparency=0;saude.BackgroundColor3=Color3.fromRGB(8,12,18)
+        saude.Position=UDim2.fromOffset(-6,0);saude.Size=UDim2.new(0,3,1,0);saude.ZIndex=82
+        local barra=frame("Vida",saude);barra.BackgroundTransparency=0;barra.BackgroundColor3=Color3.fromRGB(80,240,130)
+        barra.AnchorPoint=Vector2.new(0,1);barra.Position=UDim2.fromScale(0,1);barra.Size=UDim2.fromScale(1,1);barra.ZIndex=83
+        local linha=frame("Linha",pasta);linha.BackgroundTransparency=0.25;linha.BackgroundColor3=cor;linha.AnchorPoint=Vector2.new(0.5,0.5);linha.ZIndex=80
+        local seta=GS.novaInstancia("TextLabel");seta.Name="ForaDaTela";seta.Size=UDim2.fromOffset(22,22)
+        seta.AnchorPoint=Vector2.new(0.5,0.5);seta.BackgroundTransparency=1;seta.Text="▲";seta.TextSize=19
+        seta.TextColor3=cor;seta.TextStrokeTransparency=0.1;seta.ZIndex=83;seta.Parent=pasta
+        box.Visible=false;linha.Visible=false;seta.Visible=false
+        r.visual=pasta;r.ui={box=box,stroke=stroke,distancia=distancia,barra=barra,linha=linha,seta=seta}
+        r.proximoTamanho=0;r.tamanho=Vector3.new(4,6,3)
+    end
+    function V.atualizarBoxes()
+        if not V.box or not V.vivo then return end
+        local camera=workspace.CurrentCamera
+        if not camera then return end
+        local viewport=camera.ViewportSize
+        if viewport.X<1 or viewport.Y<1 then return end
+        local minhaRaiz=V.raizPersonagem(jogador.Character)
+        local origem=minhaRaiz and minhaRaiz.Position or camera.CFrame.Position
+        for player,r in pairs(V.boxPlayers) do
+            local ui=r.ui
+            if ui then
+                ui.box.Visible=false;ui.linha.Visible=false;ui.seta.Visible=false
+                local char=player.Character
+                local root,hum=V.raizPersonagem(char)
+                if char and root and hum and hum.Health>0 and char:IsDescendantOf(workspace) then
+                    local cor=char==V.alvoFoco and Color3.fromRGB(255,200,70) or Color3.fromRGB(70,235,210)
+                    local pos,visivel=camera:WorldToViewportPoint(root.Position)
+                    if visivel and pos.Z>0 then
+                        if os.clock()>r.proximoTamanho then
+                            r.proximoTamanho=os.clock()+1
+                            local ok,tam=pcall(function() return char:GetExtentsSize() end)
+                            if ok then r.tamanho=Vector3.new(math.clamp(tam.X,3,8),math.clamp(tam.Y,5,10),3) end
+                        end
+                        local metade=camera.CFrame.UpVector*(r.tamanho.Y*0.5)
+                        local topo=camera:WorldToViewportPoint(root.Position+metade)
+                        local base=camera:WorldToViewportPoint(root.Position-metade)
+                        local h=math.clamp(math.abs(base.Y-topo.Y),6,viewport.Y*2)
+                        local w=math.clamp(h*r.tamanho.X/r.tamanho.Y,4,viewport.X)
+                        local x,y=pos.X-w*0.5,pos.Y-h*0.5
+                        ui.box.Position=UDim2.fromOffset(x,y);ui.box.Size=UDim2.fromOffset(w,h);ui.box.Visible=true
+                        ui.stroke.Color=cor;ui.linha.BackgroundColor3=cor
+                        local vida=math.clamp(hum.Health/math.max(hum.MaxHealth,1),0,1)
+                        ui.barra.Size=UDim2.fromScale(1,vida);ui.barra.BackgroundColor3=Color3.fromRGB(255*(1-vida),210*vida,70)
+                        ui.distancia.Text=string.format("%.0f studs · %d%%",(root.Position-origem).Magnitude,math.floor(vida*100+0.5))
+                        local a=Vector2.new(viewport.X*0.5,viewport.Y-35)
+                        local b=Vector2.new(pos.X,math.clamp(y+h,0,viewport.Y))
+                        local delta=b-a
+                        ui.linha.Position=UDim2.fromOffset((a.X+b.X)*0.5,(a.Y+b.Y)*0.5)
+                        ui.linha.Size=UDim2.fromOffset(delta.Magnitude,1)
+                        ui.linha.Rotation=math.deg(math.atan2(delta.Y,delta.X));ui.linha.Visible=true
+                    else
+                        local dx,dy=pos.X-viewport.X*0.5,pos.Y-viewport.Y*0.5
+                        if pos.Z<0 then dx,dy=-dx,-dy end
+                        local t=math.min(math.max(1,viewport.X*0.5-28)/math.max(math.abs(dx),0.01),math.max(1,viewport.Y*0.5-50)/math.max(math.abs(dy),0.01))
+                        ui.seta.Position=UDim2.fromOffset(viewport.X*0.5+dx*t,viewport.Y*0.5+dy*t)
+                        ui.seta.Rotation=math.deg(math.atan2(dy,dx))+90;ui.seta.TextColor3=cor;ui.seta.Visible=true
+                    end
+                end
+            end
+        end
     end
     function V.seguirPlayer(player)
         if player==jogador or V.boxPlayers[player] then return end
-        local r={}; V.boxPlayers[player]=r
-        function r.ligarChar(char)
-            if r.desc then r.desc:Disconnect(); r.desc=nil end
-            if r.descRemove then r.descRemove:Disconnect(); r.descRemove=nil end
-            if char then
-                r.desc=GS.conectar(char.DescendantAdded,function(obj)
-                    if obj.Name=="HumanoidRootPart" then V.desenharBox(player,char) end
-                end)
-                r.descRemove=GS.conectar(char.DescendantRemoving,function(obj)
-                    if obj.Name=="HumanoidRootPart" then V.limparBox(player) end
-                end)
-            end
-            V.desenharBox(player,char)
-        end
-        r.add=GS.conectar(player.CharacterAdded,r.ligarChar)
-        r.remove=GS.conectar(player.CharacterRemoving,function()
-            V.limparBox(player)
-            if r.desc then r.desc:Disconnect(); r.desc=nil end
-            if r.descRemove then r.descRemove:Disconnect(); r.descRemove=nil end
-            r.char=nil
-        end)
-        r.ligarChar(player.Character)
+        local r={};V.boxPlayers[player]=r
+        r.add=GS.conectar(player.CharacterAdded,function(char) V.desenharBox(player,char) end)
+        r.remove=GS.conectar(player.CharacterRemoving,function() V.limparBox(player);r.char=nil end)
+        V.desenharBox(player,player.Character)
     end
     function V.removerPlayer(player)
         local r=V.boxPlayers[player]
         if not r then return end
         V.limparBox(player)
-        for _,nome in ipairs({"add","remove","desc","descRemove"}) do if r[nome] then r[nome]:Disconnect() end end
+        if r.add then r.add:Disconnect() end
+        if r.remove then r.remove:Disconnect() end
         V.boxPlayers[player]=nil
     end
     function V.boxes(ativo)
         if V.box==ativo then return end
         V.box=ativo
         if ativo then
-            V.boxFolder=GS.novaInstancia("Folder")
-            V.boxFolder.Name="ValeRushBoxes"; V.boxFolder.Parent=ScreenGui
+            V.boxFolder=GS.novaInstancia("Frame");V.boxFolder.Name="ValeRushESP"
+            V.boxFolder.BackgroundTransparency=1;V.boxFolder.Size=UDim2.fromScale(1,1);V.boxFolder.Parent=ScreenGui
             V.playerAdd=GS.conectar(Players.PlayerAdded,V.seguirPlayer)
             V.playerRemove=GS.conectar(Players.PlayerRemoving,V.removerPlayer)
             for _,p in ipairs(Players:GetPlayers()) do V.seguirPlayer(p) end
+            local tempo=0
+            GS.bindRender(Run,"GringoValeRushESP",Enum.RenderPriority.Last.Value+2,function(dt)
+                tempo=tempo+dt;if tempo<1/40 then return end;tempo=0
+                local ok,erro=pcall(V.atualizarBoxes)
+                if not ok and os.clock()>(V.proximoErroESP or 0) then
+                    V.proximoErroESP=os.clock()+5;warn("[DEBUG-BOT]: ESP:",erro)
+                end
+            end)
         else
-            if V.playerAdd then V.playerAdd:Disconnect(); V.playerAdd=nil end
-            if V.playerRemove then V.playerRemove:Disconnect(); V.playerRemove=nil end
-            local lista={}
-            for p in pairs(V.boxPlayers) do table.insert(lista,p) end
+            Run:UnbindFromRenderStep("GringoValeRushESP")
+            if GS.recursos then GS.recursos.renders.GringoValeRushESP=nil end
+            if V.playerAdd then V.playerAdd:Disconnect();V.playerAdd=nil end
+            if V.playerRemove then V.playerRemove:Disconnect();V.playerRemove=nil end
+            local lista={};for p in pairs(V.boxPlayers) do table.insert(lista,p) end
             for _,p in ipairs(lista) do V.removerPlayer(p) end
-            if V.boxFolder then V.boxFolder:Destroy(); V.boxFolder=nil end
+            if V.boxFolder then V.boxFolder:Destroy();V.boxFolder=nil end
         end
-        boxBtn.Text=ativo and "BOX DOS JOGADORES: ON" or "BOX DOS JOGADORES: OFF"
-        print("[DEBUG-BOT]: Vale Rush: box",ativo)
+        boxBtn.Text=ativo and "ESP PROFISSIONAL: ON" or "ESP PROFISSIONAL: OFF"
     end
 
     function V.otimizar(ativo)
@@ -6481,47 +6518,76 @@ GS.iniciarValeRush = function()
     local mouse=jogador:GetMouse()
     local nomeRender="GringoValeRushFoco"
 
+    function V.raizPersonagem(char)
+        if not char then return nil end
+        local hum=char:FindFirstChildOfClass("Humanoid")
+        local raiz=char:FindFirstChild("HumanoidRootPart") or (hum and hum.RootPart)
+            or char.PrimaryPart or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Head")
+        if raiz and raiz:IsA("BasePart") then return raiz,hum end
+    end
     function V.personagemClicado(parte)
         local atual=parte
         while atual and atual~=workspace do
             if atual:IsA("Model") and atual~=jogador.Character then
-                local hum=atual:FindFirstChildOfClass("Humanoid")
-                local root=atual:FindFirstChild("HumanoidRootPart")
-                if hum and hum.Health>0 and root then return atual end
+                local root,hum=V.raizPersonagem(atual)
+                if root and hum and hum.Health>0 then return atual end
             end
             atual=atual.Parent
         end
-        return nil
+    end
+    function V.proximoCursor()
+        local camera=workspace.CurrentCamera
+        if not camera then return nil end
+        local cursor=entrada:GetMouseLocation()
+        local melhor,menor=nil,220*220
+        for _,p in ipairs(Players:GetPlayers()) do
+            local char=p.Character
+            local root,hum=V.raizPersonagem(char)
+            if p~=jogador and char and root and hum and hum.Health>0 and char:IsDescendantOf(workspace) then
+                local tela,visivel=camera:WorldToScreenPoint(root.Position)
+                if visivel and tela.Z>0 then
+                    local dx,dy=tela.X-cursor.X,tela.Y-cursor.Y
+                    local d=dx*dx+dy*dy
+                    if d<menor then menor=d; melhor=char end
+                end
+            end
+        end
+        return melhor
     end
     function V.limparFoco()
         V.alvoFoco=nil
+        V.ultimaRaizFoco=nil
         Run:UnbindFromRenderStep(nomeRender)
         if GS.recursos then GS.recursos.renders[nomeRender]=nil end
         for camera,r in pairs(V.focoCameras) do
             pcall(function()
+                if camera.CameraType==Enum.CameraType.Scriptable then camera.CameraType=r.tipo end
                 if camera.Focus==r.aplicado then camera.Focus=r.original end
             end)
         end
         V.focoCameras=setmetatable({}, {__mode="k"})
-        focoStatus.Text=V.focoAtivo and "Clique do meio: personagem para focar · vazio para soltar" or "FOCO: DESLIGADO"
+        focoStatus.Text=V.focoAtivo and "Botão do meio perto de alguém: focar · mesmo alvo: soltar" or "FOCO: DESLIGADO"
     end
     function V.passoFoco()
         if not V.vivo or not V.focoAtivo or GS.fechando then V.limparFoco(); return end
         local char=V.alvoFoco
-        local hum=char and char:FindFirstChildOfClass("Humanoid")
-        local root=char and char:FindFirstChild("HumanoidRootPart")
+        local root,hum=V.raizPersonagem(char)
         if not char or char==jogador.Character or not char:IsDescendantOf(workspace)
-            or not hum or hum.Health<=0 or not root then
-            V.limparFoco()
-            return
-        end
+            or not hum or hum.Health<=0 or not root then V.limparFoco(); return end
         local camera=workspace.CurrentCamera
         if not camera then return end
+        if not V.focoCameras[camera] then
+            V.focoCameras[camera]={original=camera.Focus,tipo=camera.CameraType}
+        end
+        local minhaRaiz=V.raizPersonagem(jogador.Character)
+        local pos=minhaRaiz and minhaRaiz.Position
+        local delta=(pos and V.ultimaRaizFoco) and pos-V.ultimaRaizFoco or Vector3.zero
+        V.ultimaRaizFoco=pos
         local head=char:FindFirstChild("Head")
         local ponto=(head and head:IsA("BasePart")) and head.Position or root.Position
-        local origem=camera.CFrame.Position
+        local origem=camera.CFrame.Position+delta
         if (ponto-origem).Magnitude<0.1 then return end
-        if not V.focoCameras[camera] then V.focoCameras[camera]={original=camera.Focus} end
+        camera.CameraType=Enum.CameraType.Scriptable
         local foco=CFrame.new(ponto)
         V.focoCameras[camera].aplicado=foco
         camera.CFrame=CFrame.lookAt(origem,ponto)
@@ -6532,25 +6598,23 @@ GS.iniciarValeRush = function()
         if not char or char==V.alvoFoco then V.limparFoco(); return end
         V.limparFoco()
         V.alvoFoco=char
-        focoStatus.Text="FOCADO: "..char.Name.." · clique em outro para trocar"
-        GS.bindRender(Run,nomeRender,Enum.RenderPriority.Camera.Value+5,function()
+        focoStatus.Text="FOCADO: "..char.Name.." · meio em outro para trocar"
+        GS.bindRender(Run,nomeRender,Enum.RenderPriority.Last.Value+1,function()
             local ok,erro=pcall(V.passoFoco)
-            if not ok then
-                warn("[DEBUG-BOT]: Vale Rush foco:",erro)
-                V.limparFoco()
-            end
+            if not ok then warn("[DEBUG-BOT]: Foco:",erro); V.limparFoco() end
         end)
-        print("[DEBUG-BOT]: Vale Rush: camera focada em",char.Name)
+        V.passoFoco()
+        print("[DEBUG-BOT]: Vale Rush: foco travado",char.Name)
     end
     function V.focar(ativo)
         V.focoAtivo=ativo
         V.limparFoco()
         if V.focoEntrada then V.focoEntrada:Disconnect(); V.focoEntrada=nil end
         if ativo then
-            V.focoEntrada=GS.conectar(entrada.InputBegan,function(input,processado)
-                if processado or entrada:GetFocusedTextBox() then return end
-                if input.UserInputType~=Enum.UserInputType.MouseButton3 then return end
-                V.selecionarFoco(V.personagemClicado(mouse.Target))
+            V.focoEntrada=GS.conectar(entrada.InputBegan,function(input)
+                if input.UserInputType~=Enum.UserInputType.MouseButton3 or entrada:GetFocusedTextBox() then return end
+                -- MouseButton3 pode chegar marcado como processado pelo controle da camera.
+                V.selecionarFoco(V.personagemClicado(mouse.Target) or V.proximoCursor())
             end)
         end
         focoBtn.Text=ativo and "FOCAR COM BOTÃO DO MEIO: ON" or "FOCAR COM BOTÃO DO MEIO: OFF"
@@ -7239,7 +7303,7 @@ GS.iniciarFarma = function()
     end
 
     local function atualizarResumo(total)
-        status.Text = "V50.17 · " .. R.fase .. " · LOCALIZADOS: " .. total
+        status.Text = "V50.19 · " .. R.fase .. " · LOCALIZADOS: " .. total
         local limite = workspace.StreamingEnabled
             and "Streaming ativo: aparição no cliente não prova spawn no servidor."
             or "Streaming desligado: novas aparições são observações locais."
@@ -15409,943 +15473,103 @@ end
 GS.rodar("Velocidade da bala", GS.iniciarVelocidade, GS.painelMunicao)
 
 -- ═══════════════════════════════════════════════════════════════
-GS.iniciarModoFantasma = function()
-    -- Uma entrada publica, um controle e um estado para todo o efeito.
-    local F = {}
-    F.cfg = {
-        bridge = "GringoPanelBridge",
-        atributo = "GringoGhostEnabled",
-        maxFila = 768,
-        lote = 48,
-        auditoria = 1.5,
-        timeout = 3,
-        pausaPonte = 2,
-        logIntervalo = 4,
-        maxLog = 24,
-        versao = 1,
-    }
-    F.s = {
-        ativo = false,
-        morto = false,
-        geracao = 0,
-        ciclo = 0,
-        personagem = nil,
-        objetos = {},
-        fila = {},
-        pendentes = {},
-        conns = {},
-        charConns = {},
-        remoto = nil,
-        remotoConn = nil,
-        requisicao = 0,
-        pedidoEm = 0,
-        ultimoPedido = -math.huge,
-        ultimaAuditoria = 0,
-        ultimoLog = 0,
-        proximaBusca = 0,
-        servidor = false,
-        aguardando = false,
-        aplicados = 0,
-        restaurados = 0,
-        corrigidos = 0,
-        erros = 0,
-        log = {},
-        fonte = "LOCAL",
-    }
-    -- Apenas propriedades visuais. Saude, colisao e movimento nao sao alterados.
-    F.politicas = {
-        {
-            classe = "BasePart",
-            valores = {
-                LocalTransparencyModifier = 1,
-                CastShadow = false,
-            },
-        },
-        {
-            classe = "Decal",
-            valores = {
-                Transparency = 1,
-            },
-        },
-        {
-            classe = "Texture",
-            valores = {
-                Transparency = 1,
-            },
-        },
-        {
-            classe = "ParticleEmitter",
-            valores = {
-                Enabled = false,
-            },
-        },
-        {
-            classe = "Beam",
-            valores = {
-                Enabled = false,
-            },
-        },
-        {
-            classe = "Trail",
-            valores = {
-                Enabled = false,
-            },
-        },
-        {
-            classe = "Fire",
-            valores = {
-                Enabled = false,
-            },
-        },
-        {
-            classe = "Smoke",
-            valores = {
-                Enabled = false,
-            },
-        },
-        {
-            classe = "Sparkles",
-            valores = {
-                Enabled = false,
-            },
-        },
-        {
-            classe = "PointLight",
-            valores = {
-                Enabled = false,
-            },
-        },
-        {
-            classe = "SpotLight",
-            valores = {
-                Enabled = false,
-            },
-        },
-        {
-            classe = "SurfaceLight",
-            valores = {
-                Enabled = false,
-            },
-        },
-        {
-            classe = "Highlight",
-            valores = {
-                Enabled = false,
-            },
-        },
-        {
-            classe = "BillboardGui",
-            valores = {
-                Enabled = false,
-            },
-        },
-        {
-            classe = "SurfaceGui",
-            valores = {
-                Enabled = false,
-            },
-        },
-        {
-            classe = "PVAdornment",
-            valores = {
-                Visible = false,
-            },
-        },
-        {
-            classe = "HandleAdornment",
-            valores = {
-                Visible = false,
-            },
-        },
-        {
-            classe = "Humanoid",
-            valores = {
-                DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None,
-                HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff,
-                NameDisplayDistance = 0,
-                HealthDisplayDistance = 0,
-            },
-        },
-    }
-    F.ui = {}
-    function F.registrar(tipo,mensagem)
-        local s = F.s
-        local linha = tipo .. " · " .. tostring(mensagem)
-        table.insert(s.log,1,linha)
-        while #s.log > F.cfg.maxLog do
-            table.remove(s.log)
-        end
-        if os.clock()-s.ultimoLog >= F.cfg.logIntervalo or tipo == "ESTADO" then
-            s.ultimoLog = os.clock()
-            print("[DEBUG-BOT][FANTASMA]: " .. linha)
-        end
-    end
-    function F.conectar(sinal,callback,lista)
-        local ok,conn = pcall(function()
-            return GS.conectar(sinal,callback)
-        end)
-        if ok and conn then
-            table.insert(lista or F.s.conns,conn)
-            return conn
-        end
-        F.s.erros = F.s.erros+1
-        return nil
-    end
-    function F.desconectar(lista)
-        for _,conn in ipairs(lista) do
-            pcall(function()
-                conn:Disconnect()
-            end)
-        end
-        table.clear(lista)
-    end
-    function F.classe(obj,nome)
-        local ok,resultado = pcall(function()
-            return obj:IsA(nome)
-        end)
-        return ok and resultado
-    end
-    function F.descendente(obj,pai)
-        if not obj or not pai then
-            return false
-        end
-        if obj == pai then
-            return true
-        end
-        local ok,resultado = pcall(function()
-            return obj:IsDescendantOf(pai)
-        end)
-        return ok and resultado
-    end
-    function F.ler(obj,prop)
-        local ok,valor = pcall(function()
-            return obj[prop]
-        end)
-        if not ok then
-            return false,nil
-        end
-        return true,valor
-    end
-    function F.escrever(obj,prop,valor,registro)
-        if not obj then
-            return false
-        end
-        if registro then
-            registro.escrevendo = true
-        end
-        local ok = pcall(function()
-            obj[prop] = valor
-        end)
-        if registro then
-            registro.escrevendo = false
-        end
-        if not ok then
-            F.s.erros = F.s.erros+1
-        end
-        return ok
-    end
-    function F.adornee(obj)
-        if not (
-            F.classe(obj,"BillboardGui")
-            or F.classe(obj,"SurfaceGui")
-            or F.classe(obj,"Highlight")
-            or F.classe(obj,"PVAdornment")
-            or F.classe(obj,"HandleAdornment")
-        ) then
-            return nil
-        end
-        local ok,alvo = F.ler(obj,"Adornee")
-        if ok then
-            return alvo
-        end
-        return nil
-    end
-    function F.pertence(obj)
-        local char = F.s.personagem
-        if not char or not obj then
-            return false
-        end
-        if F.descendente(obj,char) then
-            return true
-        end
-        return F.descendente(F.adornee(obj),char)
-    end
-    function F.regra(obj)
-        for _,politica in ipairs(F.politicas) do
-            if F.classe(obj,politica.classe) then
-                return politica
-            end
-        end
-        return nil
-    end
-    function F.estaVivo(geracao)
-        return not F.s.morto
-            and F.s.ativo
-            and F.s.geracao == geracao
-            and ScreenGui.Parent ~= nil
-    end
-    function F.restaurarObjeto(obj)
-        local registro = F.s.objetos[obj]
-        if not registro then
-            return
-        end
-        F.desconectar(registro.conns)
-        for prop,valor in pairs(registro.originais) do
-            local ok,atual = F.ler(obj,prop)
-            -- Uma alteracao posterior de outro sistema nao e sobrescrita.
-            if ok and atual == registro.ocultos[prop] then
-                if F.escrever(obj,prop,valor,registro) then
-                    F.s.restaurados = F.s.restaurados+1
-                end
-            end
-        end
-        F.s.objetos[obj] = nil
-        F.s.pendentes[obj] = nil
-    end
-    function F.restaurarTodos()
-        local objetos = {}
-        for obj in pairs(F.s.objetos) do
-            table.insert(objetos,obj)
-        end
-        for _,obj in ipairs(objetos) do
-            F.restaurarObjeto(obj)
-        end
-        table.clear(F.s.fila)
-        table.clear(F.s.pendentes)
-    end
-    function F.enfileirar(obj)
-        local s = F.s
-        if not s.ativo or s.morto then
-            return
-        end
-        if s.pendentes[obj] then
-            return
-        end
-        if #s.fila >= F.cfg.maxFila then
-            return
-        end
-        s.pendentes[obj] = true
-        table.insert(s.fila,obj)
-    end
-    function F.mudou(obj,prop)
-        local s = F.s
-        local registro = s.objetos[obj]
-        if not registro or registro.escrevendo then
-            return
-        end
-        if not s.ativo or not F.pertence(obj) then
-            return
-        end
-        local ok,valor = F.ler(obj,prop)
-        if not ok then
-            return
-        end
-        if valor ~= registro.ocultos[prop] then
-            -- Mantem a intencao mais recente de scripts do proprio personagem.
-            if prop ~= "LocalTransparencyModifier" then
-                registro.originais[prop] = valor
-            end
-            F.enfileirar(obj)
-        end
-    end
-    function F.aplicar(obj)
-        local s = F.s
-        if not s.ativo or not F.pertence(obj) then
-            return false
-        end
-        local politica = F.regra(obj)
-        if not politica then
-            return false
-        end
-        local registro = s.objetos[obj]
-        if not registro then
-            registro = {
-                originais = {},
-                ocultos = {},
-                conns = {},
-                escrevendo = false,
-                geracao = s.geracao,
-            }
-            s.objetos[obj] = registro
-            for prop,oculto in pairs(politica.valores) do
-                local ok,valor = F.ler(obj,prop)
-                if ok then
-                    registro.originais[prop] = valor
-                    registro.ocultos[prop] = oculto
-                    local sucesso,sinal = pcall(function()
-                        return obj:GetPropertyChangedSignal(prop)
-                    end)
-                    if sucesso then
-                        F.conectar(
-                            sinal,
-                            function()
-                                F.mudou(obj,prop)
-                            end,
-                            registro.conns
-                        )
-                    end
-                end
-            end
-        end
-        for prop,oculto in pairs(registro.ocultos) do
-            local ok,valor = F.ler(obj,prop)
-            if ok and valor ~= oculto then
-                if F.escrever(obj,prop,oculto,registro) then
-                    s.aplicados = s.aplicados+1
-                end
-            end
-        end
-        return true
-    end
-    function F.processar()
-        local s = F.s
-        if not s.ativo then
-            return
-        end
-        local lote = {}
-        for _=1,math.min(F.cfg.lote,#s.fila) do
-            table.insert(lote,table.remove(s.fila,1))
-        end
-        for _,obj in ipairs(lote) do
-            s.pendentes[obj] = nil
-            if F.pertence(obj) then
-                F.aplicar(obj)
-            else
-                F.restaurarObjeto(obj)
-            end
-        end
-    end
-    function F.contar()
-        local objetos = 0
-        local propriedades = 0
-        local incorretas = 0
-        for obj,registro in pairs(F.s.objetos) do
-            objetos = objetos+1
-            for prop,oculto in pairs(registro.ocultos) do
-                propriedades = propriedades+1
-                local ok,valor = F.ler(obj,prop)
-                if ok and valor ~= oculto then
-                    incorretas = incorretas+1
-                end
-            end
-        end
-        return {
-            objetos = objetos,
-            propriedades = propriedades,
-            incorretas = incorretas,
-            fila = #F.s.fila,
-            erros = F.s.erros,
-        }
-    end
-    function F.auditar()
-        local s = F.s
-        if not s.ativo then
-            return
-        end
-        local perdidos = {}
-        for obj,registro in pairs(s.objetos) do
-            if not F.pertence(obj) then
-                table.insert(perdidos,obj)
-            else
-                for prop,oculto in pairs(registro.ocultos) do
-                    local ok,valor = F.ler(obj,prop)
-                    if ok and valor ~= oculto then
-                        s.corrigidos = s.corrigidos+1
-                        F.enfileirar(obj)
-                        break
-                    end
-                end
-            end
-        end
-        for _,obj in ipairs(perdidos) do
-            F.restaurarObjeto(obj)
-        end
-        local char = s.personagem
-        if char then
-            for _,obj in ipairs(char:GetDescendants()) do
-                if not s.objetos[obj] and F.regra(obj) then
-                    F.enfileirar(obj)
-                end
-            end
-        end
-    end
-    -- Adornee pode ser definido depois de a placa entrar no PlayerGui.
-    -- Observadores limitados evitam varrer a interface inteira a cada frame.
-    function F.ehVisualExterno(obj)
-        return F.classe(obj,"BillboardGui")
-            or F.classe(obj,"SurfaceGui")
-            or F.classe(obj,"Highlight")
-            or F.classe(obj,"PVAdornment")
-            or F.classe(obj,"HandleAdornment")
-    end
-    function F.limparExternos()
-        local s = F.s
-        if not s.externos then
-            s.externos = {}
-        end
-        for obj,registro in pairs(s.externos) do
-            F.desconectar(registro.conns)
-            s.externos[obj] = nil
-        end
-        s.totalExternos = 0
-    end
-    function F.observarExterno(obj)
-        local s = F.s
-        if not s.ativo or s.morto or not obj or not obj.Parent then
-            return
-        end
-        if not F.ehVisualExterno(obj) then
-            return
-        end
-        if F.descendente(obj,s.personagem) then
-            return
-        end
-        s.externos = s.externos or {}
-        s.totalExternos = s.totalExternos or 0
-        if s.externos[obj] or s.totalExternos>=192 then
-            return
-        end
-        local registro = {
-            conns = {},
-            geracao = s.geracao,
-            ultimoAlvo = F.adornee(obj),
-        }
-        s.externos[obj] = registro
-        s.totalExternos = s.totalExternos+1
-        local ok,sinal = pcall(function()
-            return obj:GetPropertyChangedSignal("Adornee")
-        end)
-        if ok and sinal then
-            F.conectar(
-                sinal,
-                function()
-                    if not F.estaVivo(registro.geracao) then
-                        return
-                    end
-                    registro.ultimoAlvo = F.adornee(obj)
-                    if F.pertence(obj) then
-                        F.enfileirar(obj)
-                    else
-                        -- A placa voltou a apontar para outra pessoa.
-                        F.restaurarObjeto(obj)
-                    end
-                end,
-                registro.conns
-            )
-        end
-    end
-    function F.auditarExternos()
-        local s = F.s
-        if not s.externos then
-            return
-        end
-        local retirar = {}
-        for obj,registro in pairs(s.externos) do
-            if not obj.Parent or registro.geracao~=s.geracao then
-                table.insert(retirar,obj)
-            elseif F.pertence(obj) and not s.objetos[obj] then
-                F.enfileirar(obj)
-            elseif not F.pertence(obj) and s.objetos[obj] then
-                F.restaurarObjeto(obj)
-            end
-        end
-        for _,obj in ipairs(retirar) do
-            local registro = s.externos[obj]
-            F.desconectar(registro.conns)
-            s.externos[obj] = nil
-            s.totalExternos = math.max(0,(s.totalExternos or 1)-1)
-            F.restaurarObjeto(obj)
-        end
-    end
-    function F.observarPlayerGui(geracao)
-        local gui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-        if not gui then
-            return
-        end
-        F.conectar(
-            gui.DescendantAdded,
-            function(obj)
-                if F.estaVivo(geracao) and F.ehVisualExterno(obj) then
-                    F.externo(obj)
-                end
-            end,
-            F.s.charConns
-        )
-    end
-    function F.validarPonte()
-        local s = F.s
-        if s.remoto and not s.remoto.Parent then
-            if s.remotoConn then
-                s.remotoConn:Disconnect()
-                s.remotoConn = nil
-            end
-            s.remoto = nil
-            s.servidor = false
-            s.aguardando = false
-            s.requisicao = s.requisicao+1
-            s.proximaBusca = os.clock()+F.cfg.pausaPonte
-            F.registrar("PONTE","Conexao removida; mantendo apenas efeito local.")
-            F.atualizarUI()
-        end
-    end
-    function F.externo(obj)
-        F.observarExterno(obj)
-        if not F.adornee(obj) then
-            return
-        end
-        if F.pertence(obj) then
-            F.enfileirar(obj)
-        end
-    end
-    function F.buscarExternos(geracao)
-        GS.spawn(function()
-            local fontes = {workspace}
-            local gui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-            if gui then
-                table.insert(fontes,gui)
-            end
-            for _,fonte in ipairs(fontes) do
-                for i,obj in ipairs(fonte:GetDescendants()) do
-                    if not F.estaVivo(geracao) then
-                        return
-                    end
-                    if F.classe(obj,"BillboardGui")
-                        or F.classe(obj,"SurfaceGui")
-                        or F.classe(obj,"Highlight")
-                    then
-                        F.externo(obj)
-                    end
-                    if i%300 == 0 then
-                        task.wait()
-                    end
-                end
-            end
-        end)
-    end
-    function F.vincular(char)
-        local s = F.s
-        F.desconectar(s.charConns)
-        F.limparExternos()
-        F.restaurarTodos()
-        s.personagem = char
-        s.ciclo = s.ciclo+1
-        if not char or not s.ativo then
-            return
-        end
-        local ciclo = s.ciclo
-        local geracao = s.geracao
-        for _,obj in ipairs(char:GetDescendants()) do
-            F.aplicar(obj)
-        end
-        F.conectar(
-            char.DescendantAdded,
-            function(obj)
-                if F.estaVivo(geracao) and s.ciclo == ciclo then
-                    F.enfileirar(obj)
-                end
-            end,
-            s.charConns
-        )
-        F.conectar(
-            char.DescendantRemoving,
-            function(obj)
-                GS.defer(function()
-                    if s.ciclo ~= ciclo then
-                        return
-                    end
-                    if not F.descendente(obj,char) then
-                        F.restaurarObjeto(obj)
-                    end
-                end)
-            end,
-            s.charConns
-        )
-        F.buscarExternos(geracao)
-        F.observarPlayerGui(geracao)
-        F.registrar("PERSONAGEM","Aparencia e efeitos rastreados sem alterar fisica.")
-    end
-    function F.atualizarUI()
-        local s = F.s
-        local ui = F.ui
-        if ui.toggle then
-            ui.toggle.Text = s.ativo and "MODO FANTASMA: ON" or "MODO FANTASMA: OFF"
-        end
-        if not ui.status then
-            return
-        end
-        if not s.ativo then
-            ui.status.Text = "Desligado · aparência restaurada"
-            return
-        end
-        local n = F.contar()
-        local escopo
-        if s.aguardando then
-            escopo = "Confirmando servidor"
-        elseif s.servidor then
-            escopo = "Servidor confirmou invisibilidade"
-        else
-            escopo = "Invisibilidade local · ponte de servidor não confirmada"
-        end
-        ui.status.Text = string.format(
-            "%s · %d objetos · %d correções",
-            escopo,
-            n.objetos,
-            s.corrigidos
-        )
-    end
-    function F.ack(comando,dados)
-        local s = F.s
-        if comando ~= "ghost" or type(dados) ~= "table" then
-            return
-        end
-        if dados.id ~= s.requisicao then
-            return
-        end
-        if dados.ok == true and dados.enabled ~= s.ativo then
-            return
-        end
-        s.aguardando = false
-        s.servidor = dados.ok == true and dados.enabled == true
-        s.fonte = s.servidor and "SERVIDOR" or "LOCAL"
-        if s.ativo then
-            F.registrar(
-                "SERVIDOR",
-                s.servidor and "Modo fantasma aplicado no servidor."
-                    or tostring(dados.reason or "Efeito permanece apenas local.")
-            )
-        end
-        F.atualizarUI()
-    end
-    function F.procurarPonte()
-        local s = F.s
-        if s.remoto and s.remoto.Parent then
-            return s.remoto
-        end
-        if s.remotoConn then
-            s.remotoConn:Disconnect()
-            s.remotoConn = nil
-        end
-        s.remoto = nil
-        local pasta = game:GetService("ReplicatedStorage")
-        local remoto = pasta:FindFirstChild(F.cfg.bridge)
-        if not remoto or not remoto:IsA("RemoteEvent") then
-            return nil
-        end
-        s.remoto = remoto
-        s.remotoConn = GS.conectar(remoto.OnClientEvent,function(comando,dados)
-            if not s.morto then
-                F.ack(comando,dados)
-            end
-        end)
-        return remoto
-    end
-    function F.pedirServidor()
-        local s = F.s
-        local remoto = F.procurarPonte()
-        if not remoto then
-            s.servidor = false
-            s.aguardando = false
-            return false
-        end
-        s.requisicao = s.requisicao+1
-        s.pedidoEm = os.clock()
-        s.ultimoPedido = os.clock()
-        s.aguardando = s.ativo
-        local ok,erro = pcall(function()
-            remoto:FireServer("ghost",{
-                id = s.requisicao,
-                enabled = s.ativo,
-                version = F.cfg.versao,
-            })
-        end)
-        if not ok then
-            s.aguardando = false
-            s.servidor = false
-            F.registrar("PONTE",erro)
-        end
-        return ok
-    end
-    function F.ativar()
-        local s = F.s
-        if s.morto or s.ativo then
-            return
-        end
-        s.ativo = true
-        s.geracao = s.geracao+1
-        s.servidor = false
-        s.aguardando = false
-        s.aplicados = 0
-        s.corrigidos = 0
-        s.ultimaAuditoria = 0
-        s.proximaBusca = os.clock()+F.cfg.pausaPonte
-        F.vincular(LocalPlayer.Character)
-        F.pedirServidor()
-        F.registrar("ESTADO","Modo fantasma ativado.")
-        F.atualizarUI()
-    end
-    function F.desativar()
-        local s = F.s
-        if not s.ativo then
-            return
-        end
-        s.ativo = false
-        s.geracao = s.geracao+1
-        s.aguardando = false
-        s.servidor = false
-        F.desconectar(s.charConns)
-        F.limparExternos()
-        F.restaurarTodos()
-        F.pedirServidor()
-        F.registrar("ESTADO","Modo fantasma desligado; valores originais restaurados.")
-        F.atualizarUI()
-    end
-    function F.passo()
-        local s = F.s
-        if s.morto or not s.ativo then
-            return
-        end
-        if LocalPlayer.Character ~= s.personagem then
-            F.vincular(LocalPlayer.Character)
-        end
-        F.processar()
-        F.validarPonte()
-        local agora = os.clock()
-        if agora-s.ultimaAuditoria >= F.cfg.auditoria then
-            s.ultimaAuditoria = agora
-            F.auditar()
-            F.auditarExternos()
-            F.atualizarUI()
-        end
-        if s.aguardando and agora-s.pedidoEm > F.cfg.timeout then
-            s.aguardando = false
-            s.servidor = false
-            F.registrar("PONTE","Sem confirmacao; interface informa escopo local.")
-            F.atualizarUI()
-        end
-        if not s.remoto and agora >= s.proximaBusca then
-            s.proximaBusca = agora+F.cfg.pausaPonte
-            if F.procurarPonte() then
-                F.pedirServidor()
-            end
-        end
-    end
-    function F.inspecionar()
-        local dados = F.contar()
-        dados.ativo = F.s.ativo
-        dados.servidor = F.s.servidor
-        dados.aguardando = F.s.aguardando
-        dados.geracao = F.s.geracao
-        dados.personagem = F.s.personagem
-        return dados
-    end
-    function F.desligar()
-        if F.s.morto then
-            return
-        end
-        F.desativar()
-        F.s.morto = true
-        F.s.geracao = F.s.geracao+1
-        F.desconectar(F.s.charConns)
-        F.desconectar(F.s.conns)
-        if F.s.remotoConn then
-            F.s.remotoConn:Disconnect()
-            F.s.remotoConn = nil
-        end
-        F.s.remoto = nil
-        F.s.personagem = nil
-        table.clear(F.s.fila)
-        table.clear(F.s.pendentes)
-    end
+-- CAMERA LONGE: substitui o antigo Modo Fantasma.
+GS.iniciarCameraLonge = function()
+    local U,painel=GS.ui,GS.painelPersonagem
+    if not U or not painel then return end
+    local player=game:GetService("Players").LocalPlayer
+    local C={ativo=false,morto=false,limite=1000,escrevendo=false,ciclo=0,conns={}}
+    local grupo=U.grupo(painel,"Câmera longe","Afaste a câmera com a rodinha do mouse · até 60.000 studs","maximize",1.5)
+    local toggle=U.tog(grupo,"CÂMERA LONGE: OFF",1,"maximize")
+    local menos,mais,valor=U.ctrl(grupo,"Distância máxima (studs)",C.limite,2)
+    local afastar=U.acao(grupo,"AFASTAR ATÉ O LIMITE","arrow-up-to-line",3)
+    local maximo=U.acao(grupo,"DEFINIR LIMITE: 60.000 STUDS","maximize",4)
+    local status=U.pequeno(grupo,"Ative e role a rodinha para trás para afastar",nil,5,"info")
+    status.AutoButtonColor=false
 
-    -- O mesmo controlador trata R6, R15, acessorios, ferramentas e novos efeitos.
-    -- A interface tem somente uma chave para ligar ou desligar.
-    if not GS.ui or not GS.painelPersonagem then
-        error("Tela de personagem indisponivel")
+    function C.aplicar()
+        if not C.ativo or C.morto or C.escrevendo then return end
+        C.escrevendo=true
+        local ok,erro=pcall(function()
+            local minimo=C.minimoTemporario or 0.5
+            if player.CameraMinZoomDistance>C.limite then player.CameraMinZoomDistance=0.5 end
+            if player.CameraMaxZoomDistance~=C.limite then player.CameraMaxZoomDistance=C.limite end
+            if player.CameraMinZoomDistance~=minimo then player.CameraMinZoomDistance=minimo end
+            if player.CameraMode~=Enum.CameraMode.Classic then player.CameraMode=Enum.CameraMode.Classic end
+        end)
+        C.escrevendo=false
+        if not ok then
+            status.Text="Não foi possível ajustar a câmera"
+            warn("[DEBUG-BOT]: Câmera longe:",erro)
+        end
     end
-    local U = GS.ui
-    local grupo = U.grupo(
-        GS.painelPersonagem,
-        "Modo fantasma",
-        "Oculta personagem e efeitos · o status informa local ou servidor",
-        "ghost",
-        1.5
-    )
-    F.ui.toggle = U.tog(
-        grupo,
-        "Modo fantasma",
-        1,
-        "ghost"
-    )
-    F.ui.toggle:SetAttribute("Controlado",true)
-    F.ui.status = U.pequeno(
-        grupo,
-        "Desligado · aparência restaurada",
-        nil,
-        2,
-        "info"
-    )
-    F.ui.status.Active = false
-    F.ui.status.AutoButtonColor = false
-    F.conectar(
-        F.ui.toggle.MouseButton1Click,
-        function()
-            if F.s.ativo then
-                F.desativar()
-            else
-                F.ativar()
-            end
+    function C.ativar()
+        if C.morto or C.ativo then return end
+        C.original={min=player.CameraMinZoomDistance,max=player.CameraMaxZoomDistance,modo=player.CameraMode}
+        C.ativo=true
+        if GS.valeRush and GS.valeRush.focar then GS.valeRush.focar(false) end
+        for _,prop in ipairs({"CameraMinZoomDistance","CameraMaxZoomDistance","CameraMode"}) do
+            table.insert(C.conns,GS.conectar(player:GetPropertyChangedSignal(prop),C.aplicar))
         end
-    )
-    F.conectar(
-        LocalPlayer.CharacterAdded,
-        function(char)
-            if F.s.ativo and not F.s.morto then
-                F.vincular(char)
-                F.pedirServidor()
-                F.atualizarUI()
-            end
+        C.aplicar()
+        toggle.Text="CÂMERA LONGE: ON"
+        status.Text="Rodinha para trás: afastar · para frente: aproximar"
+        print("[DEBUG-BOT]: Câmera longe: ativa",C.limite)
+    end
+    function C.desativar()
+        C.ativo=false;C.ciclo=C.ciclo+1;C.minimoTemporario=nil
+        for _,conn in ipairs(C.conns) do conn:Disconnect() end
+        table.clear(C.conns)
+        local original=C.original
+        C.original=nil
+        if original then
+            local ok,erro=pcall(function()
+                -- Ordem evita o ajuste automatico entre min/max do Roblox.
+                player.CameraMinZoomDistance=0.5
+                player.CameraMaxZoomDistance=original.max
+                player.CameraMinZoomDistance=original.min
+                player.CameraMode=original.modo
+            end)
+            if not ok then warn("[DEBUG-BOT]: Restaurar câmera longe:",erro) end
         end
-    )
-    F.conectar(
-        workspace.DescendantAdded,
-        function(obj)
-            if not F.s.ativo then
-                return
+        toggle.Text="CÂMERA LONGE: OFF"
+        status.Text="Desligada · distância original restaurada"
+    end
+    function C.ajustar(delta)
+        C.limite=math.clamp(C.limite+delta,50,60000)
+        valor.Text=tostring(C.limite)
+        if C.minimoTemporario then C.minimoTemporario=C.limite end
+        C.aplicar()
+    end
+    function C.afastar()
+        if C.morto then return end
+        if not C.ativo then C.ativar() end
+        C.ciclo=C.ciclo+1
+        local ciclo=C.ciclo
+        C.minimoTemporario=C.limite
+        C.aplicar()
+        -- O controlador normal atualiza o zoom; em seguida libera a rodinha.
+        GS.delay(0.2,function()
+            if C.ativo and not C.morto and C.ciclo==ciclo then
+                C.minimoTemporario=nil
+                C.aplicar()
             end
-            if F.classe(obj,"BillboardGui")
-                or F.classe(obj,"SurfaceGui")
-                or F.classe(obj,"Highlight")
-            then
-                local geracao = F.s.geracao
-                GS.delay(0.15,function()
-                    if F.estaVivo(geracao) then
-                        F.externo(obj)
-                    end
-                end)
-            end
-        end
-    )
-    F.conectar(
-        RunService.Heartbeat,
-        function()
-            local ok,erro = pcall(F.passo)
-            if not ok then
-                F.s.erros = F.s.erros+1
-                F.registrar("ERRO",erro)
-            end
-        end
-    )
-    F.conectar(
-        ScreenGui.Destroying,
-        function()
-            F.desligar()
-        end
-    )
-    GS.controladorFantasma = F
-    F.atualizarUI()
-    return F
+        end)
+    end
+    function C.desligar()
+        if C.morto then return end
+        C.desativar()
+        C.morto=true
+    end
+    GS.conectar(toggle.MouseButton1Click,function() if C.ativo then C.desativar() else C.ativar() end end)
+    GS.conectar(menos.MouseButton1Click,function() C.ajustar(-250) end)
+    GS.conectar(mais.MouseButton1Click,function() C.ajustar(250) end)
+    GS.conectar(afastar.MouseButton1Click,C.afastar)
+    GS.conectar(maximo.MouseButton1Click,function() C.ajustar(60000) end)
+    GS.conectar(ScreenGui.Destroying,C.desligar)
+    GS.controladorCameraLonge=C
 end
-GS.rodar("Modo fantasma",GS.iniciarModoFantasma,GS.painelPersonagem)
+GS.rodar("Câmera longe",GS.iniciarCameraLonge,GS.painelPersonagem)
 
 --   RETORNO SEGURO — TELEPORTE > PLAYERS
 GS.iniciarRetorno = function()
@@ -16790,4 +16014,5 @@ end)
 -- os avisos de "ativado/desativado" so valem depois que tudo carregou e as
 -- chaves sincronizaram (o sync roda a cada 0.3s; 2s cobre com folga).
 GS.delay(2, function() GS.avisosLiberados = true end)
+
 
