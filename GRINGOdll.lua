@@ -1,4 +1,4 @@
--- GRINGOdll V50.19 · Feito pelo @henrique_system
+-- GRINGOdll V50.20 · Feito pelo @henrique_system
 -- Encerra a execucao anterior quando ela ja possui o registro de recursos.
 do
     local ok,ambiente=pcall(function() return type(getgenv)=="function" and getgenv() or _G end)
@@ -142,7 +142,7 @@ function GS.finalizarRecursos()
     print("[DEBUG-BOT]: Encerrar tudo: tarefas, eventos e objetos locais removidos")
 end
 
-GS.versao = "V50.19"
+GS.versao = "V50.20"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -7303,7 +7303,7 @@ GS.iniciarFarma = function()
     end
 
     local function atualizarResumo(total)
-        status.Text = "V50.19 · " .. R.fase .. " · LOCALIZADOS: " .. total
+        status.Text = "V50.20 · " .. R.fase .. " · LOCALIZADOS: " .. total
         local limite = workspace.StreamingEnabled
             and "Streaming ativo: aparição no cliente não prova spawn no servidor."
             or "Streaming desligado: novas aparições são observações locais."
@@ -15487,6 +15487,111 @@ GS.iniciarCameraLonge = function()
     local status=U.pequeno(grupo,"Ative e role a rodinha para trás para afastar",nil,5,"info")
     status.AutoButtonColor=false
 
+    local Run=game:GetService("RunService")
+    local entrada=game:GetService("UserInputService")
+    local nomeRender="GringoCameraLongeLivre"
+    C.cameras=setmetatable({}, {__mode="k"})
+    C.distancia=12;C.yaw=0;C.pitch=0.2
+
+    function C.centro()
+        local char=player.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local root=char and (char:FindFirstChild("HumanoidRootPart") or (hum and hum.RootPart) or char.PrimaryPart)
+        if not root then return nil end
+        return root.Position+Vector3.new(0,hum and hum.HipHeight or 2,0)+(hum and hum.CameraOffset or Vector3.zero)
+    end
+    function C.soltarMouse()
+        if C.mouseOriginal~=nil then
+            pcall(function()
+                if entrada.MouseBehavior==Enum.MouseBehavior.LockCurrentPosition then entrada.MouseBehavior=C.mouseOriginal end
+            end)
+        end
+        C.mouseOriginal=nil;C.arrastando=false
+    end
+    function C.lerCamera(camera,centro)
+        local delta=camera.CFrame.Position-centro
+        if delta.Magnitude>0.1 then
+            C.distancia=math.clamp(delta.Magnitude,0.5,C.limite)
+            C.yaw=math.atan2(delta.X,delta.Z)
+            C.pitch=math.clamp(math.asin(math.clamp(delta.Y/delta.Magnitude,-1,1)),-1.45,1.45)
+        end
+    end
+    function C.passoCamera()
+        if not C.ativo or C.morto or GS.fechando then return end
+        -- O foco explicito da Vale Rush tem prioridade enquanto estiver travado.
+        if GS.valeRush and GS.valeRush.alvoFoco then
+            C.soltarMouse();C.retomar=true
+            return
+        end
+        local camera=workspace.CurrentCamera
+        local centro=C.centro()
+        if not camera or not centro then return end
+        if not C.cameras[camera] then
+            C.cameras[camera]={tipo=camera.CameraType,foco=camera.Focus}
+            if not C.inicializada then C.lerCamera(camera,centro);C.inicializada=true end
+        end
+        if C.retomar then C.lerCamera(camera,centro);C.retomar=false end
+        C.distancia=math.clamp(C.distancia,0.5,C.limite)
+        local cp=math.cos(C.pitch)
+        local offset=Vector3.new(math.sin(C.yaw)*cp,math.sin(C.pitch),math.cos(C.yaw)*cp)*C.distancia
+        -- Camera propria: nao usa o recuo automatico do controlador de colisao.
+        camera.CameraType=Enum.CameraType.Scriptable
+        camera.CFrame=CFrame.lookAt(centro+offset,centro)
+        local foco=CFrame.new(centro)
+        C.cameras[camera].aplicado=foco
+        camera.Focus=foco
+    end
+    function C.iniciarCameraLivre()
+        C.inicializada=false
+        local camera=workspace.CurrentCamera
+        local centro=C.centro()
+        if camera and centro then C.lerCamera(camera,centro);C.inicializada=true end
+        table.insert(C.conns,GS.conectar(entrada.InputBegan,function(input,processado)
+            if processado or entrada:GetFocusedTextBox() then return end
+            if GS.valeRush and GS.valeRush.alvoFoco then return end
+            if input.UserInputType==Enum.UserInputType.MouseButton2 then
+                C.arrastando=true;C.mouseOriginal=entrada.MouseBehavior
+                entrada.MouseBehavior=Enum.MouseBehavior.LockCurrentPosition
+            end
+        end))
+        table.insert(C.conns,GS.conectar(entrada.InputEnded,function(input)
+            if input.UserInputType==Enum.UserInputType.MouseButton2 then C.soltarMouse() end
+        end))
+        table.insert(C.conns,GS.conectar(entrada.WindowFocusReleased,C.soltarMouse))
+        table.insert(C.conns,GS.conectar(entrada.InputChanged,function(input,processado)
+            if processado or entrada:GetFocusedTextBox() then return end
+            if GS.valeRush and GS.valeRush.alvoFoco then return end
+            if input.UserInputType==Enum.UserInputType.MouseWheel then
+                C.distancia=math.clamp(C.distancia*math.exp(-input.Position.Z*0.2),0.5,C.limite)
+            elseif input.UserInputType==Enum.UserInputType.MouseMovement
+                and (C.arrastando or entrada.MouseBehavior==Enum.MouseBehavior.LockCenter) then
+                C.yaw=C.yaw-input.Delta.X*0.005
+                C.pitch=math.clamp(C.pitch+input.Delta.Y*0.005,-1.45,1.45)
+            end
+        end))
+        GS.bindRender(Run,nomeRender,Enum.RenderPriority.Last.Value+3,function()
+            local ok,erro=pcall(C.passoCamera)
+            if not ok and os.clock()>(C.erroEm or 0) then
+                C.erroEm=os.clock()+5
+                warn("[DEBUG-BOT]: Camera livre:",erro)
+            end
+        end)
+        C.passoCamera()
+    end
+    function C.pararCameraLivre()
+        Run:UnbindFromRenderStep(nomeRender)
+        if GS.recursos then GS.recursos.renders[nomeRender]=nil end
+        C.soltarMouse()
+        for camera,r in pairs(C.cameras) do
+            pcall(function()
+                if camera.CameraType==Enum.CameraType.Scriptable then camera.CameraType=r.tipo end
+                if camera.Focus==r.aplicado then camera.Focus=r.foco end
+            end)
+        end
+        C.cameras=setmetatable({}, {__mode="k"})
+        C.inicializada=false;C.retomar=false
+    end
+
     function C.aplicar()
         if not C.ativo or C.morto or C.escrevendo then return end
         C.escrevendo=true
@@ -15512,12 +15617,14 @@ GS.iniciarCameraLonge = function()
             table.insert(C.conns,GS.conectar(player:GetPropertyChangedSignal(prop),C.aplicar))
         end
         C.aplicar()
+        C.iniciarCameraLivre()
         toggle.Text="CÂMERA LONGE: ON"
-        status.Text="Rodinha para trás: afastar · para frente: aproximar"
+        status.Text="Rodinha: zoom · botão direito: girar · câmera atravessa objetos"
         print("[DEBUG-BOT]: Câmera longe: ativa",C.limite)
     end
     function C.desativar()
         C.ativo=false;C.ciclo=C.ciclo+1;C.minimoTemporario=nil
+        C.pararCameraLivre()
         for _,conn in ipairs(C.conns) do conn:Disconnect() end
         table.clear(C.conns)
         local original=C.original
@@ -15539,22 +15646,15 @@ GS.iniciarCameraLonge = function()
         C.limite=math.clamp(C.limite+delta,50,60000)
         valor.Text=tostring(C.limite)
         if C.minimoTemporario then C.minimoTemporario=C.limite end
+        C.distancia=math.min(C.distancia,C.limite)
         C.aplicar()
     end
     function C.afastar()
         if C.morto then return end
         if not C.ativo then C.ativar() end
-        C.ciclo=C.ciclo+1
-        local ciclo=C.ciclo
-        C.minimoTemporario=C.limite
-        C.aplicar()
-        -- O controlador normal atualiza o zoom; em seguida libera a rodinha.
-        GS.delay(0.2,function()
-            if C.ativo and not C.morto and C.ciclo==ciclo then
-                C.minimoTemporario=nil
-                C.aplicar()
-            end
-        end)
+        C.distancia=C.limite
+        C.inicializada=true
+        C.passoCamera()
     end
     function C.desligar()
         if C.morto then return end
@@ -16014,5 +16114,6 @@ end)
 -- os avisos de "ativado/desativado" so valem depois que tudo carregou e as
 -- chaves sincronizaram (o sync roda a cada 0.3s; 2s cobre com folga).
 GS.delay(2, function() GS.avisosLiberados = true end)
+
 
 
