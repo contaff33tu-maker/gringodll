@@ -15478,7 +15478,7 @@ GS.iniciarCameraLonge = function()
     local U,painel=GS.ui,GS.painelPersonagem
     if not U or not painel then return end
     local player=game:GetService("Players").LocalPlayer
-    local C={ativo=false,morto=false,limite=1000,escrevendo=false,ciclo=0,conns={}}
+    local C={ativo=false,morto=false,limite=60000,escrevendo=false,ciclo=0,conns={}}
     local grupo=U.grupo(painel,"Câmera longe","Afaste a câmera com a rodinha do mouse · até 60.000 studs","maximize",1.5)
     local toggle=U.tog(grupo,"CÂMERA LONGE: OFF",1,"maximize")
     local menos,mais,valor=U.ctrl(grupo,"Distância máxima (studs)",C.limite,2)
