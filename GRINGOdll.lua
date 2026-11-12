@@ -149,11 +149,10 @@ GS.credito = "Feito pelo @henrique_system"
 pcall(function() if gethui then GS.pai = gethui() end end)
 GS.pai = GS.pai or game.CoreGui
 GS.animsInfinitas = {}   -- animacoes em loop (pausadas no MODO LEVE)
-local GhostButton, EspButton, AntiTravaButton
+local EspButton, AntiTravaButton
 local PuxarButton
 local TamanhoSlider
 local BikeAntiQuedaButton, BikeAntiQuedaKeyButton
-local ParedeButton, ParedeConfirmButton, ParedeRemoverButton
 local CorGlobalButton, CorHexInput, CorAplicarButton, CorPreview
 local CorSwatches = {}
 local CarregarNomeInput, CarregarStatus, CarregarListaFrame, CostasButton
@@ -1426,7 +1425,7 @@ do
         { nome="Visual",    ico="eye",         subs={"Visual"} },
         { nome="Teleporte", ico="map-pin",     subs={"Players","Subir nas costas"} },
         { nome="Veículo",   ico="bike",        subs={"Bike"}, oculta=true },
-        { nome="Mundo",     ico="globe",       subs={"Parede","Cor global"} },
+        { nome="Mundo",     ico="globe",       subs={"Cor global"} },
         { nome="Rastrear",  ico="scan-search", subs={"Objetos"}, oculta=true },
         { nome="Combate",   ico="swords",      subs={"Combate","Silent Aim","No Recoil","Munição"}, oculta=true },
         { nome="Assistente", ico="brain",      subs={"Resolver","Rastrear"} },
@@ -1557,9 +1556,8 @@ do
         GS.painelPlayer = p
         GS.painelPersonagem = p
         local g = grade(p, 1, 3, 104)
-        GhostButton      = tile(g, "Invencível", "shield",    1)
-        AntiTravaButton  = tile(g, "Anti-trava", "anchor",    2)
-        RegenUI.antiVoid = tile(g, "Anti-void",  "life-buoy", 3)
+        AntiTravaButton  = tile(g, "Anti-trava", "anchor",    1)
+        RegenUI.antiVoid = tile(g, "Anti-void",  "life-buoy", 2)
         local gs = grupo(p, "Socorro", "Caiu no void ou travou? Volte na hora", "life-buoy", 2)
         RegenUI.regenerar = acao(gs,"REGENERAR / RENASCER","refresh-cw",1)
         RegenUI.voltar    = pequeno(gs,"VOLTAR PRO ÚLTIMO CHÃO (TECLA L)",nil,2,"arrow-up-to-line")
@@ -1627,18 +1625,10 @@ do
         BikeAntiQuedaKeyButton = pequeno(gb,"TECLA ANTI-QUEDA: E",nil,3,"keyboard")
     end
 
-    -- ── MUNDO › Parede ──
-    do
-        local p = painel(6,1)
-        local gw = grupo(p, "Parede", "Coloca, confirma e remove paredes", "brick-wall", 1)
-        ParedeButton        = acao(gw,"PAREDE: OFF","brick-wall",1)
-        ParedeConfirmButton = pequeno(gw,"CONFIRMAR PAREDE",nil,2,"check")
-        ParedeRemoverButton = pequeno(gw,"REMOVER PAREDES","perigo",3,"trash-2")
-    end
 
     -- ── MUNDO › Cor global ──
     do
-        local p = painel(6,2)
+        local p = painel(6,1)
         local gc = grupo(p, "Cor global", "Todo mundo vê", "palette", 1)
         -- Paleta de cores vibrantes (clica pra escolher)
         local paletaF=GS.novaInstancia("Frame",gc); paletaF.Size=UDim2.new(1,0,0,44)
@@ -2258,502 +2248,6 @@ local ghostHealthConn   = nil
 local ghostDiedConn     = nil
 local ghostSteppedConn  = nil
 local bypassHealthBlock = false   -- nossa propria escrita passa; server nao passa
-
--- ═══════════════════════════════════════════════════════════════
---   INVENCIVEL NIVEL DEUS — HOOK DE METATABELA (NIVEL ENGINE)
--- ═══════════════════════════════════════════════════════════════
--- CAMADA 0 (mais profunda possivel):
---   hookmetamethod intercepta __namecall → bloqueia TakeDamage antes de executar
---   getrawmetatable + __newindex → bloqueia atribuicao de Health vinda do servidor
---   Isso acontece ANTES de qualquer HealthChanged, ANTES de qualquer Heartbeat
---   O dano literalmente nao chega no personagem
--- CAMADAS 1-7: mantidas como fallback caso executor nao suporte hooks
--- math.huge = infinito real de Lua
--- ═══════════════════════════════════════════════════════════════
-local VIDA_INF = math.huge
-
--- Salva hooks originais para nao quebrar o jogo inteiro
-local _hookNamecallOriginal = nil
-local _hookNewIndexOriginal = nil
-local _hookAtivoNamecall    = false
-local _hookAtivoNewIndex    = false
-
-local function getHum()
-    local c = LocalPlayer.Character
-    return c and c:FindFirstChildOfClass("Humanoid")
-end
-
-local function aplicarVidaBruta(h)
-    if not h then return end
-    bypassHealthBlock = true
-    pcall(function() h.MaxHealth = VIDA_INF end)
-    pcall(function() h.Health    = VIDA_INF end)
-    bypassHealthBlock = false
-    pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Dead,        false) end)
-    pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.FallingDown,  false) end)
-    pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Ragdoll,      false) end)
-    pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Physics,      false) end)
-end
-
--- HOOK 1: __namecall — intercepta TakeDamage, BreakJoints, ApplyImpulse, etc.
-local function instalarHookNamecall()
-    local ok = pcall(function()
-        _hookNamecallOriginal = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-            if ghostAtivado then
-                local metodo = getnamecallmethod()
-                local c      = LocalPlayer.Character
-
-                -- Bloqueia dano/morte no Humanoid
-                if metodo == "TakeDamage" or metodo == "BreakJoints" then
-                    local hum = getHum()
-                    if hum and self == hum then
-                        return  -- BLOQUEADO
-                    end
-                end
-
-                -- Bloqueia ApplyImpulse/ApplyAngularImpulse em partes do personagem
-                -- (knockback do Capitão Clark — ele aplica forcas fisicas, nao dano)
-                if metodo == "ApplyImpulse" or metodo == "ApplyAngularImpulse" then
-                    if c and self:IsDescendantOf(c) then
-                        return  -- BLOQUEADO — nenhum impulso externo no boneco
-                    end
-                end
-
-                -- Bloqueia SetNetworkOwner que pode ser usado para controlar o boneco
-                if metodo == "SetNetworkOwner" then
-                    if c and self:IsDescendantOf(c) then
-                        return  -- BLOQUEADO
-                    end
-                end
-
-                -- Bloqueia TeleportService:Teleport() — impede ser mandado pro lobby
-                -- (Casa do Locusto usa isso quando te pega)
-                if metodo == "Teleport" or metodo == "TeleportToPlaceInstance"
-                or metodo == "TeleportAsync" or metodo == "TeleportPartyAsync" then
-                    local ts = game:GetService("TeleportService")
-                    if self == ts then
-                        return  -- BLOQUEADO — nao sai do servidor
-                    end
-                end
-
-                -- Bloqueia Kick do jogador
-                if metodo == "Kick" then
-                    if self == LocalPlayer then
-                        return  -- BLOQUEADO
-                    end
-                end
-            end
-            return _hookNamecallOriginal(self, ...)
-        end))
-        _hookAtivoNamecall = true
-    end)
-    return ok
-end
-
--- HOOK 2: __newindex — intercepta Health/PlatformStand/Sit pelo servidor
-local function instalarHookNewIndex()
-    local ok = pcall(function()
-        local mt = getrawmetatable(game)
-        setreadonly(mt, false)
-        _hookNewIndexOriginal = rawget(mt, "__newindex")
-        mt.__newindex = newcclosure(function(self, chave, valor)
-            if ghostAtivado and not bypassHealthBlock then
-                local c   = LocalPlayer.Character
-                local hum = c and c:FindFirstChildOfClass("Humanoid")
-                -- Bloqueia reducao de vida vinda do servidor
-                if (chave == "Health" or chave == "MaxHealth") and hum and self == hum then
-                    if type(valor) == "number" and valor < VIDA_INF then
-                        return  -- BLOQUEADO
-                    end
-                end
-                -- Bloqueia PlatformStand=true (grab mechanic precisa disso)
-                if chave == "PlatformStand" and valor == true and hum and self == hum then
-                    return  -- BLOQUEADO — nao deixa imobilizar o boneco
-                end
-                -- Bloqueia Sit=true (outra forma de grab)
-                if chave == "Sit" and valor == true and hum and self == hum then
-                    return  -- BLOQUEADO
-                end
-                -- Bloqueia Jump=false (alguns grabs desativam pulo)
-                if chave == "Jump" and valor == false and hum and self == hum then
-                    return  -- BLOQUEADO
-                end
-
-                -- Bloqueia WalkSpeed=0 e JumpPower=0 (sequencia de morte/jumpscare)
-                -- O jogo trava o boneco antes de matar; a gente impede o travamento
-                if hum and self == hum then
-                    if chave == "WalkSpeed" and type(valor) == "number" and valor < 2 then
-                        return  -- BLOQUEADO — nao deixa travar movimento
-                    end
-                    if chave == "JumpPower" and type(valor) == "number" and valor < 2 then
-                        return  -- BLOQUEADO
-                    end
-                    if chave == "AutoRotate" and valor == false then
-                        return  -- BLOQUEADO — alguns jogos travam rotacao na morte
-                    end
-                end
-
-                -- Bloqueia knockback via AssemblyLinearVelocity em partes do personagem
-                -- (Capitao Clark usa isso para jogar o boneco no chao)
-                if chave == "AssemblyLinearVelocity" or chave == "AssemblyAngularVelocity" then
-                    if c and self:IsDescendantOf(c) then
-                        -- Permite velocidade normal de movimento (< 80 studs/s)
-                        -- Bloqueia apenas velocidades de knockback brutais
-                        if type(valor) == "userdata" then
-                            local mag = valor.Magnitude
-                            if mag > 80 then
-                                return  -- BLOQUEADO — knockback detectado
-                            end
-                        end
-                    end
-                end
-
-                -- Bloqueia Velocity (legado R6) em partes do personagem
-                if chave == "Velocity" then
-                    if c and self:IsDescendantOf(c) then
-                        if type(valor) == "userdata" then
-                            local mag = valor.Magnitude
-                            if mag > 80 then
-                                return  -- BLOQUEADO — knockback detectado
-                            end
-                        end
-                    end
-                end
-            end
-            return _hookNewIndexOriginal(self, chave, valor)
-        end)
-        setreadonly(mt, true)
-        _hookAtivoNewIndex = true
-    end)
-    return ok
-end
-
--- Desativa os hooks quando desligar
-local function removerHooks()
-    if _hookAtivoNamecall and _hookNamecallOriginal then
-        pcall(function()
-            hookmetamethod(game, "__namecall", _hookNamecallOriginal)
-        end)
-        _hookAtivoNamecall = false
-    end
-    if _hookAtivoNewIndex and _hookNewIndexOriginal then
-        pcall(function()
-            local mt = getrawmetatable(game)
-            setreadonly(mt, false)
-            mt.__newindex = _hookNewIndexOriginal
-            setreadonly(mt, true)
-        end)
-        _hookAtivoNewIndex = false
-    end
-end
-
-local function conectorInvencivel(hum, char)
-    ghostHealthConn = GS.conectar(hum.HealthChanged,function()
-        if not ghostAtivado then return end
-        GS.spawn(function()
-            local h = char and char:FindFirstChildOfClass("Humanoid")
-            if h then aplicarVidaBruta(h) end
-        end)
-    end)
-    ghostDiedConn = GS.conectar(hum.Died,function()
-        if not ghostAtivado then return end
-        GS.spawn(function()
-            task.wait(0.05)
-            local c = LocalPlayer.Character
-            local h = c and c:FindFirstChildOfClass("Humanoid")
-            if h then
-                aplicarVidaBruta(h)
-                pcall(function() h:ChangeState(Enum.HumanoidStateType.Running) end)
-            end
-        end)
-    end)
-end
-
-do
-    -- ANTI-DESMONTAR: guarda as juntas (Motor6D) do boneco e recria na
-    -- hora qualquer uma que sumir/trocar de peca. Sem RootJoint o boneco
-    -- nao anda; sem Neck o Humanoid morre (por isso RequiresNeck=false).
-    local salvas, charSalvo = {}, nil
-    GS.salvarJuntas = function(c)
-        salvas, charSalvo = {}, c
-        if not c then return end
-        for _, j in ipairs(c:GetDescendants()) do
-            if j:IsA("Motor6D") and j.Part0 and j.Part1 then
-                table.insert(salvas, { obj=j, nome=j.Name, pai=j.Parent, p0=j.Part0, p1=j.Part1, c0=j.C0, c1=j.C1 })
-            end
-        end
-        local h = c:FindFirstChildOfClass("Humanoid")
-        if h then
-            pcall(function() h.BreakJointsOnDeath = false end)
-            pcall(function() h.RequiresNeck = false end)
-        end
-    end
-    -- retorna true se precisou remontar alguma junta
-    GS.repararJuntas = function(c)
-        if not c or c ~= charSalvo then return false end
-        local remontou = {}
-        for _, s in ipairs(salvas) do
-            local j = s.obj
-            local quebrada = not j or not j.Parent or j.Part0 ~= s.p0 or j.Part1 ~= s.p1
-            if quebrada and s.p0:IsDescendantOf(c) and s.p1:IsDescendantOf(c) then
-                pcall(function()
-                    if j and j.Parent then j:Destroy() end
-                    local novo = GS.novaInstancia("Motor6D")
-                    novo.Name = s.nome; novo.Part0 = s.p0; novo.Part1 = s.p1
-                    novo.C0 = s.c0; novo.C1 = s.c1
-                    novo.Parent = (s.pai and s.pai:IsDescendantOf(c)) and s.pai or s.p0
-                    s.obj = novo
-                    table.insert(remontou, s.nome)
-                end)
-            end
-        end
-        if #remontou > 0 then
-            warn("[GRINGO INVENCIVEL] juntas quebradas e remontadas: " .. table.concat(remontou, ", "))
-            return true
-        end
-        return false
-    end
-end
-
-local function alternarGhost()
-    ghostAtivado = not ghostAtivado
-    local char = LocalPlayer.Character
-    local hum  = char and char:FindFirstChildOfClass("Humanoid")
-
-    if ghostAtivado then
-        GhostButton.Text = "INVENCIVEL: ON"
-
-        -- Instala hooks de nivel engine (mais brutal possivel)
-        instalarHookNamecall()
-        instalarHookNewIndex()
-
-        aplicarVidaBruta(hum)
-        if hum then conectorInvencivel(hum, char) end
-        GS.salvarJuntas(char)
-
-        -- Rastreia ultima posicao segura no chao para escape de grab
-        local ultimaPosSegura = nil
-        local tempoUltimoPiso = 0
-
-        -- ANTI-GRAB: quebra qualquer Weld/Constraint externo no personagem
-        local function quebrarWeldsExternos(c)
-            for _, part in pairs(c:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    -- Destroi Welds onde a outra parte nao eh do nosso personagem
-                    for _, w in pairs(part:GetJoints()) do
-                        if w:IsA("Weld") or w:IsA("WeldConstraint") then
-                            local p0 = w:IsA("WeldConstraint") and w.Part0 or w.Part0
-                            local p1 = w:IsA("WeldConstraint") and w.Part1 or w.Part1
-                            local externoP0 = p0 and not p0:IsDescendantOf(c)
-                            local externoP1 = p1 and not p1:IsDescendantOf(c)
-                            if externoP0 or externoP1 then
-                                pcall(function() w:Destroy() end)
-                            end
-                        end
-                    end
-                    -- Destroi NoCollisionConstraint e RigidConstraint externos
-                    for _, co in pairs(part:GetChildren()) do
-                        if co:IsA("RigidConstraint") or co:IsA("BallSocketConstraint")
-                        or co:IsA("HingeConstraint") or co:IsA("SlidingBallConstraint") then
-                            local a0 = co:FindFirstChild("Attachment0") or rawget(co, "Attachment0")
-                            -- Se tem Attachment que nao pertence ao char, destroi
-                            pcall(function()
-                                if co.Attachment0 and not co.Attachment0.Parent:IsDescendantOf(c) then
-                                    co:Destroy()
-                                elseif co.Attachment1 and not co.Attachment1.Parent:IsDescendantOf(c) then
-                                    co:Destroy()
-                                end
-                            end)
-                        end
-                    end
-                end
-            end
-        end
-
-        -- Heartbeat — fallback + anti-grab ativo todo frame
-        ghostConnection = GS.conectar(RunService.Heartbeat,function()
-            local c = LocalPlayer.Character
-            local h = c and c:FindFirstChildOfClass("Humanoid")
-            if not h then return end
-            local root = c:FindFirstChild("HumanoidRootPart")
-
-            aplicarVidaBruta(h)
-
-            -- ANTI-DESMONTAR: remonta o boneco e tira de baixo do chao
-            if GS.repararJuntas(c) and root and ultimaPosSegura then
-                pcall(function()
-                    root.CFrame = CFrame.new(ultimaPosSegura + Vector3.new(0, 3, 0))
-                    root.AssemblyLinearVelocity = Vector3.zero
-                end)
-            end
-
-            -- Garante PlatformStand/Sit desligados (fallback se hook falhar)
-            pcall(function() if h.PlatformStand then h.PlatformStand = false end end)
-            pcall(function() if h.Sit then h.Sit = false end end)
-
-            -- ANTI-KNOCKBACK: zera velocidade absurda (murro do Capitao Clark)
-            -- Velocidade normal de corrida = ~16-32 studs/s. Knockback = >80
-            if root then
-                local vel = root.AssemblyLinearVelocity
-                if vel.Magnitude > 80 then
-                    pcall(function()
-                        root.AssemblyLinearVelocity = Vector3.new(0, vel.Y > 0 and vel.Y or 0, 0)
-                    end)
-                end
-                -- Tambem reseta rotacao absurda (ragdoll gira o boneco)
-                local angVel = root.AssemblyAngularVelocity
-                if angVel.Magnitude > 5 then
-                    pcall(function()
-                        root.AssemblyAngularVelocity = Vector3.zero
-                    end)
-                end
-            end
-
-            if h:GetState() == Enum.HumanoidStateType.Dead then
-                pcall(function() h:ChangeState(Enum.HumanoidStateType.Running) end)
-                aplicarVidaBruta(h)
-            end
-
-            -- ANTI-GRAB: destrói welds externos todo frame
-            quebrarWeldsExternos(c)
-
-            -- Rastreia posicao segura quando no chao
-            if root then
-                local pos = root.Position
-                local ray = workspace:Raycast(pos, Vector3.new(0, -5, 0))
-                if ray then
-                    ultimaPosSegura = pos
-                    tempoUltimoPiso = tick()
-                end
-
-                -- Detecta grab: levantado no ar perto de NPC nao-player
-                local alturaDoChao = pos.Y
-                if not ray and (tick() - tempoUltimoPiso) > 0.3 then
-                    -- Verifica se tem NPC perto (o Locusto)
-                    local grabbedByNPC = false
-                    for _, obj in pairs(workspace:GetChildren()) do
-                        if obj:IsA("Model") and obj ~= c and not Players:GetPlayerFromCharacter(obj) then
-                            local npcRoot = obj:FindFirstChild("HumanoidRootPart")
-                            if npcRoot then
-                                local dist = (pos - npcRoot.Position).Magnitude
-                                if dist < 12 then  -- perto o suficiente para ser um grab
-                                    grabbedByNPC = true
-                                    break
-                                end
-                            end
-                        end
-                    end
-                    if grabbedByNPC and ultimaPosSegura then
-                        -- ESCAPE: teletransporta de volta ao chao e reseta velocidade
-                        pcall(function()
-                            root.CFrame = CFrame.new(ultimaPosSegura)
-                            root.Velocity = Vector3.new(0, 0, 0)
-                            root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                            if root:FindFirstChild("BodyVelocity") then
-                                root.BodyVelocity:Destroy()
-                            end
-                        end)
-                        -- Destrói welds imediatamente após escape
-                        quebrarWeldsExternos(c)
-                        aplicarVidaBruta(h)
-                    end
-                end
-            end
-
-            for _, obj in pairs(c:GetDescendants()) do
-                if (obj:IsA("LocalScript") or obj:IsA("Script")) and not obj.Disabled then
-                    local n = obj.Name:lower()
-                    if n:find("health") or n:find("death") or n:find("damage") or n:find("kill") then
-                        pcall(function() obj.Disabled = true end)
-                    end
-                end
-            end
-
-            -- ANTI-JUMPSCARE / ANTI-TELA DE MORTE:
-            -- Detecta e destroi GUIs de morte/jumpscare que o jogo injeta
-            -- (Casa do Locusto, horror games — mostram tela vermelha quando pegam voce)
-            pcall(function()
-                for _, gui in pairs(LocalPlayer.PlayerGui:GetChildren()) do
-                    if gui:IsA("ScreenGui") then
-                        local n = gui.Name:lower()
-                        -- Nome suspeito de morte
-                        if n:find("death") or n:find("dead") or n:find("die")
-                        or n:find("jump") or n:find("scare") or n:find("caught")
-                        or n:find("kill") or n:find("lose") or n:find("gameover")
-                        or n:find("end") or n:find("over") or n:find("fail") then
-                            gui:Destroy()
-                        else
-                            -- Verifica se e uma GUI fullscreen escura/vermelha (jumpscare visual)
-                            for _, frame in pairs(gui:GetDescendants()) do
-                                if frame:IsA("Frame") or frame:IsA("ImageLabel") then
-                                    local size = frame.Size
-                                    local isFullscreen = size.X.Scale >= 0.9 and size.Y.Scale >= 0.9
-                                    if isFullscreen then
-                                        local col = frame.BackgroundColor3
-                                        -- Vermelho escuro = jumpscare tipico
-                                        if col.R > 0.5 and col.G < 0.3 and col.B < 0.3 then
-                                            pcall(function() gui:Destroy() end)
-                                            break
-                                        end
-                                        -- Completamente preto = tela de morte
-                                        if col.R < 0.05 and col.G < 0.05 and col.B < 0.05
-                                        and frame.BackgroundTransparency < 0.3 then
-                                            pcall(function() gui:Destroy() end)
-                                            break
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end)
-        end)
-
-        -- Stepped — segunda frequencia independente
-        ghostSteppedConn = GS.conectar(RunService.Stepped,function()
-            local c = LocalPlayer.Character
-            local h = c and c:FindFirstChildOfClass("Humanoid")
-            if not h then return end
-            aplicarVidaBruta(h)
-            if h:GetState() == Enum.HumanoidStateType.Dead then
-                pcall(function() h:ChangeState(Enum.HumanoidStateType.Running) end)
-                aplicarVidaBruta(h)
-            end
-        end)
-
-        -- Reconecta apos respawn
-        GS.conectar(LocalPlayer.CharacterAdded,function(newChar)
-            if not ghostAtivado then return end
-            task.wait(0.3)
-            local newHum = newChar:FindFirstChildOfClass("Humanoid")
-            GS.salvarJuntas(newChar)
-            if newHum then
-                aplicarVidaBruta(newHum)
-                conectorInvencivel(newHum, newChar)
-            end
-        end)
-
-    else
-        GhostButton.Text = "INVENCIVEL: OFF"
-        removerHooks()
-        if ghostConnection   then ghostConnection:Disconnect()   ghostConnection   = nil end
-        if ghostHealthConn   then ghostHealthConn:Disconnect()   ghostHealthConn   = nil end
-        if ghostDiedConn     then ghostDiedConn:Disconnect()     ghostDiedConn     = nil end
-        if ghostSteppedConn  then ghostSteppedConn:Disconnect()  ghostSteppedConn  = nil end
-        bypassHealthBlock = false
-        local c = LocalPlayer.Character
-        local h = c and c:FindFirstChildOfClass("Humanoid")
-        if h then
-            pcall(function() h.MaxHealth = 100 end)
-            pcall(function() h.Health    = 100 end)
-            pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Dead,        true) end)
-            pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.FallingDown,  true) end)
-            pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Ragdoll,      true) end)
-            pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Physics,      true) end)
-        end
-    end
-end
 
 do
 -- ═══════════════════════════════════════════════════════════════
@@ -3979,109 +3473,7 @@ GS.conectar(UserInputService.InputBegan,function(input, _)
     end
 end)
 
--- ─────────────────────────────────────────────
--- PAREDE INVISIVEL — cria barreiras solidas no mapa
--- Como funciona:
---   • Aperta "PAREDE: OFF" pra ligar o modo de colocacao
---   • Uma caixa fantasma (vermelha, semi-transparente) segue o mouse
---     igual colocar bloco no Minecraft
---   • Aperta "CONFIRMAR PAREDE" pra travar ali: cria a parede de
---     verdade (solida e invisivel) — quem passar da de cara com ela
---   • Pode confirmar varias vezes sem precisar reativar o modo
---   • "REMOVER PAREDES" apaga todas as paredes ja criadas
--- ─────────────────────────────────────────────
-local paredeAtiva     = false
-local paredePreview   = nil
-local paredeRenderConn = nil
-local paredesCriadas  = {}
-local PAREDE_TAMANHO  = Vector3.new(12, 10, 2)
 
-local function _limparParedePreview()
-    if paredePreview then
-        pcall(function() paredePreview:Destroy() end)
-        paredePreview = nil
-    end
-    if paredeRenderConn then
-        paredeRenderConn:Disconnect()
-        paredeRenderConn = nil
-    end
-end
-
-local function alternarParede()
-    paredeAtiva = not paredeAtiva
-    if paredeAtiva then
-        ParedeButton.Text = "PAREDE: ON"
-
-        -- Cria a caixa fantasma de preview (segue o mouse)
-        paredePreview = GS.novaInstancia("Part")
-        paredePreview.Name = "GringoParedePreview"
-        paredePreview.Size = PAREDE_TAMANHO
-        paredePreview.Anchored = true
-        paredePreview.CanCollide = false
-        paredePreview.Material = Enum.Material.ForceField
-        paredePreview.Color = Color3.fromRGB(255, 60, 60)
-        paredePreview.Transparency = 0.5
-        paredePreview.Parent = workspace
-
-        local mouse = LocalPlayer:GetMouse()
-        paredeRenderConn = GS.conectar(RunService.RenderStepped,function()
-            if not paredePreview then return end
-            local hitPos = mouse.Hit and mouse.Hit.Position
-            if not hitPos then return end
-
-            -- Orienta a parede de frente pra camera (perpendicular a visao)
-            local camera  = workspace.CurrentCamera
-            local lookFlat = Vector3.new(camera.CFrame.LookVector.X, 0, camera.CFrame.LookVector.Z)
-            if lookFlat.Magnitude < 0.01 then lookFlat = Vector3.new(0, 0, -1) end
-            lookFlat = lookFlat.Unit
-
-            local yaw = math.atan2(lookFlat.X, lookFlat.Z)
-            local pos = hitPos + Vector3.new(0, PAREDE_TAMANHO.Y / 2, 0)
-            pcall(function()
-                paredePreview.CFrame = CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
-            end)
-        end)
-    else
-        ParedeButton.Text = "PAREDE: OFF"
-        _limparParedePreview()
-    end
-end
-
-GS.conectar(ParedeConfirmButton.MouseButton1Click,function()
-    if not paredeAtiva or not paredePreview then return end
-
-    -- Cria a parede de verdade: solida (CanCollide) e invisivel (Transparency 1)
-    -- OBS: essa parede so bloqueia o SEU proprio personagem. Uma Part criada
-    -- por script local nao existe pro servidor nem pros outros clients, entao
-    -- e fisicamente impossivel travar outros jogadores com ela — isso nao e
-    -- um bug, e uma limitacao de seguranca do proprio Roblox.
-    local parede = GS.novaInstancia("Part")
-    parede.Name = "GringoParedeInvisivel"
-    parede.Size = paredePreview.Size
-    parede.CFrame = paredePreview.CFrame
-    parede.Anchored = true
-    parede.CanCollide = true
-    parede.Transparency = 1
-    parede.Material = Enum.Material.Plastic
-    parede.Parent = workspace
-
-    table.insert(paredesCriadas, parede)
-
-    -- Confirmou: desliga o modo de colocacao sozinho (some a caixa fantasma
-    -- vermelha que ficava seguindo o mouse — isso que parecia "parede andando")
-    paredeAtiva = false
-    ParedeButton.Text = "PAREDE: OFF"
-    _limparParedePreview()
-end)
-
-GS.conectar(ParedeRemoverButton.MouseButton1Click,function()
-    for _, p in ipairs(paredesCriadas) do
-        if p and p.Parent then
-            pcall(function() p:Destroy() end)
-        end
-    end
-    paredesCriadas = {}
-end)
 
 do
 -- ═══════════════════════════════════════════════════════════════
@@ -4959,9 +4351,6 @@ function GS.encerrar()
     fullbrightAtivado=false; ghostAtivado=false
     GS.farmaDirecao=nil
     GS.tentar("puxar",_limparPuxar)
-    GS.tentar("parede preview",_limparParedePreview)
-    for _,p in ipairs(paredesCriadas) do GS.tentar("parede",function() p:Destroy() end) end
-    paredesCriadas={}
     for part,original in pairs(GS.noclipOrig or {}) do
         GS.tentar("colisao",function()
             if part.Parent then part.CanCollide=type(original)=="boolean" and original or true end
@@ -5006,14 +4395,12 @@ GS.conectar(SpeedButton.MouseButton1Click,alternarSpeed)
 GS.conectar(FlyButton.MouseButton1Click,alternarFly)
 GS.conectar(TPButton.MouseButton1Click,executarTeleporte)
 GS.conectar(TPNameInput:GetPropertyChangedSignal("Text"),atualizarListaTP)
-GS.conectar(GhostButton.MouseButton1Click,alternarGhost)
 GS.conectar(EspButton.MouseButton1Click,GS.alternarEsp)
 GS.conectar(AntiTravaButton.MouseButton1Click,alternarAntiTrava)
 GS.conectar(PuxarButton.MouseButton1Click,alternarPuxar)
 GS.conectar(GS.dancaBtn.MouseButton1Click,GS.alternarDanca)
 GS.conectar(TamanhoSlider.Changed,aplicarTamanho)
 GS.conectar(BikeAntiQuedaButton.MouseButton1Click,alternarBikeAntiQueda)
-GS.conectar(ParedeButton.MouseButton1Click,alternarParede)
 GS.conectar(CorAplicarButton.MouseButton1Click,GS.aplicarCorGlobal)
 GS.conectar(CorGlobalButton.MouseButton1Click,GS.alternarCorGlobal)
 
@@ -11534,8 +10921,8 @@ GS.iniciarAntiScript = function()
                 detT=0, gruT=0, statusT=0, avisoT={} }
 
     -- ── UI (fim da aba PLAYER) ──
-    U.sec(GS.painelPlayer, "ANTI-SCRIPTS (PROTEÇÃO CONTRA HACKERS)", "🛡", 50)
-    local togA = U.tog(GS.painelPlayer, "🛡 ANTI-SCRIPTS (FLING, DERRUBAR, PUXAR)", 51)
+    U.sec(GS.painelPlayer, "PROTEÇÃO AUTOMÁTICA", "🛡", 50)
+    local togA = U.tog(GS.painelPlayer, "🛡 ANTI-SCRIPT — ATIVAR PROTEÇÃO", 51)
     togA:SetAttribute("Controlado", true)
     local status = U.pequeno(GS.painelPlayer, "🛡 DESLIGADO", nil, 52)
     status.AutoButtonColor = false; status.TextColor3 = T.dim; status.TextTruncate = Enum.TextTruncate.AtEnd
@@ -11704,8 +11091,143 @@ GS.iniciarAntiScript = function()
         end
     end
 
+    -- ── GHOST-SHIELD KERNEL (integrado ao MESMO botão Anti-Script) ──
+    -- Não cria outra ScreenGui nem botões separados.
+    local Kernel = {
+        Enabled = false,
+        GhostMode = false, -- mantido desligado por padrão para não atravessar o chão
+        AutoBreak = true,
+        Detector = true,
+        DetectionRange = 100,
+        MovementThreshold = 60,
+        BreakSpeed = 0.01,
+    }
+    local KernelSuspects, KernelLastPositions = {}, {}
+    local KernelLastSafePos = nil
+    local KernelBreaking = false
+
+    local function kernelCreateMarker(player)
+        local char = player.Character
+        local adornee = char and (char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart"))
+        if not adornee then return end
+        local old = adornee:FindFirstChild("ScriptDetector_Tag")
+        if old then return end
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "ScriptDetector_Tag"
+        billboard.Size = UDim2.new(0, 200, 0, 50)
+        billboard.StudsOffset = Vector3.new(0, 3, 0)
+        billboard.AlwaysOnTop = true
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = "⚠️ SCRIPTANDO ⚠️"
+        label.TextColor3 = Color3.fromRGB(255, 0, 0)
+        label.TextStrokeTransparency = 0
+        label.Font = Enum.Font.Code
+        label.TextSize = 20
+        label.Parent = billboard
+        billboard.Parent = adornee
+    end
+
+    local function kernelAutoBreak()
+        if not Kernel.Enabled or not Kernel.AutoBreak or KernelBreaking then return end
+        local char, hum, root = eu()
+        if not char or not root then return end
+        local bound = false
+        for _, obj in ipairs(char:GetDescendants()) do
+            if (obj:IsA("Weld") or obj:IsA("WeldConstraint") or obj:IsA("ManualWeld"))
+                and not obj.Name:find("Joint") then
+                bound = true
+                break
+            end
+        end
+        if not bound then return end
+        KernelBreaking = true
+        task.spawn(function()
+            local started = os.clock()
+            while Kernel.Enabled and os.clock() - started < 2 do
+                local currentChar, _, currentRoot = eu()
+                if not currentChar or not currentRoot or currentChar ~= char then break end
+                -- Pequeno movimento local; não remove algemas controladas pelo servidor.
+                currentRoot.CFrame = currentRoot.CFrame * CFrame.new(0.1, 0, 0)
+                task.wait(Kernel.BreakSpeed)
+                currentRoot.CFrame = currentRoot.CFrame * CFrame.new(-0.1, 0, 0)
+                task.wait(Kernel.BreakSpeed)
+            end
+            KernelBreaking = false
+        end)
+    end
+
+    local function kernelMonitorPlayers()
+        if not Kernel.Enabled or not Kernel.Detector then return end
+        local _, _, myRoot = eu()
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                local root = player.Character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local previous = KernelLastPositions[player]
+                    if previous then
+                        local distance = (root.Position - previous).Magnitude
+                        if distance > Kernel.MovementThreshold then
+                            KernelSuspects[player] = os.clock()
+                            kernelCreateMarker(player)
+                            if myRoot and (root.Position - myRoot.Position).Magnitude <= Kernel.DetectionRange then
+                                local now = os.clock()
+                                if not A.avisoT["kernel_" .. player.UserId]
+                                    or now - A.avisoT["kernel_" .. player.UserId] > 8 then
+                                    A.avisoT["kernel_" .. player.UserId] = now
+                                    GS.toast("⚠ " .. player.DisplayName .. " apresentou movimento suspeito", false)
+                                end
+                            end
+                        end
+                    end
+                    KernelLastPositions[player] = root.Position
+                end
+            end
+        end
+        for player, lastSeen in pairs(KernelSuspects) do
+            if not player.Parent or os.clock() - lastSeen > 15 then
+                KernelSuspects[player] = nil
+                local char = player.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                local head = char and char:FindFirstChild("Head")
+                local marker = (head and head:FindFirstChild("ScriptDetector_Tag"))
+                    or (root and root:FindFirstChild("ScriptDetector_Tag"))
+                if marker then marker:Destroy() end
+            end
+        end
+    end
+
+    local function kernelGhostMode()
+        if not Kernel.Enabled or not Kernel.GhostMode then return end
+        local char = LocalPlayer.Character
+        if not char then return end
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+                -- SetNetworkOwner não é uma permissão disponível de forma confiável no cliente.
+            end
+        end
+    end
+
+    local function kernelAntiTP()
+        if not Kernel.Enabled then return end
+        local _, _, root = eu()
+        if not root then return end
+        if not KernelLastSafePos then KernelLastSafePos = root.Position end
+        if (root.Position - KernelLastSafePos).Magnitude > 100 then
+            root.CFrame = CFrame.new(KernelLastSafePos)
+        elseif root.Position.Y < -50 then
+            root.CFrame = CFrame.new(KernelLastSafePos + Vector3.new(0, 10, 0))
+        else
+            KernelLastSafePos = root.Position
+        end
+    end
+
     -- ── LIGA / DESLIGA ──
     local function ligar()
+        Kernel.Enabled = true
+        KernelLastSafePos = select(3, eu()) and select(3, eu()).Position or nil
         A.bloqueios = 0; A.seguro = nil
         table.insert(A.conns, GS.conectar(RunService.Stepped,function()
             pcall(semColisaoComOutros)
@@ -11714,6 +11236,10 @@ GS.iniciarAntiScript = function()
         table.insert(A.conns, GS.conectar(RunService.Heartbeat,function(dt)
             pcall(antiFling)
             pcall(antiDerrubar)
+            pcall(kernelAutoBreak)
+            pcall(kernelMonitorPlayers)
+            pcall(kernelGhostMode)
+            pcall(kernelAntiTP)
             A.gruT = A.gruT + dt
             if A.gruT >= 0.3 then A.gruT = 0; pcall(antiGrude) end
             A.detT = A.detT + dt
@@ -11731,6 +11257,10 @@ GS.iniciarAntiScript = function()
     end
 
     local function desligar()
+        Kernel.Enabled = false
+        KernelBreaking = false
+        KernelLastSafePos = nil
+        KernelSuspects, KernelLastPositions = {}, {}
         for _, c in ipairs(A.conns) do pcall(function() c:Disconnect() end) end
         A.conns = {}
         for part in pairs(A.mudados) do pcall(function() if part.Parent then part.CanCollide = true end end) end
@@ -11744,10 +11274,22 @@ GS.iniciarAntiScript = function()
         status.Text = "🛡 DESLIGADO"
     end
 
+    GS._setAntiScript = function(ativo)
+        if A.ativo == ativo then return end
+        A.ativo = ativo
+        togA.Text = ativo and "ANTI-SCRIPT: ON" or "🛡 ANTI-SCRIPT — ATIVAR PROTEÇÃO"
+        if ativo then ligar() else desligar() end
+    end
+    GS._protecaoAtiva = false
     GS.conectar(togA.MouseButton1Click,function()
-        A.ativo = not A.ativo
-        togA.Text = A.ativo and "ANTI-SCRIPTS: ON" or "ANTI-SCRIPTS: OFF"
-        if A.ativo then ligar() else desligar() end
+        GS._protecaoAtiva = not GS._protecaoAtiva
+        if GS._setAntiScript then GS._setAntiScript(GS._protecaoAtiva) end
+        if GS._setAntiAssedio then GS._setAntiAssedio(GS._protecaoAtiva) end
+        if GS._protecaoAtiva then
+            GS.toast("🛡 Proteção automática ativada", true)
+        else
+            GS.toast("🛡 Proteção automática desativada", false)
+        end
     end)
     GS.conectar(ScreenGui.Destroying,desligar)
 end
@@ -11784,12 +11326,8 @@ GS.iniciarAntiAssedio = function()
     local AA = { ativo=false, fugir=false, conns={}, dados={}, ocultos={}, ultimaFuga=0,
                  statusT=0, reaplicaT=0, bloqueioPedido={} }
 
-    -- ── UI (logo abaixo do ANTI-SCRIPTS) ──
-    local togAA = U.tog(GS.painelPlayer, "🚫 ANTI-ASSÉDIO (+18, GRUDAR, MOSQUITO, TP)", 53)
-    local togF  = U.tog(GS.painelPlayer, "🏃 FUGIR AUTOMÁTICO QUANDO GRUDAREM", 54)
-    togAA:SetAttribute("Controlado", true); togF:SetAttribute("Controlado", true)
-    local mostrarBtn = U.pequeno(GS.painelPlayer, "👁 MOSTRAR OS ESCONDIDOS DE NOVO", nil, 55)
-    local status = U.pequeno(GS.painelPlayer, "🚫 DESLIGADO", nil, 56)
+    -- Controlado pelo único botão principal da aba Proteção.
+    local status = U.pequeno(GS.painelPlayer, "🚫 MONITORAMENTO DESLIGADO", nil, 53)
     status.AutoButtonColor = false; status.TextColor3 = T.dim; status.TextTruncate = Enum.TextTruncate.AtEnd
 
     local function meuRoot()
@@ -11979,21 +11517,11 @@ GS.iniciarAntiAssedio = function()
         status.Text = "🚫 DESLIGADO"
     end
 
-    GS.conectar(togAA.MouseButton1Click,function()
-        AA.ativo = not AA.ativo
-        togAA.Text = AA.ativo and "ANTI-ASSÉDIO: ON" or "ANTI-ASSÉDIO: OFF"
+    GS._setAntiAssedio = function(ativo)
+        if AA.ativo == ativo then return end
+        AA.ativo = ativo
         if AA.ativo then ligar() else desligar() end
-    end)
-    GS.conectar(togF.MouseButton1Click,function()
-        AA.fugir = not AA.fugir
-        togF.Text = AA.fugir and "FUGIR: ON" or "FUGIR: OFF"
-    end)
-    GS.conectar(mostrarBtn.MouseButton1Click,function()
-        local n = 0
-        for p in pairs(AA.ocultos) do mostrar(p); n = n + 1 end
-        AA.dados = {}
-        GS.toast("👁  " .. n .. " jogador(es) visível(is) de novo", true)
-    end)
+    end
     GS.conectar(ScreenGui.Destroying,desligar)
 end
 GS.painelPlayer = GS.painelProtecao or GS.painelPlayer  -- visual v6: monta na subaba certa
