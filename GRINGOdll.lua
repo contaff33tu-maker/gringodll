@@ -34,6 +34,7 @@ local FlyButton, FlyDownButton, FlyUpButton, FlyLabel
 local TPNameInput, TPButton, TPListaFrame
 local atualizarListaTP
 local GS = {}  -- funcoes dos blocos isolados (limite de 200 locals do Luau)
+GS.toggleHandlers = {}
 -- Recursos pertencentes apenas a esta execucao do painel.
 GS.recursos={conexoes={},tarefas={},ativos={},instancias={},tweens={},renders={},limpezas={}}
 GS.rawTask={spawn=task.spawn,defer=task.defer,delay=task.delay,cancel=task.cancel}
@@ -45,6 +46,18 @@ function GS.tentar(nome,fn,...)
     return ok
 end
 function GS.conectar(sinal,fn)
+    -- Guarda os callbacks de clique dos toggles persistentes para que o
+    -- carregamento execute a mesma logica do clique real, sem depender de
+    -- GuiButton:Activate() (que dispara Activated, nao MouseButton1Click).
+    if GS.configBotoes then
+        for _,item in ipairs(GS.configBotoes) do
+            if item.botao and sinal==item.botao.MouseButton1Click then
+                item.callbacks=item.callbacks or {}
+                table.insert(item.callbacks,fn)
+                break
+            end
+        end
+    end
     local limpeza
     if GS.tela and sinal==GS.tela.Destroying then
         limpeza={fn=fn,feita=false}
@@ -1087,10 +1100,12 @@ do
         end
         -- "Controlado": a chave so obedece ao .Text que a logica escreve
         -- (evita a chave mostrar OFF com a funcao ligada)
-        GS.conectar(t.MouseButton1Click,function()
+        local aoClicar=function()
             if not t:GetAttribute("Controlado") then setOn(not on) end
             GS.delay(0.1, sync)   -- confere logo depois que a funcao escreveu o texto
-        end)
+        end
+        GS.toggleHandlers[t]=aoClicar
+        GS.conectar(t.MouseButton1Click,aoClicar)
         GS.conectar(t:GetPropertyChangedSignal("Text"),function()
             local txt=t.Text
             if txt=="" then return end
@@ -1395,15 +1410,21 @@ do
             if salvando or carregando then return end
             salvando = true
             local dados = {versao=1, toggles={}}
-            for indice, item in ipairs(botoesConfig) do
+            for _, item in ipairs(botoesConfig) do
                 local texto = string.upper(tostring(item.botao.Text or ""))
-                dados.toggles[tostring(indice)] = {
+                dados.toggles[item.nome] = {
                     nome=item.nome,
                     ativo=(texto:find("%f[%w]ON%f[%W]") ~= nil)
                 }
             end
             pcall(function()
-                if not isfolder(pastaConfig) then makefolder(pastaConfig) end
+                if type(isfolder)=="function" and type(makefolder)=="function"
+                    and not isfolder(pastaConfig) then
+                    makefolder(pastaConfig)
+                end
+                if type(writefile)~="function" then
+                    error("Este executor não oferece writefile")
+                end
                 writefile(arquivoConfig, HttpService:JSONEncode(dados))
             end)
             salvando = false
@@ -1413,7 +1434,8 @@ do
             local botao = tog(pai, rotulo, ordem, iconeNome)
             local nome = semEmoji(rotulo)
             local indice = #botoesConfig + 1
-            botoesConfig[indice] = {botao=botao, nome=nome}
+            botoesConfig[indice] = {botao=botao, nome=nome, callbacks={}}
+            GS.configBotoes = botoesConfig
             GS.conectar(botao.MouseButton1Click, function()
                 GS.delay(0.25, salvarConfiguracoes)
             end)
@@ -1432,17 +1454,29 @@ do
             carregando = true
             local dados
             pcall(function()
-                if isfile(arquivoConfig) then
-                    dados = HttpService:JSONDecode(readfile(arquivoConfig))
+                if type(readfile)=="function" then
+                    local conteudo=readfile(arquivoConfig)
+                    if type(conteudo)=="string" and conteudo~="" then
+                        dados=HttpService:JSONDecode(conteudo)
+                    end
                 end
             end)
             if type(dados) == "table" and type(dados.toggles) == "table" then
                 for indice, item in ipairs(botoesConfig) do
-                    local salvo = dados.toggles[tostring(indice)]
-                    if type(salvo) == "table" and salvo.nome == item.nome and salvo.ativo == true then
-                        -- Activate dispara o mesmo fluxo de clique usado pelo usuario.
-                        pcall(function() item.botao:Activate() end)
-                        task.wait(0.03)
+                    -- Usa o nome como chave para a ordem visual das abas poder mudar
+                    -- sem invalidar um arquivo de configuracao ja salvo.
+                    local salvo = dados.toggles[item.nome] or dados.toggles[tostring(indice)]
+                    if type(salvo) == "table" and salvo.nome == item.nome then
+                        local texto=string.upper(tostring(item.botao.Text or ""))
+                        local atual=texto:find("%f[%w]ON%f[%W]") ~= nil
+                        if salvo.ativo ~= atual then
+                            local interno=GS.toggleHandlers[item.botao]
+                            if interno then pcall(interno) end
+                            for _,callback in ipairs(item.callbacks or {}) do
+                                pcall(callback)
+                            end
+                            task.wait(0.03)
+                        end
                     end
                 end
             end
@@ -4988,27 +5022,42 @@ GS.iniciarValeRush = function()
     local Players=game:GetService("Players")
     local Run=game:GetService("RunService")
     local jogador=Players.LocalPlayer
-    local V={camera=false,leve=false,fov=95,epoch=0,busy=false,vivo=true,
+    local V={camera=false,leve=false,fov=110,epoch=0,busy=false,vivo=true,
         salvos=setmetatable({}, {__mode="k"}),cameras=setmetatable({}, {__mode="k"}),
         conns={},fila={},pendentes=setmetatable({}, {__mode="k"}),head=1,mudancas=0,box=false,boxPlayers={},velocidades=setmetatable({}, {__mode="k"})}
     U.sec(painel,"VALE RUSH · HUSS VALLEY","gauge",1)
-    local cameraBtn=U.tog(painel,"VISÃO AMPLIADA: OFF",2,"eye")
-    local menos,mais,fovLabel=U.ctrl(painel,"Campo de visão (graus)",V.fov,3)
-    local leveBtn=U.tog(painel,"MAPA LEVE: OFF",4,"zap")
-    local info=U.pequeno(painel,"Modo intenso · gráficos mínimos · velocidade 31",nil,5,"info")
+
+    -- Velocidade fica no topo, em uma categoria propria.
+    U.sec(painel,"VELOCIDADE","zap",2)
+    local velocidadeBox=GS.novaInstancia("Frame",painel)
+    velocidadeBox.Name="ControlesVelocidade"
+    velocidadeBox.Size=UDim2.new(1,0,0,1)
+    velocidadeBox.AutomaticSize=Enum.AutomaticSize.Y
+    velocidadeBox.BackgroundTransparency=1
+    velocidadeBox.LayoutOrder=3
+    local velocidadeLayout=GS.novaInstancia("UIListLayout",velocidadeBox)
+    velocidadeLayout.SortOrder=Enum.SortOrder.LayoutOrder
+    velocidadeLayout.Padding=UDim.new(0,6)
+    local maximoBtn=U.tog(velocidadeBox,"MÁXIMO: OFF",1,"zap")
+    local normalBtn=U.tog(velocidadeBox,"NORMAL: OFF",2,"gauge")
+    maximoBtn:SetAttribute("Controlado",true)
+    normalBtn:SetAttribute("Controlado",true)
+
+    local cameraBtn=U.tog(painel,"VISÃO AMPLIADA: OFF",4,"eye")
+    local menos,mais,fovLabel=U.ctrl(painel,"Campo de visão (graus)",V.fov,5)
+    local leveBtn=U.tog(painel,"MAPA LEVE: OFF",6,"zap")
+    local info=U.pequeno(painel,"Modo intenso · gráficos mínimos · velocidade 31",nil,7,"info")
     info.AutoButtonColor=false
-    local contador=U.pequeno(painel,"FPS: medindo...",nil,6,"gauge")
+    local contador=U.pequeno(painel,"FPS: medindo...",nil,8,"gauge")
     contador.AutoButtonColor=false
-    local boxBtn=U.tog(painel,"ESP PROFISSIONAL: OFF",7,"users")
-    local focoBtn=U.tog(painel,"FOCAR COM BOTÃO DO MEIO: OFF",8,"crosshair")
-    local focoStatus=U.pequeno(painel,"FOCO: DESLIGADO",nil,9,"info")
+    local boxBtn=U.tog(painel,"ESP PROFISSIONAL: OFF",9,"users")
+    local focoBtn=U.tog(painel,"FOCAR COM BOTÃO DO MEIO: OFF",10,"crosshair")
+    local focoStatus=U.pequeno(painel,"FOCO: DESLIGADO",nil,11,"info")
     focoStatus.AutoButtonColor=false
-    local desfocarBtn=U.acao(painel,"DESFOCAR AGORA","x",10)
-    local restaurarBtn=U.acao(painel,"RESTAURAR TUDO","refresh-cw",11)
+    local desfocarBtn=U.acao(painel,"DESFOCAR AGORA","x",12)
+    local restaurarBtn=U.acao(painel,"RESTAURAR TUDO","refresh-cw",13)
 
     -- Modos de velocidade: Máximo e Normal. Apenas um pode ficar ativo.
-    local maximoBtn=U.tog(painel,"MÁXIMO: OFF",12,"zap")
-    local normalBtn=U.tog(painel,"NORMAL: OFF",13,"gauge")
     maximoBtn:SetAttribute("Controlado",true)
     normalBtn:SetAttribute("Controlado",true)
 
@@ -5214,7 +5263,7 @@ GS.iniciarValeRush = function()
         r.char=char
         if not char then return end
         local pasta=GS.novaInstancia("Folder"); pasta.Name="ESP_"..player.Name; pasta.Parent=V.boxFolder
-        local cor=Color3.fromRGB(70,235,210)
+        local cor=Color3.fromRGB(255,65,75)
         local function frame(nome,pai)
             local f=GS.novaInstancia("Frame");f.Name=nome;f.BorderSizePixel=0;f.BackgroundTransparency=1;f.Parent=pai;return f
         end
@@ -5222,24 +5271,10 @@ GS.iniciarValeRush = function()
         local contorno=GS.novaInstancia("UIStroke");contorno.Color=Color3.fromRGB(6,12,20);contorno.Thickness=3;contorno.Parent=box
         local interno=frame("Borda",box);interno.Size=UDim2.fromScale(1,1);interno.ZIndex=82
         local stroke=GS.novaInstancia("UIStroke");stroke.Color=cor;stroke.Thickness=1;stroke.Parent=interno
-        local function texto(nome,altura)
-            local t=GS.novaInstancia("TextLabel");t.Name=nome;t.Size=UDim2.new(1,100,0,altura)
-            t.Position=UDim2.new(0,-50,0,-altura-3);t.BackgroundTransparency=1;t.TextColor3=Color3.fromRGB(240,255,255)
-            t.TextStrokeColor3=Color3.fromRGB(0,0,0);t.TextStrokeTransparency=0.15
-            t.Font=Enum.Font.GothamBold;t.TextSize=12;t.ZIndex=84;t.Parent=box;return t
-        end
-        local nome=texto("Nome",18);nome.Text=player.DisplayName.." (@"..player.Name..")"
-        local distancia=texto("Distancia",16);distancia.Position=UDim2.new(0,-50,1,4)
-        local saude=frame("VidaFundo",box);saude.BackgroundTransparency=0;saude.BackgroundColor3=Color3.fromRGB(8,12,18)
-        saude.Position=UDim2.fromOffset(-6,0);saude.Size=UDim2.new(0,3,1,0);saude.ZIndex=82
-        local barra=frame("Vida",saude);barra.BackgroundTransparency=0;barra.BackgroundColor3=Color3.fromRGB(80,240,130)
-        barra.AnchorPoint=Vector2.new(0,1);barra.Position=UDim2.fromScale(0,1);barra.Size=UDim2.fromScale(1,1);barra.ZIndex=83
-        local linha=frame("Linha",pasta);linha.BackgroundTransparency=0.25;linha.BackgroundColor3=cor;linha.AnchorPoint=Vector2.new(0.5,0.5);linha.ZIndex=80
-        local seta=GS.novaInstancia("TextLabel");seta.Name="ForaDaTela";seta.Size=UDim2.fromOffset(22,22)
-        seta.AnchorPoint=Vector2.new(0.5,0.5);seta.BackgroundTransparency=1;seta.Text="▲";seta.TextSize=19
-        seta.TextColor3=cor;seta.TextStrokeTransparency=0.1;seta.ZIndex=83;seta.Parent=pasta
-        box.Visible=false;linha.Visible=false;seta.Visible=false
-        r.visual=pasta;r.ui={box=box,stroke=stroke,distancia=distancia,barra=barra,linha=linha,seta=seta}
+        local linha=frame("Linha",pasta);linha.BackgroundTransparency=0.25
+        linha.BackgroundColor3=cor;linha.AnchorPoint=Vector2.new(0.5,0.5);linha.ZIndex=80
+        box.Visible=false;linha.Visible=false
+        r.visual=pasta;r.ui={box=box,stroke=stroke,linha=linha}
         r.proximoTamanho=0;r.tamanho=Vector3.new(4,6,3)
     end
     function V.atualizarBoxes()
@@ -5248,16 +5283,15 @@ GS.iniciarValeRush = function()
         if not camera then return end
         local viewport=camera.ViewportSize
         if viewport.X<1 or viewport.Y<1 then return end
-        local minhaRaiz=V.raizPersonagem(jogador.Character)
-        local origem=minhaRaiz and minhaRaiz.Position or camera.CFrame.Position
         for player,r in pairs(V.boxPlayers) do
             local ui=r.ui
             if ui then
-                ui.box.Visible=false;ui.linha.Visible=false;ui.seta.Visible=false
+                ui.box.Visible=false;ui.linha.Visible=false
                 local char=player.Character
                 local root,hum=V.raizPersonagem(char)
                 if char and root and hum and hum.Health>0 and char:IsDescendantOf(workspace) then
-                    local cor=char==V.alvoFoco and Color3.fromRGB(255,200,70) or Color3.fromRGB(70,235,210)
+                    local mesmoTime=jogador.Team~=nil and player.Team~=nil and player.Team==jogador.Team
+                    local cor=mesmoTime and Color3.fromRGB(70,235,120) or Color3.fromRGB(255,65,75)
                     local pos,visivel=camera:WorldToViewportPoint(root.Position)
                     if visivel and pos.Z>0 then
                         if os.clock()>r.proximoTamanho then
@@ -5273,21 +5307,12 @@ GS.iniciarValeRush = function()
                         local x,y=pos.X-w*0.5,pos.Y-h*0.5
                         ui.box.Position=UDim2.fromOffset(x,y);ui.box.Size=UDim2.fromOffset(w,h);ui.box.Visible=true
                         ui.stroke.Color=cor;ui.linha.BackgroundColor3=cor
-                        local vida=math.clamp(hum.Health/math.max(hum.MaxHealth,1),0,1)
-                        ui.barra.Size=UDim2.fromScale(1,vida);ui.barra.BackgroundColor3=Color3.fromRGB(255*(1-vida),210*vida,70)
-                        ui.distancia.Text=string.format("%.0f studs · %d%%",(root.Position-origem).Magnitude,math.floor(vida*100+0.5))
                         local a=Vector2.new(viewport.X*0.5,viewport.Y-35)
                         local b=Vector2.new(pos.X,math.clamp(y+h,0,viewport.Y))
                         local delta=b-a
                         ui.linha.Position=UDim2.fromOffset((a.X+b.X)*0.5,(a.Y+b.Y)*0.5)
                         ui.linha.Size=UDim2.fromOffset(delta.Magnitude,1)
                         ui.linha.Rotation=math.deg(math.atan2(delta.Y,delta.X));ui.linha.Visible=true
-                    else
-                        local dx,dy=pos.X-viewport.X*0.5,pos.Y-viewport.Y*0.5
-                        if pos.Z<0 then dx,dy=-dx,-dy end
-                        local t=math.min(math.max(1,viewport.X*0.5-28)/math.max(math.abs(dx),0.01),math.max(1,viewport.Y*0.5-50)/math.max(math.abs(dy),0.01))
-                        ui.seta.Position=UDim2.fromOffset(viewport.X*0.5+dx*t,viewport.Y*0.5+dy*t)
-                        ui.seta.Rotation=math.deg(math.atan2(dy,dx))+90;ui.seta.TextColor3=cor;ui.seta.Visible=true
                     end
                 end
             end
