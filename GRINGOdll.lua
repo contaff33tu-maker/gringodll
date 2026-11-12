@@ -150,14 +150,13 @@ pcall(function() if gethui then GS.pai = gethui() end end)
 GS.pai = GS.pai or game.CoreGui
 GS.animsInfinitas = {}   -- animacoes em loop (pausadas no MODO LEVE)
 local GhostButton, EspButton, AntiTravaButton
-local PuxarButton, DerrubaButton
-local PuxarNomeInput, PuxarUmButton
+local PuxarButton
 local TamanhoSlider
 local BikeAntiQuedaButton, BikeAntiQuedaKeyButton
 local ParedeButton, ParedeConfirmButton, ParedeRemoverButton
 local CorGlobalButton, CorHexInput, CorAplicarButton, CorPreview
 local CorSwatches = {}
-local CarregarNomeInput, CarregarSegurarButton, CarregarStatus, CarregarListaFrame, CostasButton
+local CarregarNomeInput, CarregarStatus, CarregarListaFrame, CostasButton
 local CostasCtrl = {}  -- botoes +/- de distancia/altura das costas
 local RegenUI = {}     -- botoes de regenerar / anti-void
 local ConfigTabButton, ConfigTitle, KeybindButton, UnloadButton, ConfigCloseButton
@@ -172,7 +171,6 @@ do
 --   guardados nas mesmas variaveis globais de antes.
 --   • Barra lateral de icones (abas) + subabas no topo
 --   • Cada categoria na sua tela (nada de tudo numa aba so)
---   • Busca no topo: digita o nome da funcao e ele abre a aba certa
 --   • Sem emoji: icones de verdade (pacote lucide-roblox, imagens
 --     publicas no Roblox). Emoji que a logica escrever em texto e
 --     filtrado na hora de mostrar (o texto real do botao nao muda).
@@ -883,7 +881,7 @@ do
         viaja:Play(); table.insert(GS.animsInfinitas, viaja)
     end
 
-    -- ── Topo: subabas + busca + minimizar/fechar + avatar ──
+    -- ── Topo: subabas + minimizar/fechar + avatar ──
     local Header=GS.novaInstancia("Frame",MainFrame)
     Header.Position=UDim2.fromOffset(96,14+TITULO_H); Header.Size=UDim2.new(1,-110,0,HEADER_H)
     Header.BackgroundTransparency=1; Header.Active=true
@@ -911,7 +909,7 @@ do
     end
 
     local SubBar=GS.novaInstancia("Frame",Header)
-    SubBar.Size=UDim2.new(1,-330,1,0); SubBar.BackgroundTransparency=1
+    SubBar.Size=UDim2.new(1,-160,1,0); SubBar.BackgroundTransparency=1
     do
         local l=GS.novaInstancia("UIListLayout",SubBar); l.FillDirection=Enum.FillDirection.Horizontal
         l.SortOrder=Enum.SortOrder.LayoutOrder; l.Padding=UDim.new(0,22)
@@ -961,20 +959,6 @@ do
         tw(MainFrame,{Size=mini and UDim2.fromOffset(W,TITULO_H+HEADER_H+24) or UDim2.fromOffset(W,H)},0.4)
     end)
 
-    -- busca
-    local Busca
-    do
-        local caixa=GS.novaInstancia("Frame",Header); caixa.Size=UDim2.fromOffset(186,36); caixa.Position=UDim2.new(1,-318,0.5,-18)
-        caixa.BackgroundColor3=T.vidro; caixa.BackgroundTransparency=V.campo; caixa.BorderSizePixel=0
-        redondo(caixa); local st=mkS(1,BRANCO,caixa,V.borda)
-        local ic=icone(caixa,"search",15,T.mute); ic.Position=UDim2.new(0,18,0.5,0)
-        Busca=GS.novaInstancia("TextBox",caixa); Busca.Size=UDim2.new(1,-44,1,0); Busca.Position=UDim2.fromOffset(34,0)
-        Busca.BackgroundTransparency=1; Busca.Font=Enum.Font.GothamMedium; Busca.TextSize=13
-        Busca.PlaceholderText="Buscar"; Busca.PlaceholderColor3=T.mute; Busca.Text=""; Busca.TextColor3=T.text
-        Busca.TextXAlignment=Enum.TextXAlignment.Left; Busca.ClearTextOnFocus=false; Busca.TextTruncate=Enum.TextTruncate.AtEnd
-        GS.conectar(Busca.Focused,function() tw(st,{Color=T.strokeHi,Transparency=0.3},0.2) tw(caixa,{BackgroundTransparency=0.82},0.2) end)
-        GS.conectar(Busca.FocusLost,function() tw(st,{Color=BRANCO,Transparency=V.borda},0.25) tw(caixa,{BackgroundTransparency=V.campo},0.25) end)
-    end
 
     -- ── Area de conteudo ──
     local CA=GS.novaInstancia("ScrollingFrame",MainFrame)
@@ -1438,14 +1422,14 @@ do
     -- ═══════════════ ABAS E SUBABAS ═══════════════
     local ABAS = {
         { nome="Jogador",   ico="user",        subs={"Movimento","Personagem","Proteção"} },
-        { nome="Monstros",  ico="skull",       subs={"Puxar","Derrubar"} },
+        { nome="Monstros",  ico="skull",       subs={"Puxar"} },
         { nome="Visual",    ico="eye",         subs={"Visual"} },
-        { nome="Teleporte", ico="map-pin",     subs={"Players","Puxar jogador","Carregar"} },
-        { nome="Veículo",   ico="bike",        subs={"Bike"} },
+        { nome="Teleporte", ico="map-pin",     subs={"Players","Subir nas costas"} },
+        { nome="Veículo",   ico="bike",        subs={"Bike"}, oculta=true },
         { nome="Mundo",     ico="globe",       subs={"Parede","Cor global"} },
-        { nome="Rastrear",  ico="scan-search", subs={"Objetos"} },
+        { nome="Rastrear",  ico="scan-search", subs={"Objetos"}, oculta=true },
         { nome="Combate",   ico="swords",      subs={"Combate","Silent Aim","No Recoil","Munição"}, oculta=true },
-        { nome="Resolver",  ico="brain",       subs={"Resolver"} },
+        { nome="Assistente", ico="brain",      subs={"Resolver","Rastrear"} },
         { nome="Emotes",    ico="smile",       subs={"Emotes"}, ordem=1.5 },
         { nome="Duelo da Bola", ico="flame",   subs={"Auto Toque"}, ordem=8.5, oculta=true },
         { nome="Farmar Vibes", ico="package", subs={"Farmar Vibes"}, ordem=9.5, oculta=true },
@@ -1597,16 +1581,7 @@ do
         GS.dancaBtn:SetAttribute("Controlado", true)
         GS.puxarStatus = pequeno(box,"🧲 PRESOS: 0",nil,3,"magnet")
         GS.puxarStatus.AutoButtonColor=false; GS.puxarStatus.TextColor3=T.dim
-        GS.puxarBox    = box  -- seletor de dancas + ESCUDO sao criados pelos modulos
-    end
-
-    -- ── MONSTROS › Derrubar ──
-    do
-        local p = painel(2,2)
-        local gd = grupo(p, "Derruba monstros", "Liga e aperte a tecla perto do monstro", "bomb", 1)
-        DerrubaButton      = tog(gd,"Derruba monstros (aperte a tecla)",1,"zap")
-        DerrubaButton:SetAttribute("Controlado", true)
-        GS.derrubaTeclaBtn = pequeno(gd,"TECLA DERRUBA: X",nil,2,"keyboard")
+        GS.puxarBox    = box  -- seletor de dancas criado pelo modulo
     end
 
     -- ── VISUAL ──
@@ -1628,29 +1603,19 @@ do
         TPListaFrame = lista(gt,230,3)
     end
 
-    -- ── TELEPORTE › Puxar jogador ──
+    -- ── TELEPORTE › Subir nas costas ──
     do
         local p = painel(4,2)
-        local gp = grupo(p, "Puxar jogador", "Gruda o amigo do seu lado (só você vê)", "magnet", 1)
-        PuxarNomeInput = inp(gp,"Nome do amigo...",1)
-        PuxarUmButton  = acao(gp,"PUXAR JOGADOR","magnet",2)
-    end
-
-    -- ── TELEPORTE › Carregar ──
-    do
-        local p = painel(4,3)
-        local gc = grupo(p, "Carregar no braço", "Os dois precisam do script", "heart", 1)
-        CarregarNomeInput     = inp(gc,"Nome dela (clica na lista ou vazio = mais perto)...",1)
-        CarregarListaFrame    = lista(gc,150,2)
-        CarregarSegurarButton = acao(gc,"SEGURE AQUI OU A TECLA G PRA PEDIR","hand-heart",3)
-        CarregarStatus        = pequeno(gc,"STATUS: LIVRE",nil,4,"info")
+        local gk = grupo(p, "Subir nas costas", "Escolha uma pessoa da lista para subir nas costas", "backpack", 1)
+        CarregarNomeInput = inp(gk,"Buscar pessoa pelo nome...",1)
+        CarregarListaFrame = lista(gk,180,2)
+        CostasButton = acao(gk,"SUBIR NAS COSTAS","backpack",3)
+        CarregarStatus = pequeno(gk,"STATUS: LIVRE",nil,4,"info")
         CarregarStatus.TextColor3 = T.dim
         CarregarStatus.AutoButtonColor = false
-        local gk = grupo(p, "Subir nas costas", "Só você precisa do script", "backpack", 2)
-        CostasButton = acao(gk,"SUBIR NAS COSTAS DELA (SÓ VOCÊ PRECISA DO SCRIPT)","backpack",1)
-        CostasCtrl.atrasMenos, CostasCtrl.atrasMais, CostasCtrl.atrasLbl = ctrl(gk,"Distância",1.6,2)
-        CostasCtrl.alturaMenos, CostasCtrl.alturaMais, CostasCtrl.alturaLbl = ctrl(gk,"Altura",0.9,3)
-        CostasCtrl.delayMenos, CostasCtrl.delayMais, CostasCtrl.delayLbl = ctrl(gk,"Anti-delay (ms)","AUTO",4)
+        CostasCtrl.atrasMenos, CostasCtrl.atrasMais, CostasCtrl.atrasLbl = ctrl(gk,"Distância",1.6,5)
+        CostasCtrl.alturaMenos, CostasCtrl.alturaMais, CostasCtrl.alturaLbl = ctrl(gk,"Altura",0.9,6)
+        CostasCtrl.delayMenos, CostasCtrl.delayMais, CostasCtrl.delayLbl = ctrl(gk,"Anti-delay (ms)","AUTO",7)
     end
 
     -- ── VEICULO ──
@@ -1704,7 +1669,7 @@ do
     end
 
     -- ── RASTREAR / COMBATE / RESOLVER ── (montadas pelos modulos do fim do arquivo)
-    GS.painelRastrear = painel(7,1)
+    GS.painelRastrear = painel(9,2)
     GS.painelFarma    = painel(12,1)
     GS.painelValeRush = painel(13,1)
     GS.painelCombate  = painel(8,1)
@@ -1728,11 +1693,13 @@ do
         local rovibes = acao(p, "ROVIBES", "package", 4)
         local vale = acao(p, "VALE RUSH", "gauge", 5)
         local duelo = acao(p, "DUELO DE BOLA", "flame", 6)
+        local bike = acao(p, "BIKE GRAU", "bike", 7)
 
         GS.conectar(fps.MouseButton1Click, function() abrir(8, 1) end)
         GS.conectar(rovibes.MouseButton1Click, function() abrir(12, 1) end)
         GS.conectar(vale.MouseButton1Click, function() abrir(13, 1) end)
         GS.conectar(duelo.MouseButton1Click, function() abrir(11, 1) end)
+        GS.conectar(bike.MouseButton1Click, function() abrir(5, 1) end)
     end
 
     -- ── EMOTES ── (o clique e ligado pelo modulo EMOTES no fim do arquivo)
@@ -1747,65 +1714,6 @@ do
 
     abrir(1, 1)
 
-    -- ═══════════════ BUSCA ═══════════════
-    -- Digita o nome da funcao → abre a aba/subaba dela, rola ate ela e
-    -- pisca o card. Nao esconde nada (nao mexe no Visible das funcoes).
-    do
-        local function visivelAte(o, topo)
-            while o and o ~= topo do
-                if o:IsA("GuiObject") and not o.Visible then return false end
-                o = o.Parent
-            end
-            return o == topo
-        end
-        local function destacar(alvo)
-            task.wait()  -- espera o layout da aba nova
-            pcall(function()
-                local y = alvo.AbsolutePosition.Y - CA.AbsolutePosition.Y + CA.CanvasPosition.Y - 20
-                CA.CanvasPosition = Vector2.new(0, math.max(0, y))
-            end)
-            local luz=GS.novaInstancia("Frame"); luz.Size=UDim2.new(1,0,1,0); luz.BackgroundColor3=T.on
-            luz.BackgroundTransparency=0.45; luz.BorderSizePixel=0; luz.ZIndex=6; mkC(18,luz); luz.Parent=alvo
-            tw(luz,{BackgroundTransparency=1},1.2)
-            GS.delay(1.3,function() luz:Destroy() end)
-        end
-        local function buscar(q, avisar)
-            q = string.lower(semEmoji(q or ""))
-            if #q < 2 then return end
-            for ai, a in ipairs(ABAS) do
-                for si, s in ipairs(a.subs) do
-                    for _, d in ipairs(s.painel:GetDescendants()) do
-                        local txt
-                        if d:IsA("TextBox") then
-                            txt = d.PlaceholderText
-                        elseif (d:IsA("TextLabel") or d:IsA("TextButton")) and d.TextTransparency < 1 then
-                            txt = d.Text
-                        end
-                        if txt and string.find(string.lower(txt), q, 1, true) and visivelAte(d, s.painel) then
-                            abrir(ai, si)
-                            local alvo = d
-                            if d.Name == "Rotulo" and d.Parent and d.Parent.Parent and d.Parent.Parent:IsA("TextButton") then
-                                alvo = d.Parent.Parent          -- texto espelhado → o botao
-                            elseif d:IsA("TextLabel") and d.Parent and d.Parent ~= s.painel and d.Parent:IsA("GuiObject") then
-                                alvo = d.Parent                 -- rotulo → o card dele
-                            end
-                            -- nunca joga a luz dentro de um container com layout
-                            if alvo:FindFirstChildWhichIsA("UIGridStyleLayout") then alvo = d end
-                            GS.spawn(destacar, alvo)
-                            return true
-                        end
-                    end
-                end
-            end
-            if avisar then GS.toast("Nada encontrado: "..q, false) end
-        end
-        local buscaId = 0
-        GS.conectar(Busca:GetPropertyChangedSignal("Text"),function()
-            buscaId = buscaId + 1; local meu = buscaId
-            GS.delay(0.5, function() if meu == buscaId then pcall(buscar, Busca.Text, false) end end)
-        end)
-        GS.conectar(Busca.FocusLost,function(enter) if enter then pcall(buscar, Busca.Text, true) end end)
-    end
 
     -- ═══════════════ CONFIGURACOES ═══════════════
     ConfigFrame=GS.novaInstancia("Frame",ScreenGui)
@@ -1826,7 +1734,7 @@ do
         hover(b); press(b); ripple(b)
         return b
     end
-    KeybindButton=mkCB("KEYBIND: RightControl",56)
+    KeybindButton=mkCB("KEYBIND: Insert",56)
     GS.leveBtn=mkCB("MODO LEVE: OFF",104)
     UnloadButton=mkCB("ENCERRAR TUDO",152)
     UnloadButton.BackgroundColor3=T.perigo; UnloadButton.BackgroundTransparency=0.25; UnloadButton.TextColor3=T.perigoTxt
@@ -1856,7 +1764,7 @@ end)()
 end  -- fim do bloco do
 
 -- Keybind
-teclaMenu = Enum.KeyCode.RightControl
+teclaMenu = Enum.KeyCode.Insert
 escutandoTecla = false
 GS.conectar(KeybindButton.MouseButton1Click,function()
     escutandoTecla=true; KeybindButton.Text="[PRESSIONE UMA TECLA]"
@@ -3313,7 +3221,7 @@ local puxarConnection = nil
 local PX = { ativo=false, dancar=false, danca="MIX", ctrl={}, reg={}, cordasReg={}, cordas={},
              regConns=nil, slotN=0, t0=0, avisou=false,
              -- v9.1.2: monstro que LIGA (o servidor assume) nao te mata
-             fuga=true, raioFuga=18, antiToque=true, perdidos={}, rastro={}, seguros={},
+             fuga=false, raioFuga=18, antiToque=false, perdidos={}, rastro={}, seguros={},
              ultimaFuga=0, ultimoSeguro=0, fugas=0, toqueOrig={}, ultimoToque=0 }
 
 do
@@ -3321,8 +3229,7 @@ do
     local MOVERS = { LinearVelocity=true, AngularVelocity=true, VectorForce=true, LineForce=true,
                      Torque=true, AlignPosition=true, AlignOrientation=true, BodyMover=true }
 
-    PX.DANCAS = { "MIX","REBOLADO","GIRO","PULA-PULA","CABEÇADA","HELICÓPTERO","MINHOCA",
-                  "ROBÔ","CAMBALHOTA","MOONWALK","AGACHADINHA","TRENZINHO" }
+    PX.DANCAS = { "MIX","REBOLADO","GIRO","PULA-PULA" }
 
     local function ehNPC(m, meuChar)
         if not m or not m:IsA("Model") or m == meuChar then return false end
@@ -3749,21 +3656,6 @@ do
         end
         pintarDancas()
 
-        local togFuga  = U.tog(GS.puxarBox, "Fugir de monstro que ligou (teleporta você)", 10, "rabbit")
-        local fMenos, fMais, fLbl = U.ctrl(GS.puxarBox, "Raio da fuga (studs)", tostring(PX.raioFuga), 11)
-        local togToque = U.tog(GS.puxarBox, "Anti-toque (encostar não mata)", 12, "shield")
-        togFuga.Text = "FUGA: ON"; togToque.Text = "ANTI-TOQUE: ON"
-        GS.conectar(togFuga.MouseButton1Click,function()
-            PX.fuga = not PX.fuga
-            togFuga.Text = PX.fuga and "FUGA: ON" or "FUGA: OFF"
-        end)
-        GS.conectar(togToque.MouseButton1Click,function()
-            PX.antiToque = not PX.antiToque
-            togToque.Text = PX.antiToque and "ANTI-TOQUE: ON" or "ANTI-TOQUE: OFF"
-            if not PX.antiToque then PX.restaurarToque() else PX.ultimoToque = 0 end
-        end)
-        GS.conectar(fMenos.MouseButton1Click,function() PX.raioFuga = math.max(8, PX.raioFuga - 2); fLbl.Text = tostring(PX.raioFuga) end)
-        GS.conectar(fMais.MouseButton1Click,function() PX.raioFuga = math.min(60, PX.raioFuga + 2); fLbl.Text = tostring(PX.raioFuga) end)
     end
 
     GS.alternarDanca = function()
@@ -3830,29 +3722,7 @@ local function alternarPuxar()
     end
 end
 
--- ═══════════════════════════════════════════════════════════════
---   PUXAR JOGADOR (por nome) — TELEPORTE VISUAL CONTINUO
--- ═══════════════════════════════════════════════════════════════
--- Digita o nome (ou parte do nome) do amigo, aperta o botao e o
--- personagem dele "spawna"/aparece do seu lado — igual aos paineis
--- que so tem essa funcao de puxar 1 jogador especifico.
---
--- IMPORTANTE (limitacao real do Roblox, sem enganacao):
---   Isso funciona escrevendo o CFrame do HumanoidRootPart do alvo
---   direto, todo frame, pra ele ficar "grudado" do seu lado na SUA
---   tela. Isso e o mesmo metodo que qualquer painel de "puxar jogador"
---   usa. So que so VOCE ve ele ali do seu lado — o jogo real (server)
---   e as telas dos OUTROS jogadores continuam mostrando ele na posicao
---   de verdade, porque o Roblox so deixa o proprio client do jogador
---   mover o personagem dele de forma que os outros vejam (FilteringEnabled).
---   Nao existe jeito 100% client-side de teleportar OUTRO jogador de
---   verdade pro mapa inteiro ver — nenhum executor consegue isso sem
---   um exploit de servidor, que nao existe nos executores atuais.
--- ═══════════════════════════════════════════════════════════════
-local puxarUmAtivado = false
-local puxarUmConn    = nil
-local puxarUmAlvo    = nil
-
+-- Busca de jogador reutilizada pela lista de subir nas costas.
 local function localizarJogadorPorNome(texto)
     texto = string.lower(texto or "")
     if texto == "" then return nil end
@@ -3878,300 +3748,6 @@ local function localizarJogadorPorNome(texto)
         end
     end
     return nil
-end
-
-local function _limparPuxarUm()
-    if puxarUmConn then puxarUmConn:Disconnect() puxarUmConn = nil end
-    puxarUmAlvo = nil
-    puxarUmAtivado = false
-    pcall(function() PuxarUmButton.Text = "🧲  PUXAR JOGADOR" end)
-end
-
-local function alternarPuxarUm()
-    if puxarUmAtivado then
-        _limparPuxarUm()
-        return
-    end
-
-    local alvo = localizarJogadorPorNome(PuxarNomeInput.Text)
-    if not alvo then
-        -- feedback de erro no proprio botao (nao achou o nome digitado)
-        pcall(function()
-            local original = PuxarUmButton.Text
-            PuxarUmButton.Text = "❌ JOGADOR NÃO ENCONTRADO"
-            GS.delay(1.5, function()
-                pcall(function()
-                    if not puxarUmAtivado then PuxarUmButton.Text = original end
-                end)
-            end)
-        end)
-        return
-    end
-
-    puxarUmAtivado = true
-    puxarUmAlvo    = alvo
-    PuxarUmButton.Text = "🧲  PUXANDO: " .. alvo.Name
-
-    puxarUmConn = GS.conectar(RunService.Heartbeat,function()
-        -- Se o alvo saiu do jogo, desliga sozinho
-        if not (puxarUmAlvo and puxarUmAlvo.Parent) then
-            _limparPuxarUm()
-            return
-        end
-        local meuChar = LocalPlayer.Character
-        local meuRoot = meuChar and meuChar:FindFirstChild("HumanoidRootPart")
-        local alvoChar = puxarUmAlvo.Character
-        local alvoRoot = alvoChar and alvoChar:FindFirstChild("HumanoidRootPart")
-        if not meuRoot or not alvoRoot then return end
-
-        pcall(function()
-            -- Tenta assumir ownership tambem (funciona se o alvo for um NPC
-            -- disfarcado ou se o jogo permitir; nao tem efeito em players reais)
-            if setnetworkowner then pcall(function() setnetworkowner(alvoRoot, LocalPlayer) end) end
-            alvoRoot.CFrame = meuRoot.CFrame * CFrame.new(0, 0, -4)
-            alvoRoot.AssemblyLinearVelocity  = Vector3.zero
-            alvoRoot.AssemblyAngularVelocity = Vector3.zero
-        end)
-    end)
-end
-
--- ═══════════════════════════════════════════════════════════════
---   DERRUBA v3 — NOCAUTE EM MONSTROS (tecla configuravel, padrao X)
--- ═══════════════════════════════════════════════════════════════
--- Apertou a tecla: TODO monstro/NPC num raio de 35 studs cai no chao,
--- tombando pra longe de voce, fica deitado se debatendo 4s e levanta.
--- Mesma base do PUXAR/ESCUDO (fisica do monstro no seu PC = todo mundo
--- ve): trava rigida deitado + teleporte antes e depois da fisica +
--- pernas mortas + forcas do jogo desligadas + animacoes paradas.
--- Pega monstro com Humanoid ou so com AnimationController.
--- Monstro ancorado (movido pelo servidor) nao cai — o aviso conta.
--- ═══════════════════════════════════════════════════════════════
-local derrubaXConn = nil
-local DR = { ativo=false, tecla=Enum.KeyCode.X, escutando=false, ultimo=0, caidos={}, stepConn=nil }
-
-do
-    local ALCANCE, CAIDO, QUEDA, COOLDOWN = 35, 4, 0.35, 0.3
-    local ZERO = Vector3.zero
-    local MOVERS = { LinearVelocity=true, AngularVelocity=true, VectorForce=true, LineForce=true,
-                     Torque=true, AlignPosition=true, AlignOrientation=true }
-
-    local function raizDe(m)
-        local h = m:FindFirstChildOfClass("Humanoid")
-        local r = (h and h.RootPart) or m:FindFirstChild("HumanoidRootPart") or m.PrimaryPart
-            or m:FindFirstChild("Torso") or m:FindFirstChild("UpperTorso")
-        if r and r:IsA("BasePart") then return r end
-        return m:FindFirstChildWhichIsA("BasePart", true)
-    end
-
-    local function monstrosPerto(pos)
-        local achados, ancorados, maisPerto = {}, 0, math.huge
-        local vistos = {}
-        for _, d in ipairs(workspace:GetDescendants()) do
-            if d:IsA("Humanoid") or d:IsA("AnimationController") then
-                local m = d.Parent
-                if m and m:IsA("Model") and not vistos[m] and not Players:GetPlayerFromCharacter(m) then
-                    vistos[m] = true
-                    local h = m:FindFirstChildOfClass("Humanoid")
-                    local r = raizDe(m)
-                    if r and (not h or h.Health > 0) then
-                        local dist = (r.Position - pos).Magnitude
-                        if dist < maisPerto then maisPerto = dist end
-                        if dist <= ALCANCE and not DR.caidos[m] and not PX.ctrl[m] then
-                            if r.Anchored then
-                                if h then ancorados = ancorados + 1 end
-                            else
-                                table.insert(achados, { m=m, h=h, r=r })
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        return achados, ancorados, maisPerto
-    end
-
-    local function neutralizar(st, o)
-        if o.Name:sub(1, 6) == "Gringo" then return end
-        pcall(function()
-            if o:IsA("BodyMover") then
-                table.insert(st.movers, { o=o, pai=o.Parent }); o.Parent = nil
-            elseif MOVERS[o.ClassName] and o.Enabled then
-                table.insert(st.movers, { o=o }); o.Enabled = false
-            end
-        end)
-    end
-
-    local function levantar(m)
-        local st = DR.caidos[m]
-        if not st then return end
-        DR.caidos[m] = nil
-        if st.conn then st.conn:Disconnect() end
-        if st.loop then st.loop:Disconnect() end
-        for _, o in ipairs({ st.ap, st.ao, st.att }) do pcall(function() o:Destroy() end) end
-        for _, mv in ipairs(st.movers) do
-            pcall(function()
-                if mv.pai then if mv.pai.Parent then mv.o.Parent = mv.pai end else mv.o.Enabled = true end
-            end)
-        end
-        if st.h and st.orig then
-            pcall(function()
-                local h, o = st.h, st.orig
-                h.WalkSpeed = o.ws; h.JumpPower = o.jp; h.JumpHeight = o.jh; h.AutoRotate = o.ar; h.PlatformStand = o.ps
-                h:ChangeState(Enum.HumanoidStateType.GettingUp)
-            end)
-        end
-        -- fica em pe de novo no mesmo lugar
-        pcall(function()
-            if st.r.Parent then
-                st.r.CFrame = CFrame.new(st.chao + Vector3.new(0, st.alturaPe, 0)) * st.yaw
-                st.r.AssemblyLinearVelocity = ZERO; st.r.AssemblyAngularVelocity = ZERO
-            end
-        end)
-    end
-
-    local rp = RaycastParams.new()
-    rp.FilterType = Enum.RaycastFilterType.Exclude
-
-    local function derrubar(alvo, minhaPos)
-        local m, h, r = alvo.m, alvo.h, alvo.r
-        local st = { m=m, h=h, r=r, movers={}, inicio=os.clock(), animT=0 }
-        if h then st.orig = { ws=h.WalkSpeed, jp=h.JumpPower, jh=h.JumpHeight, ar=h.AutoRotate, ps=h.PlatformStand } end
-        for _, d in ipairs(m:GetDescendants()) do neutralizar(st, d) end
-        st.conn = GS.conectar(m.DescendantAdded,function(d) neutralizar(st, d) end)
-
-        -- chao embaixo do monstro + altura do pe
-        rp.FilterDescendantsInstances = { LocalPlayer.Character, m }
-        local de = r.Position
-        local baixo = workspace:Raycast(de, Vector3.new(0, -60, 0), rp)
-        st.chao = baixo and baixo.Position or (de - Vector3.new(0, 3, 0))
-        st.alturaPe = math.clamp(de.Y - st.chao.Y, 1, 40)
-        local okBox, _, tam = pcall(m.GetBoundingBox, m)
-        local espessura = okBox and math.min(tam.X, tam.Z) / 2 or 1
-
-        -- tomba pra longe de voce
-        local fora = Vector3.new(de.X - minhaPos.X, 0, de.Z - minhaPos.Z)
-        fora = fora.Magnitude > 0.1 and fora.Unit or Vector3.new(1, 0, 0)
-        st.yaw = CFrame.lookAt(ZERO, -fora)            -- de costas pra direcao da queda
-        local eixo = Vector3.new(-fora.Z, 0, fora.X)    -- eixo horizontal perpendicular
-        st.empe  = CFrame.new(de) * st.yaw
-        st.deitado = CFrame.new(st.chao + fora * (st.alturaPe * 0.6) + Vector3.new(0, espessura, 0))
-                   * CFrame.fromAxisAngle(eixo, -math.pi / 2) * st.yaw  -- cabeca pra longe de voce
-
-        st.att = GS.novaInstancia("Attachment"); st.att.Name = "GringoDerrubaAtt"; st.att.Parent = r
-        st.ap = GS.novaInstancia("AlignPosition"); st.ap.Name = "GringoDerrubaAP"
-        st.ap.Mode = Enum.PositionAlignmentMode.OneAttachment; st.ap.Attachment0 = st.att
-        st.ap.RigidityEnabled = true; st.ap.Position = de; st.ap.Parent = r
-        st.ao = GS.novaInstancia("AlignOrientation"); st.ao.Name = "GringoDerrubaAO"
-        st.ao.Mode = Enum.OrientationAlignmentMode.OneAttachment; st.ao.Attachment0 = st.att
-        st.ao.RigidityEnabled = true; st.ao.CFrame = r.CFrame; st.ao.Parent = r
-        DR.caidos[m] = st
-
-        st.loop = GS.conectar(RunService.Heartbeat,function(dt)
-            local ok = pcall(function()
-                if not m:IsDescendantOf(workspace) or not r.Parent or (h and h.Health <= 0) then
-                    levantar(m); return
-                end
-                local t = os.clock() - st.inicio
-                if t >= CAIDO then levantar(m); return end
-                if h then
-                    if h.WalkSpeed ~= 0 then h.WalkSpeed = 0 end
-                    if h.JumpPower ~= 0 then h.JumpPower = 0 end
-                    if h.JumpHeight ~= 0 then h.JumpHeight = 0 end
-                    if h.AutoRotate then h.AutoRotate = false end
-                    if not h.PlatformStand then h.PlatformStand = true end
-                end
-                st.animT = st.animT + dt
-                if st.animT >= 0.3 then
-                    st.animT = 0
-                    local ctrl = h or m:FindFirstChildOfClass("AnimationController")
-                    local animator = ctrl and ctrl:FindFirstChildOfClass("Animator")
-                    if animator then for _, tr in ipairs(animator:GetPlayingAnimationTracks()) do tr:Stop(0) end end
-                end
-                local cf
-                if t < QUEDA then
-                    local a = t / QUEDA
-                    cf = st.empe:Lerp(st.deitado, a * a)          -- acelera caindo
-                else
-                    -- deitado se debatendo
-                    local s = math.sin(t * 30) * 0.08
-                    cf = st.deitado * CFrame.Angles(s, 0, s * 0.5) + Vector3.new(0, math.abs(math.sin(t * 18)) * 0.25, 0)
-                end
-                st.cf = cf
-                st.ap.Position = cf.Position; st.ao.CFrame = cf
-                r.CFrame = cf
-                r.AssemblyLinearVelocity = ZERO; r.AssemblyAngularVelocity = ZERO
-            end)
-            if not ok then levantar(m) end
-        end)
-    end
-
-    DR.executar = function()
-        local agora = os.clock()
-        if agora - DR.ultimo < COOLDOWN then return end
-        DR.ultimo = agora
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        local meuRoot = (hum and hum.RootPart) or (char and char:FindFirstChild("HumanoidRootPart"))
-        if not meuRoot then return end
-        local achados, ancorados, maisPerto = monstrosPerto(meuRoot.Position)
-        for _, alvo in ipairs(achados) do pcall(derrubar, alvo, meuRoot.Position) end
-        if #achados > 0 then
-            GS.toast("💥  DERRUBOU " .. #achados .. (#achados == 1 and " MONSTRO" or " MONSTROS"), true)
-        elseif ancorados > 0 then
-            GS.toast("⚓  " .. ancorados .. " perto, mas o servidor segura (ancorado)", false)
-        elseif maisPerto < math.huge then
-            GS.toast(string.format("✕  Nenhum perto — o mais perto está a %.0f m", maisPerto), false)
-        else
-            GS.toast("✕  Nenhum monstro no mapa", false)
-        end
-    end
-
-    -- re-trava ANTES da fisica (servidor teleportou → volta no mesmo passo)
-    DR.stepConn = GS.conectar(RunService.Stepped,function()
-        for _, st in pairs(DR.caidos) do
-            if st.cf and st.r.Parent then
-                pcall(function() st.r.CFrame = st.cf; st.r.AssemblyLinearVelocity = ZERO end)
-            end
-        end
-    end)
-
-    DR.limpar = function()
-        for m in pairs(DR.caidos) do levantar(m) end
-    end
-    GS.conectar(ScreenGui.Destroying,function()
-        DR.limpar()
-        if DR.stepConn then DR.stepConn:Disconnect() DR.stepConn = nil end
-    end)
-
-    -- botao pra escolher a tecla
-    if GS.derrubaTeclaBtn then
-        local b = GS.derrubaTeclaBtn
-        GS.conectar(b.MouseButton1Click,function()
-            DR.escutando = true
-            b.Text = "[APERTE A TECLA]"
-        end)
-        GS.conectar(UserInputService.InputBegan,function(input)
-            if DR.escutando and input.UserInputType == Enum.UserInputType.Keyboard then
-                DR.escutando = false
-                DR.tecla = input.KeyCode
-                b.Text = "TECLA DERRUBA: " .. input.KeyCode.Name
-            end
-        end)
-    end
-end
-
-local function alternarDerruba()
-    DR.ativo = not DR.ativo
-    if DR.ativo then
-        DerrubaButton.Text = "DERRUBA: ON"
-        derrubaXConn = GS.conectar(UserInputService.InputBegan,function(input, gp)
-            if DR.escutando or UserInputService:GetFocusedTextBox() then return end
-            if input.KeyCode == DR.tecla then DR.executar() end
-        end)
-    else
-        DerrubaButton.Text = "DERRUBA: OFF"
-        if derrubaXConn then derrubaXConn:Disconnect() derrubaXConn = nil end
-    end
 end
 
 -- ═══════════════════════════════════════════════════════════════
@@ -4662,7 +4238,7 @@ end  -- fim COR GLOBAL
 
 do
 -- ═══════════════════════════════════════════════════════════════
---   CARREGAR NO BRACO — PEDIDO + ACEITAR (OS DOIS RODAM O SCRIPT)
+--   SISTEMA DE TRANSPORTE: SUPORTE INTERNO + SUBIR NAS COSTAS
 -- ═══════════════════════════════════════════════════════════════
 -- Como funciona:
 --   1. Escolhe ela na lista (ou deixa vazio = mais perto) e SEGURA a
@@ -4847,7 +4423,7 @@ local function _pararDeSerCarregado()
     desligarSinal(CFG.SINAL_CARREGADO)
     C.carregadoPor = nil
     C.costas = false
-    pcall(function() CostasButton.Text = "🎒  SUBIR NAS COSTAS DELA (SÓ VOCÊ PRECISA DO SCRIPT)" end)
+    pcall(function() CostasButton.Text = "🎒  SUBIR NAS COSTAS" end)
     local hum = getHum()
     if hum then
         bypassHealthBlock = true
@@ -4868,11 +4444,11 @@ local function _comecarSerCarregado(carregador, costas)
     C.costas = costas and true or false
     C.inicio = tick(); C.semSinalDesde = nil
     if C.costas then
-        setStatus("NAS COSTAS DE " .. carregador.Name:upper() .. " (G DESCE)")
+        setStatus("NAS COSTAS DE " .. carregador.Name:upper() .. " (BOTÃO DESCE)")
         pcall(function() CostasButton.Text = "🎒  DESCER DAS COSTAS" end)
     else
         ligarSinal(CFG.SINAL_CARREGADO)
-        setStatus("NO BRAÇO DE " .. carregador.Name:upper() .. " (G SOLTA)")
+        setStatus("NO BRAÇO DE " .. carregador.Name:upper() .. " (BOTÃO SOLTA)")
     end
     C.colConn = GS.conectar(RunService.Stepped,function()
         _semColisao(LocalPlayer.Character)
@@ -4931,7 +4507,7 @@ local function _comecarCarregar(alvo)
     C.inicio = tick(); C.semSinalDesde = nil
     desligarSinal(CFG.SINAL_PEDIR)
     ligarSinal(CFG.SINAL_CARREGANDO)
-    setStatus("CARREGANDO " .. alvo.Name:upper() .. " (G SOLTA)")
+    setStatus("CARREGANDO " .. alvo.Name:upper() .. " (BOTÃO SOLTA)")
     -- no SEU client o boneco dela nao pode te empurrar
     C.colConn = GS.conectar(RunService.Stepped,function()
         if C.carregando and C.carregando.Character then
@@ -5109,34 +4685,7 @@ GS.spawn(function()
     end
 end)
 
--- ── Segurar tecla G / botao do menu ──
-local function _comecarSegurar()
-    if C.carregando or C.carregadoPor then soltarCarregar() return end
-    local agora = tick()
-    C.segurandoDesde = agora
-    setStatus("SEGURANDO...")
-    GS.delay(CFG.SEGURAR, function()
-        if C.segurandoDesde == agora then
-            C.segurandoDesde = nil
-            pedirCarregar()
-        end
-    end)
-end
-local function _soltarSegurar()
-    if C.segurandoDesde then
-        C.segurandoDesde = nil
-        if not C.pendente then setStatus("LIVRE") end
-    end
-end
-
-table.insert(C.conns, GS.conectar(UserInputService.InputBegan,function(input, gp)
-    if gp or escutandoTecla then return end
-    if input.KeyCode == CFG.TECLA then _comecarSegurar() end
-end))
-table.insert(C.conns, GS.conectar(UserInputService.InputEnded,function(input)
-    if input.KeyCode == CFG.TECLA then _soltarSegurar() end
-end))
-GS.conectar(CarregarSegurarButton.MouseButton1Down,_comecarSegurar)
+-- O modo de carregar no braço foi removido da interface; fica apenas subir nas costas.
 local function _ajustarCostas(campo, delta, lbl)
     CFG[campo] = math.clamp(math.floor((CFG[campo] + delta) * 10 + 0.5) / 10, -2, 5)
     lbl.Text = string.format("%.1f", CFG[campo])
@@ -5165,8 +4714,6 @@ GS.conectar(CostasButton.MouseButton1Click,function()
     end
     _comecarSerCarregado(alvo, true)
 end)
-GS.conectar(CarregarSegurarButton.MouseButton1Up,_soltarSegurar)
-GS.conectar(CarregarSegurarButton.MouseLeave,_soltarSegurar)
 
 GS.limparCarregar = function()
     soltarCarregar()
@@ -5412,7 +4959,6 @@ function GS.encerrar()
     fullbrightAtivado=false; ghostAtivado=false
     GS.farmaDirecao=nil
     GS.tentar("puxar",_limparPuxar)
-    GS.tentar("puxar jogador",_limparPuxarUm)
     GS.tentar("parede preview",_limparParedePreview)
     for _,p in ipairs(paredesCriadas) do GS.tentar("parede",function() p:Destroy() end) end
     paredesCriadas={}
@@ -5465,9 +5011,7 @@ GS.conectar(EspButton.MouseButton1Click,GS.alternarEsp)
 GS.conectar(AntiTravaButton.MouseButton1Click,alternarAntiTrava)
 GS.conectar(PuxarButton.MouseButton1Click,alternarPuxar)
 GS.conectar(GS.dancaBtn.MouseButton1Click,GS.alternarDanca)
-GS.conectar(PuxarUmButton.MouseButton1Click,alternarPuxarUm)
 GS.conectar(TamanhoSlider.Changed,aplicarTamanho)
-GS.conectar(DerrubaButton.MouseButton1Click,alternarDerruba)
 GS.conectar(BikeAntiQuedaButton.MouseButton1Click,alternarBikeAntiQueda)
 GS.conectar(ParedeButton.MouseButton1Click,alternarParede)
 GS.conectar(CorAplicarButton.MouseButton1Click,GS.aplicarCorGlobal)
@@ -11099,437 +10643,6 @@ end
 GS.rodar("Farma por nome",GS.iniciarFarmaNome,GS.painelFarmaNome)
 
 
-
--- ═══════════════════════════════════════════════════════════════
---   ESCUDO ANTI-MONSTRO — NENHUM MONSTRO ENCOSTA EM VOCE
--- ═══════════════════════════════════════════════════════════════
--- Mesma base do PUXAR TODOS (network ownership: monstro solto perto de
--- voce tem a fisica calculada no seu PC, e o que fazemos replica pra
--- todo mundo). Camadas:
---   1) Deteccao universal: qualquer Model com Humanoid OU
---      AnimationController que nao seja de jogador (pega monstro sem
---      Humanoid, comum em jogo de terror). Registro por eventos +
---      varredura inicial em pedacos; monstro recriado e pego na hora.
---   2) Distancia ate o CORPO, nao ate o centro: usa a caixa do modelo
---      inteiro, entao monstro gigante e barrado antes da mao encostar.
---   3) Resposta (voce escolhe):
---        ARREMESSAR — voa em arco girando e cai longe, num chao valido
---                     (raycast: nao joga pra fora do mapa), e fica
---                     atordoado alguns segundos antes de soltar.
---        EMPURRAR   — vira parede: o monstro fica preso na borda.
---        CONGELAR   — trava onde entrou no escudo.
---   4) Trava bruta enquanto barrado: AlignPosition/AlignOrientation
---      rigidos + teleporte antes E depois da fisica + pernas mortas +
---      forcas do jogo desligadas + animacoes paradas.
---   5) Diagnostico: conta os monstros que nenhum cliente segura
---      (ancorados / fisica do servidor).
--- ═══════════════════════════════════════════════════════════════
-GS.iniciarEscudo = function()
-    local U = GS.ui
-    local box = GS.puxarBox
-    if not U or not box then return end
-    local T = U.T
-    local ZERO = Vector3.zero
-    local MOVERS = { LinearVelocity=true, AngularVelocity=true, VectorForce=true, LineForce=true,
-                     Torque=true, AlignPosition=true, AlignOrientation=true }
-    local STUN = 2.5        -- segundos atordoado depois de arremessado
-    local VOO  = 0.45       -- duracao do voo do arremesso
-
-    local E = { ativo=false, raio=10, modo="ARREMESSAR", bolhaOn=true, reg={}, alvos={},
-                conns={}, regConns=nil, bolha=nil, avisou=false, statusT=0 }
-
-    -- ── UI ──
-    U.sec(box, "ESCUDO ANTI-MONSTRO", "🛡", 5)
-    local togE = U.tog(box, "🛡 ESCUDO ANTI-MONSTRO", 6)
-    local menos, mais, valor = U.ctrl(box, "Raio do escudo (m)", 10, 7)
-    local grade = GS.novaInstancia("Frame", box)
-    grade.Size = UDim2.new(1, 0, 0, 32); grade.BackgroundTransparency = 1; grade.LayoutOrder = 8
-    do
-        local gl = GS.novaInstancia("UIGridLayout", grade)
-        gl.CellSize = UDim2.new(1/3, -6, 1, 0); gl.CellPadding = UDim2.new(0, 8, 0, 0)
-        gl.SortOrder = Enum.SortOrder.LayoutOrder
-    end
-    local togBolha = U.tog(box, "MOSTRAR BOLHA DO ESCUDO (SÓ VOCÊ VÊ)", 9)
-    local status = U.pequeno(box, "🛡 ESCUDO DESLIGADO", nil, 10)
-    status.AutoButtonColor = false; status.TextColor3 = T.dim
-    togE:SetAttribute("Controlado", true); togBolha:SetAttribute("Controlado", true)
-    togBolha.Text = "BOLHA: ON"
-
-    local botoesModo = {}
-    local function pintarModos()
-        for nome, b in pairs(botoesModo) do
-            local sel = nome == E.modo
-            U.tw(b, { BackgroundColor3 = sel and T.on or T.card, TextColor3 = sel and T.knobOn or T.dim }, 0.15)
-        end
-    end
-    for i, nome in ipairs({ "ARREMESSAR", "EMPURRAR", "CONGELAR" }) do
-        local b = GS.novaInstancia("TextButton", grade)
-        b.Text = nome; b.Font = Enum.Font.GothamBold; b.TextSize = 11; b.AutoButtonColor = false
-        b.BackgroundColor3 = T.card; b.TextColor3 = T.dim; b.BorderSizePixel = 0; b.LayoutOrder = i
-        U.mkC(8, b); U.mkS(1, T.stroke, b); U.press(b)
-        GS.conectar(b.MouseButton1Click,function()
-            E.modo = nome; pintarModos()
-            GS.toast("🛡  Escudo: " .. nome, true)
-        end)
-        botoesModo[nome] = b
-    end
-    pintarModos()
-
-    local function mostrarRaio() valor.Text = E.raio .. " m" end
-    mostrarRaio()
-    local function passoRaio(sobe)
-        local r = E.raio
-        if sobe then r = r + (r < 10 and 1 or (r < 50 and 5 or 10))
-        else r = r - (r <= 10 and 1 or (r <= 50 and 5 or 10)) end
-        E.raio = math.clamp(r, 2, 200)
-        mostrarRaio()
-    end
-    GS.conectar(mais.MouseButton1Click,function() passoRaio(true) end)
-    GS.conectar(menos.MouseButton1Click,function() passoRaio(false) end)
-
-    -- ── Deteccao ──
-    local function ehMonstro(m)
-        if not m or not m:IsA("Model") or m == workspace or not m:IsDescendantOf(workspace) then return false end
-        if Players:GetPlayerFromCharacter(m) then return false end
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p.Character and m:IsDescendantOf(p.Character) then return false end
-        end
-        local h = m:FindFirstChildOfClass("Humanoid")
-        if h and h.Health <= 0 then return false end
-        return true
-    end
-
-    local function raizDe(m)
-        local h = m:FindFirstChildOfClass("Humanoid")
-        local r = (h and h.RootPart) or m:FindFirstChild("HumanoidRootPart") or m.PrimaryPart
-            or m:FindFirstChild("Torso") or m:FindFirstChild("UpperTorso")
-        if r and r:IsA("BasePart") then return r end
-        return m:FindFirstChildWhichIsA("BasePart", true)
-    end
-
-    local function registrar(d)
-        if d:IsA("Humanoid") or d:IsA("AnimationController") then
-            local m = d.Parent
-            if m and m:IsA("Model") then E.reg[m] = true end
-        end
-    end
-
-    local function iniciarRegistro()
-        if E.regConns then return end
-        E.regConns = {}
-        table.insert(E.regConns, GS.conectar(workspace.DescendantAdded,registrar))
-        GS.spawn(function()
-            for i, d in ipairs(workspace:GetDescendants()) do
-                if not E.regConns then return end
-                registrar(d)
-                if i % 3000 == 0 then task.wait() end
-            end
-        end)
-    end
-
-    -- distancia de um ponto ate a CAIXA do modelo (monstro gigante conta o corpo todo)
-    local function distAoCorpo(m, ponto)
-        local ok, cf, tam = pcall(m.GetBoundingBox, m)
-        if not ok then return math.huge end
-        local loc = cf:PointToObjectSpace(ponto)
-        local h = tam / 2
-        local perto = Vector3.new(math.clamp(loc.X, -h.X, h.X), math.clamp(loc.Y, -h.Y, h.Y), math.clamp(loc.Z, -h.Z, h.Z))
-        return (loc - perto).Magnitude, math.max(tam.X, tam.Z) / 2
-    end
-
-    -- ── Trava (igual PUXAR TODOS) ──
-    local function neutralizar(st, o)
-        if o.Name:sub(1, 6) == "Gringo" then return end
-        pcall(function()
-            if o:IsA("BodyMover") then
-                table.insert(st.movers, { o=o, pai=o.Parent }); o.Parent = nil
-            elseif MOVERS[o.ClassName] and o.Enabled then
-                table.insert(st.movers, { o=o }); o.Enabled = false
-            end
-        end)
-    end
-
-    local function prender(m, r)
-        local st = { m=m, r=r, movers={}, animT=0 }
-        local h = m:FindFirstChildOfClass("Humanoid")
-        st.h = h
-        if h then st.orig = { ws=h.WalkSpeed, jp=h.JumpPower, jh=h.JumpHeight, ar=h.AutoRotate, ps=h.PlatformStand } end
-        for _, d in ipairs(m:GetDescendants()) do neutralizar(st, d) end
-        st.conn = GS.conectar(m.DescendantAdded,function(d) neutralizar(st, d) end)
-        st.att = GS.novaInstancia("Attachment"); st.att.Name = "GringoEscudoAtt"; st.att.Parent = r
-        st.ap = GS.novaInstancia("AlignPosition"); st.ap.Name = "GringoEscudoAP"
-        st.ap.Mode = Enum.PositionAlignmentMode.OneAttachment; st.ap.Attachment0 = st.att
-        st.ap.RigidityEnabled = true; st.ap.Position = r.Position; st.ap.Parent = r
-        st.ao = GS.novaInstancia("AlignOrientation"); st.ao.Name = "GringoEscudoAO"
-        st.ao.Mode = Enum.OrientationAlignmentMode.OneAttachment; st.ao.Attachment0 = st.att
-        st.ao.RigidityEnabled = true; st.ao.CFrame = r.CFrame; st.ao.Parent = r
-        E.alvos[m] = st
-        return st
-    end
-
-    local function soltar(m)
-        local st = E.alvos[m]
-        if not st then return end
-        E.alvos[m] = nil
-        if st.conn then st.conn:Disconnect() end
-        for _, o in ipairs({ st.ap, st.ao, st.att }) do pcall(function() o:Destroy() end) end
-        for _, mv in ipairs(st.movers) do
-            pcall(function()
-                if mv.pai then if mv.pai.Parent then mv.o.Parent = mv.pai end else mv.o.Enabled = true end
-            end)
-        end
-        if st.h and st.orig then
-            pcall(function()
-                local h, o = st.h, st.orig
-                h.WalkSpeed = o.ws; h.JumpPower = o.jp; h.JumpHeight = o.jh; h.AutoRotate = o.ar; h.PlatformStand = o.ps
-            end)
-        end
-    end
-
-    local function aplicar(st, cf, dt)
-        st.cf = cf
-        local h, r = st.h, st.r
-        if h then
-            if h.WalkSpeed ~= 0 then h.WalkSpeed = 0 end
-            if h.JumpPower ~= 0 then h.JumpPower = 0 end
-            if h.JumpHeight ~= 0 then h.JumpHeight = 0 end
-            if h.AutoRotate then h.AutoRotate = false end
-            if not h.PlatformStand then h.PlatformStand = true end
-        end
-        st.animT = st.animT + dt
-        if st.animT >= 0.3 then
-            st.animT = 0
-            local ctrl = h or st.m:FindFirstChildOfClass("AnimationController")
-            local animator = ctrl and ctrl:FindFirstChildOfClass("Animator")
-            if animator then for _, tr in ipairs(animator:GetPlayingAnimationTracks()) do tr:Stop(0) end end
-        end
-        st.ap.Position = cf.Position
-        st.ao.CFrame = cf
-        r.CFrame = cf
-        r.AssemblyLinearVelocity = ZERO
-        r.AssemblyAngularVelocity = ZERO
-    end
-
-    -- ── Arremesso: acha um chao valido longe de voce ──
-    local rp = RaycastParams.new()
-    rp.FilterType = Enum.RaycastFilterType.Exclude
-    local function destinoSeguro(m, r, minhaPos)
-        rp.FilterDescendantsInstances = { LocalPlayer.Character, m, E.bolha }
-        local de = r.Position
-        local dir = Vector3.new(de.X - minhaPos.X, 0, de.Z - minhaPos.Z)
-        if dir.Magnitude < 0.1 then dir = Vector3.new(math.random() - 0.5, 0, math.random() - 0.5) end
-        dir = dir.Unit
-        local alturaPe = 3
-        local baixo = workspace:Raycast(de, Vector3.new(0, -50, 0), rp)
-        if baixo then alturaPe = math.clamp(de.Y - baixo.Position.Y, 1, 30) end
-        for _, extra in ipairs({ 60, 45, 32, 22, 14, 8 }) do
-            local p = minhaPos + dir * (E.raio + extra)
-            local chao = workspace:Raycast(Vector3.new(p.X, de.Y + 4, p.Z), Vector3.new(0, -60, 0), rp)
-            if chao then return Vector3.new(p.X, chao.Position.Y + alturaPe, p.Z) end
-        end
-        local p = minhaPos + dir * (E.raio + 4)
-        return Vector3.new(p.X, de.Y, p.Z)
-    end
-
-    local function olhandoPraMim(pos, minhaPos)
-        return CFrame.lookAt(pos, Vector3.new(minhaPos.X, pos.Y, minhaPos.Z))
-    end
-
-    -- ── ANTI-TOQUE ──
-    -- O toque entre o SEU boneco e o monstro e detectado no SEU PC e
-    -- reportado pro servidor. Com CanTouch=false nas pecas do monstro (so
-    -- no seu PC), o toque nunca e detectado → ataque/jumpscare que usa
-    -- Touched (mao, hitbox escondida, "KillPart") nao dispara em voce.
-    -- Vale pra todo monstro do mapa, a qualquer distancia, e e
-    -- reaplicado a cada 0.5s (se o jogo religar, desliga de novo).
-    E.toque, E.toqueT = {}, 0
-    local function antiToque(m)
-        local t = E.toque[m]
-        if not t then
-            t = { lista={} }
-            local function pegar(p)
-                if p:IsA("BasePart") then
-                    table.insert(t.lista, p)
-                    if p.CanTouch then p.CanTouch = false end
-                end
-            end
-            for _, d in ipairs(m:GetDescendants()) do pegar(d) end
-            t.conn = GS.conectar(m.DescendantAdded,function(d) pcall(pegar, d) end)
-            E.toque[m] = t
-        else
-            for _, p in ipairs(t.lista) do
-                if p.Parent and p.CanTouch then p.CanTouch = false end
-            end
-        end
-    end
-    local function esquecerToque(m, restaurar)
-        local t = E.toque[m]
-        if not t then return end
-        E.toque[m] = nil
-        if t.conn then t.conn:Disconnect() end
-        if restaurar then
-            for _, p in ipairs(t.lista) do pcall(function() if p.Parent then p.CanTouch = true end end) end
-        end
-    end
-
-    -- ── Loop ──
-    local function passo(dt)
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        local meuRoot = (hum and hum.RootPart) or (char and char:FindFirstChild("HumanoidRootPart"))
-        if not meuRoot then return end
-        local minhaPos = meuRoot.Position
-        local agora = os.clock()
-
-        if E.bolha then
-            E.bolha.Size = Vector3.new(E.raio * 2, E.raio * 2, E.raio * 2)
-            E.bolha.CFrame = CFrame.new(minhaPos)
-            E.bolha.Transparency = E.bolhaOn and 0.75 or 1
-        end
-
-        E.toqueT = E.toqueT + dt
-        if E.toqueT >= 0.5 then
-            E.toqueT = 0
-            for m in pairs(E.reg) do
-                if m.Parent and ehMonstro(m) then pcall(antiToque, m) end
-            end
-        end
-
-        local barrados, impossiveis = 0, 0
-        for m in pairs(E.reg) do
-            if not m.Parent or not m:IsDescendantOf(workspace) then
-                E.reg[m] = nil; soltar(m); esquecerToque(m, false)
-            elseif PX.ctrl[m] then
-                soltar(m)
-            else
-                local st = E.alvos[m]
-                local r = (st and st.r.Parent and st.r) or raizDe(m)
-                if r and (r.Position - minhaPos).Magnitude < E.raio + 150 and ehMonstro(m) then
-                    local dist, corpo = distAoCorpo(m, minhaPos)
-                    local dentro = dist < E.raio
-                    if r.Anchored then
-                        if dentro and m:FindFirstChildOfClass("Humanoid") then impossiveis = impossiveis + 1 end
-                    else
-                        if dentro and isnetworkowner then
-                            local ok, meu = pcall(isnetworkowner, r)
-                            if ok and meu == false then impossiveis = impossiveis + 1 end
-                        end
-                        if not st and dentro then
-                            st = prender(m, r)
-                            st.inicio = agora
-                            if E.modo == "ARREMESSAR" then
-                                st.estado = "voando"; st.de = r.Position
-                                st.para = destinoSeguro(m, r, minhaPos)
-                                st.eixo = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5).Unit
-                            elseif E.modo == "CONGELAR" then
-                                st.estado = "congelado"; st.fixo = olhandoPraMim(r.Position, minhaPos)
-                            else
-                                st.estado = "parede"
-                            end
-                        end
-                        if st then
-                            barrados = barrados + 1
-                            local dirFora = Vector3.new(r.Position.X - minhaPos.X, 0, r.Position.Z - minhaPos.Z)
-                            dirFora = dirFora.Magnitude > 0.1 and dirFora.Unit or Vector3.new(1, 0, 0)
-                            local borda = minhaPos + dirFora * (E.raio + corpo + 1.5)
-                            borda = Vector3.new(borda.X, r.Position.Y, borda.Z)
-
-                            if st.estado == "voando" then
-                                local a = math.clamp((agora - st.inicio) / VOO, 0, 1)
-                                local alto = 6 + (st.para - st.de).Magnitude * 0.25
-                                local pos = st.de:Lerp(st.para, a) + Vector3.new(0, math.sin(a * math.pi) * alto, 0)
-                                pcall(aplicar, st, CFrame.new(pos) * CFrame.fromAxisAngle(st.eixo, a * math.pi * 6), dt)
-                                if a >= 1 then
-                                    st.estado = "atordoado"; st.ate = agora + STUN
-                                    st.fixo = olhandoPraMim(st.para, minhaPos)
-                                end
-                            elseif st.estado == "atordoado" then
-                                -- treme no chao enquanto atordoado
-                                local treme = Vector3.new(math.sin(agora * 40) * 0.15, 0, math.cos(agora * 37) * 0.15)
-                                pcall(aplicar, st, st.fixo + treme, dt)
-                                if agora >= st.ate then
-                                    if dentro then
-                                        st.estado = "voando"; st.inicio = agora; st.de = r.Position
-                                        st.para = destinoSeguro(m, r, minhaPos)
-                                    else
-                                        soltar(m)
-                                    end
-                                end
-                            elseif st.estado == "congelado" then
-                                if dist < E.raio * 0.5 then st.fixo = olhandoPraMim(borda, minhaPos) end
-                                pcall(aplicar, st, st.fixo, dt)
-                                if dist > E.raio + 6 and agora - st.inicio > 1 then soltar(m) end
-                            else -- parede
-                                pcall(aplicar, st, olhandoPraMim(borda, minhaPos), dt)
-                                if dist > E.raio + 6 and agora - st.inicio > 1 then soltar(m) end
-                            end
-                        end
-                    end
-                elseif st then
-                    soltar(m)
-                end
-            end
-        end
-
-        E.statusT = E.statusT + dt
-        if E.statusT >= 0.25 then
-            E.statusT = 0
-            local semToque = 0
-            for _ in pairs(E.toque) do semToque = semToque + 1 end
-            local txt = "🛡 RAIO: " .. E.raio .. " m   •   BARRADOS: " .. barrados .. "   •   🚫 ANTI-TOQUE: " .. semToque
-            if impossiveis > 0 then txt = txt .. "   •   ⚓ NÃO SEGURÁVEIS: " .. impossiveis end
-            status.Text = txt
-        end
-    end
-
-    local function desligar()
-        for _, c in ipairs(E.conns) do pcall(function() c:Disconnect() end) end
-        E.conns = {}
-        for m in pairs(E.alvos) do soltar(m) end
-        for m in pairs(E.toque) do esquecerToque(m, true) end
-        if E.bolha then pcall(function() E.bolha:Destroy() end) E.bolha = nil end
-        status.Text = "🛡 ESCUDO DESLIGADO"
-    end
-
-    local function ligar()
-        iniciarRegistro()
-        local b = GS.novaInstancia("Part")
-        b.Name = "GringoEscudoBolha"; b.Shape = Enum.PartType.Ball; b.Material = Enum.Material.ForceField
-        b.Color = Color3.fromRGB(120, 200, 255); b.Anchored = true; b.CanCollide = false
-        b.CanQuery = false; b.CanTouch = false; b.CastShadow = false
-        b.Parent = workspace.CurrentCamera
-        E.bolha = b
-        E.avisou = false
-        table.insert(E.conns, GS.conectar(RunService.Heartbeat,function(dt)
-            local ok, err = pcall(passo, dt)
-            if not ok and not E.avisou then E.avisou = true warn("[GRINGO ESCUDO] " .. tostring(err)) end
-        end))
-        -- re-trava antes da fisica (servidor teleportou → volta no mesmo passo)
-        table.insert(E.conns, GS.conectar(RunService.Stepped,function()
-            for _, st in pairs(E.alvos) do
-                if st.cf and st.r.Parent then
-                    pcall(function() st.r.CFrame = st.cf; st.r.AssemblyLinearVelocity = ZERO end)
-                end
-            end
-        end))
-    end
-
-    GS.conectar(togE.MouseButton1Click,function()
-        E.ativo = not E.ativo
-        togE.Text = E.ativo and "ESCUDO: ON" or "ESCUDO: OFF"
-        if E.ativo then ligar() else desligar() end
-    end)
-    GS.conectar(togBolha.MouseButton1Click,function()
-        E.bolhaOn = not E.bolhaOn
-        togBolha.Text = E.bolhaOn and "BOLHA: ON" or "BOLHA: OFF"
-    end)
-    GS.conectar(ScreenGui.Destroying,function()
-        desligar()
-        for _, c in ipairs(E.regConns or {}) do pcall(function() c:Disconnect() end) end
-        E.regConns = nil
-    end)
-end
-GS.rodar("Escudo", GS.iniciarEscudo)
 
 -- ═══════════════════════════════════════════════════════════════
 --   SUPER PULO — ALTURA ESCOLHIDA (ATE 10.000 STUDS) + POUSO SUAVE
