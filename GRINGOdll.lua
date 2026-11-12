@@ -1381,6 +1381,76 @@ do
               sec=sec, tog=tog, acao=acao, pequeno=pequeno, inp=inp, ctrl=ctrl,
               tile=tile, grupo=grupo, grade=grade, icone=icone, semEmoji=semEmoji }
 
+    -- CONFIGURACAO PERSISTENTE: registra todos os toggles de todas as abas.
+    -- O arquivo fica em uma pasta propria do painel e e carregado ao executar.
+    do
+        local HttpService = game:GetService("HttpService")
+        local pastaConfig = "GringoScripts"
+        local arquivoConfig = pastaConfig .. "/Configuracoes.json"
+        local botoesConfig = {}
+        local salvando = false
+        local carregando = false
+
+        local function salvarConfiguracoes()
+            if salvando or carregando then return end
+            salvando = true
+            local dados = {versao=1, toggles={}}
+            for indice, item in ipairs(botoesConfig) do
+                local texto = string.upper(tostring(item.botao.Text or ""))
+                dados.toggles[tostring(indice)] = {
+                    nome=item.nome,
+                    ativo=(texto:find("%f[%w]ON%f[%W]") ~= nil)
+                }
+            end
+            pcall(function()
+                if not isfolder(pastaConfig) then makefolder(pastaConfig) end
+                writefile(arquivoConfig, HttpService:JSONEncode(dados))
+            end)
+            salvando = false
+        end
+
+        local function criarTogglePersistente(pai, rotulo, ordem, iconeNome)
+            local botao = tog(pai, rotulo, ordem, iconeNome)
+            local nome = semEmoji(rotulo)
+            local indice = #botoesConfig + 1
+            botoesConfig[indice] = {botao=botao, nome=nome}
+            GS.conectar(botao.MouseButton1Click, function()
+                GS.delay(0.25, salvarConfiguracoes)
+            end)
+            GS.conectar(botao:GetPropertyChangedSignal("Text"), function()
+                GS.delay(0.25, salvarConfiguracoes)
+            end)
+            return botao
+        end
+
+        GS.ui.tog = criarTogglePersistente
+        GS.salvarConfiguracoes = salvarConfiguracoes
+
+        -- Carrega depois que todas as abas e seus controles forem montados.
+        GS.carregarConfiguracoes = function()
+            if carregando then return end
+            carregando = true
+            local dados
+            pcall(function()
+                if isfile(arquivoConfig) then
+                    dados = HttpService:JSONDecode(readfile(arquivoConfig))
+                end
+            end)
+            if type(dados) == "table" and type(dados.toggles) == "table" then
+                for indice, item in ipairs(botoesConfig) do
+                    local salvo = dados.toggles[tostring(indice)]
+                    if type(salvo) == "table" and salvo.nome == item.nome and salvo.ativo == true then
+                        -- Activate dispara o mesmo fluxo de clique usado pelo usuario.
+                        pcall(function() item.botao:Activate() end)
+                        task.wait(0.03)
+                    end
+                end
+            end
+            carregando = false
+            salvarConfiguracoes()
+        end
+    end
+
     -- ═══════════════ ABAS E SUBABAS ═══════════════
     local ABAS = {
         { nome="Jogador",   ico="user",        subs={"Movimento","Personagem","Proteção"} },
@@ -4924,6 +4994,105 @@ GS.iniciarValeRush = function()
     local desfocarBtn=U.acao(painel,"DESFOCAR AGORA","x",10)
     local restaurarBtn=U.acao(painel,"RESTAURAR TUDO","refresh-cw",11)
 
+    -- Modos de velocidade: Máximo e Normal. Apenas um pode ficar ativo.
+    local maximoBtn=U.tog(painel,"MÁXIMO: OFF",12,"zap")
+    local normalBtn=U.tog(painel,"NORMAL: OFF",13,"gauge")
+    maximoBtn:SetAttribute("Controlado",true)
+    normalBtn:SetAttribute("Controlado",true)
+
+    local modoVelocidade="OFF"
+    local velocidadeConn=nil
+    local forcaVelocidade=nil
+    local attachmentVelocidade=nil
+    local propriedadesLeves=setmetatable({}, {__mode="k"})
+
+    local function restaurarLeveza()
+        for parte,original in pairs(propriedadesLeves) do
+            pcall(function()
+                if parte.Parent then parte.CustomPhysicalProperties=original end
+            end)
+        end
+        propriedadesLeves=setmetatable({}, {__mode="k"})
+    end
+
+    local function desligarModoVelocidade()
+        modoVelocidade="OFF"
+        if velocidadeConn then velocidadeConn:Disconnect(); velocidadeConn=nil end
+        if forcaVelocidade then
+            pcall(function() forcaVelocidade.MaxForce=0; forcaVelocidade:Destroy() end)
+            forcaVelocidade=nil
+        end
+        if attachmentVelocidade then
+            pcall(function() attachmentVelocidade:Destroy() end)
+            attachmentVelocidade=nil
+        end
+        restaurarLeveza()
+        maximoBtn.Text="MÁXIMO: OFF"
+        normalBtn.Text="NORMAL: OFF"
+    end
+
+    local function ativarModoVelocidade(modo)
+        if modoVelocidade==modo then
+            desligarModoVelocidade()
+            return
+        end
+        desligarModoVelocidade()
+        modoVelocidade=modo
+        maximoBtn.Text=modo=="MAXIMO" and "MÁXIMO: ON" or "MÁXIMO: OFF"
+        normalBtn.Text=modo=="NORMAL" and "NORMAL: ON" or "NORMAL: OFF"
+
+        local function aplicar()
+            local char=jogador.Character
+            local root=char and char:FindFirstChild("HumanoidRootPart")
+            local hum=char and char:FindFirstChildOfClass("Humanoid")
+            if not root or not hum or hum.Health<=0 then return end
+
+            if modo=="MAXIMO" then
+                hum.WalkSpeed=16
+                if not attachmentVelocidade or attachmentVelocidade.Parent~=root then
+                    if attachmentVelocidade then attachmentVelocidade:Destroy() end
+                    attachmentVelocidade=Instance.new("Attachment")
+                    attachmentVelocidade.Parent=root
+                    if not forcaVelocidade then
+                        forcaVelocidade=Instance.new("LinearVelocity")
+                        forcaVelocidade.VelocityConstraintMode=Enum.VelocityConstraintMode.Vector
+                    end
+                    forcaVelocidade.Attachment0=attachmentVelocidade
+                    forcaVelocidade.Parent=root
+                end
+                local direcao=hum.MoveDirection
+                if direcao.Magnitude>0 then
+                    forcaVelocidade.VectorVelocity=direcao*(43+math.random(-5,5)/10+math.sin(tick()*15)*0.12)
+                    forcaVelocidade.MaxForce=100000
+                else
+                    forcaVelocidade.MaxForce=0
+                end
+                for _,parte in ipairs(char:GetDescendants()) do
+                    if parte:IsA("BasePart") and propriedadesLeves[parte]==nil then
+                        propriedadesLeves[parte]=parte.CustomPhysicalProperties
+                        parte.CustomPhysicalProperties=PhysicalProperties.new(0.7,0.001,0.5,1,1)
+                    end
+                end
+            else
+                hum.WalkSpeed=16
+                local direcao=hum.MoveDirection
+                if direcao.Magnitude>0 then
+                    root.AssemblyLinearVelocity=Vector3.new(
+                        direcao.X*40,
+                        root.AssemblyLinearVelocity.Y,
+                        direcao.Z*40
+                    )
+                end
+            end
+        end
+
+        velocidadeConn=GS.conectar(Run.Heartbeat,aplicar)
+        aplicar()
+    end
+
+    GS.conectar(maximoBtn.MouseButton1Click,function() ativarModoVelocidade("MAXIMO") end)
+    GS.conectar(normalBtn.MouseButton1Click,function() ativarModoVelocidade("NORMAL") end)
+
     -- Guarda apenas propriedades que conseguiu alterar; nada e destruido.
     function V.alterar(obj,prop,valor)
         local ok,atual=pcall(function() return obj[prop] end)
@@ -5385,7 +5554,10 @@ GS.iniciarValeRush = function()
     GS.conectar(mais.MouseButton1Click,function() V.ajustar(5) end)
     GS.conectar(leveBtn.MouseButton1Click,function() V.otimizar(not V.leve) end)
     GS.conectar(boxBtn.MouseButton1Click,function() V.boxes(not V.box) end)
-    GS.conectar(restaurarBtn.MouseButton1Click,function() V.visao(false); V.otimizar(false); V.boxes(false); V.focar(false) end)
+    GS.conectar(restaurarBtn.MouseButton1Click,function()
+        V.visao(false); V.otimizar(false); V.boxes(false); V.focar(false)
+        desligarModoVelocidade()
+    end)
     local cameraConn=GS.conectar(workspace:GetPropertyChangedSignal("CurrentCamera"),function()
         V.ligarCamera()
         if V.leve and workspace.CurrentCamera then
@@ -5408,6 +5580,7 @@ GS.iniciarValeRush = function()
         V.visao(false)
         V.otimizar(false)
         V.boxes(false)
+        desligarModoVelocidade()
     end)
     GS.valeRush=V
     print("[DEBUG-BOT]: Vale Rush: painel pronto")
@@ -14539,6 +14712,13 @@ end)
 -- os avisos de "ativado/desativado" so valem depois que tudo carregou e as
 -- chaves sincronizaram (o sync roda a cada 0.3s; 2s cobre com folga).
 GS.delay(2, function() GS.avisosLiberados = true end)
+
+-- Restaura automaticamente os estados salvos de todas as abas.
+GS.delay(2.5, function()
+    if GS.carregarConfiguracoes then
+        GS.carregarConfiguracoes()
+    end
+end)
 
 
 
