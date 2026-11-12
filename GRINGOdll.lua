@@ -1444,12 +1444,13 @@ do
         { nome="Veículo",   ico="bike",        subs={"Bike"} },
         { nome="Mundo",     ico="globe",       subs={"Parede","Cor global"} },
         { nome="Rastrear",  ico="scan-search", subs={"Objetos"} },
-        { nome="Combate",   ico="swords",      subs={"Combate","Silent Aim","No Recoil","Munição"} },
+        { nome="Combate",   ico="swords",      subs={"Combate","Silent Aim","No Recoil","Munição"}, oculta=true },
         { nome="Resolver",  ico="brain",       subs={"Resolver"} },
         { nome="Emotes",    ico="smile",       subs={"Emotes"}, ordem=1.5 },
-        { nome="Duelo da Bola", ico="flame",   subs={"Auto Toque"}, ordem=8.5 },
-        { nome="Farmar Vibes", ico="package", subs={"Farmar Vibes"}, ordem=9.5 },
-        { nome="Vale Rush", ico="gauge", subs={"Câmera e FPS"}, ordem=9.6 },
+        { nome="Duelo da Bola", ico="flame",   subs={"Auto Toque"}, ordem=8.5, oculta=true },
+        { nome="Farmar Vibes", ico="package", subs={"Farmar Vibes"}, ordem=9.5, oculta=true },
+        { nome="Vale Rush", ico="gauge", subs={"Câmera e FPS"}, ordem=9.6, oculta=true },
+        { nome="Jogos", ico="target", subs={"Selecionar jogo"}, ordem=8.4 },
     }
     do
         local ordem = 0
@@ -1514,6 +1515,7 @@ do
     end
 
     for i, a in ipairs(ABAS) do
+        if not a.oculta then
         local b=GS.novaInstancia("TextButton",ListaAbas)
         b.Size=UDim2.fromOffset(32,32); b.BackgroundColor3=T.vidro; b.BackgroundTransparency=1
         b.Text=""; b.AutoButtonColor=false; b.BorderSizePixel=0; b.LayoutOrder=math.floor((a.ordem or i)*10); redondo(b)
@@ -1528,6 +1530,7 @@ do
         end)
         GS.conectar(b.MouseButton1Click,function() abrir(i) end)
         press(b); dica(b, a.nome)
+        end
     end
 
     -- Botao configuracoes (embaixo da barra lateral)
@@ -1711,6 +1714,26 @@ do
     GS.painelRetorno  = painel(4,1)
     GS.painelBola     = painel(11,1)  -- DUELO DA BOLA: AUTO TOQUE monta aqui (antes ficava no Combate)
     GS.painelResolver = painel(9,1)
+    GS.painelJogos    = painel(14,1)
+
+    -- ── JOGOS: seletor único; os painéis originais continuam intactos ──
+    do
+        local p = GS.painelJogos
+        sec(p, "SELECIONE UM JOGO", "target", 1)
+        local descricao = pequeno(p, "Escolha um jogo para abrir suas ferramentas.", nil, 2, "info")
+        descricao.AutoButtonColor = false
+        descricao.TextColor3 = T.dim
+
+        local fps = acao(p, "JOGO DE TIRO FPS", "crosshair", 3)
+        local rovibes = acao(p, "ROVIBES", "package", 4)
+        local vale = acao(p, "VALE RUSH", "gauge", 5)
+        local duelo = acao(p, "DUELO DE BOLA", "flame", 6)
+
+        GS.conectar(fps.MouseButton1Click, function() abrir(8, 1) end)
+        GS.conectar(rovibes.MouseButton1Click, function() abrir(12, 1) end)
+        GS.conectar(vale.MouseButton1Click, function() abrir(13, 1) end)
+        GS.conectar(duelo.MouseButton1Click, function() abrir(11, 1) end)
+    end
 
     -- ── EMOTES ── (o clique e ligado pelo modulo EMOTES no fim do arquivo)
     do
