@@ -142,13 +142,13 @@ function GS.finalizarRecursos()
     print("[DEBUG-BOT]: Encerrar tudo: tarefas, eventos e objetos locais removidos")
 end
 
-GS.versao = "V2.1"
+GS.versao = "V2.2"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
 pcall(function() if gethui then GS.pai = gethui() end end)
 GS.pai = GS.pai or game.CoreGui
-GS.animsInfinitas = {}   -- animacoes em loop (pausadas no MODO LEVE)
+GS.animsInfinitas = {}   -- animacoes em loop do painel
 local EspButton, AntiTravaButton
 local PuxarButton
 local TamanhoSlider
@@ -161,7 +161,7 @@ local teclaMenu, escutandoTecla
 
 do
 -- ═══════════════════════════════════════════════════════════════
---   VISUAL V2.1 — PRETO FOSCO + VERDE LIMPO + ICONES LUCIDE
+--   VISUAL V2.2 — PRETO FOSCO + VERDE LIMAO + ICONES LUCIDE
 -- ═══════════════════════════════════════════════════════════════
 --   SO VISUAL: nenhuma funcao foi mexida. Os botoes que a logica usa
 --   continuam sendo os mesmos objetos (TextButton/TextBox/TextLabel)
@@ -176,7 +176,7 @@ do
 -- ═══════════════════════════════════════════════════════════════
 (function()
     local LP = game:GetService("Players").LocalPlayer
-    local BRANCO = Color3.new(1, 1, 1)
+    local BRANCO = Color3.fromRGB(170, 255, 0)
     local T = {
         -- Tema discreto: preto fosco com verde limpo, sem brilho exagerado.
         bg        = Color3.fromRGB(13, 16, 14),
@@ -409,7 +409,7 @@ do
         local g = GS.novaInstancia("UIGradient", o)
         g.Color = ColorSequence.new{
             ColorSequenceKeypoint.new(0,T.roxoA),
-            ColorSequenceKeypoint.new(0.52,Color3.fromRGB(187,225,234)),
+            ColorSequenceKeypoint.new(0.52,Color3.fromRGB(34, 65, 25)),
             ColorSequenceKeypoint.new(1,T.roxoB),
         }
         g.Rotation = rot or 60
@@ -492,7 +492,7 @@ do
     MainFrame.ClipsDescendants = true
     vidroRoxo(MainFrame, 60)
     mkC(10, MainFrame)
-    -- V2.1: acabamento escuro discreto com detalhes verdes.
+    -- V2.2: acabamento preto fosco com detalhes verde-lima.
     do
         local laminas = {}
         local function lamina(nome,dx,dy,margem,cor,transparencia)
@@ -512,7 +512,7 @@ do
         end
         -- Sombra deslocada, suave em camadas, abaixo das faces do vidro.
         for i=4,1,-1 do
-            lamina("SombraVidro"..i,3,7+i,i*2,Color3.fromRGB(3,39,42),0.94)
+            lamina("SombraVidro"..i,3,7+i,i*2,Color3.fromRGB(5,18,7),0.94)
         end
         for i=2,1,-1 do
             local f = lamina("EspessuraVidro"..i,i*3,i*4,0,T.bordaFunda,0.80)
@@ -572,7 +572,7 @@ do
         interior.BorderSizePixel = 0
         interior.ZIndex = 0
         mkC(8,interior)
-        local contorno = mkS(1,Color3.fromRGB(229,255,250),interior,0.25)
+        local contorno = mkS(1,Color3.fromRGB(115,190,45),interior,0.25)
         local luzBorda = GS.novaInstancia("UIGradient",contorno)
         luzBorda.Rotation = 55
         luzBorda.Transparency = NumberSequence.new{
@@ -585,7 +585,7 @@ do
         local reflexo = GS.novaInstancia("Frame",MainFrame)
         reflexo.Name = "ReflexoVidro"
         reflexo.Size = UDim2.fromScale(1,1)
-        reflexo.BackgroundColor3 = Color3.fromRGB(221,255,250)
+        reflexo.BackgroundColor3 = Color3.fromRGB(35,65,18)
         reflexo.BackgroundTransparency = 0.94
         reflexo.BorderSizePixel = 0
         reflexo.ZIndex = 0
@@ -672,7 +672,7 @@ do
             t.Size = UDim2.fromOffset(0, 84); t.AutomaticSize = Enum.AutomaticSize.X
             t.Position = UDim2.fromOffset(0, 40); t.ZIndex = 203
             local g = GS.novaInstancia("UIGradient", t); g.Rotation = 90
-            g.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(170, 170, 170))
+            g.Color = ColorSequence.new(Color3.fromRGB(170, 255, 0), Color3.fromRGB(70, 125, 25))
             local st = GS.novaInstancia("UIStroke", t); st.Color = T.on; st.Thickness = 2; st.Transparency = 1
             letras[i] = { t = t, st = st }
         end
@@ -698,7 +698,7 @@ do
         msg.AnchorPoint = Vector2.new(0.5, 0); msg.Position = UDim2.new(0.5, 0, 0.5, 64)
         msg.Size = UDim2.fromOffset(420, 22); msg.BackgroundTransparency = 1
         msg.Font = Enum.Font.GothamMedium; msg.TextSize = 15; msg.Text = ""
-        msg.TextColor3 = Color3.fromRGB(225, 225, 225); msg.ZIndex = 202
+        msg.TextColor3 = Color3.fromRGB(170, 255, 0); msg.ZIndex = 202
         local pct = GS.novaInstancia("TextLabel", fundo)
         pct.AnchorPoint = Vector2.new(0.5, 0); pct.Position = UDim2.new(0.5, 0, 0.5, 112)
         pct.Size = UDim2.fromOffset(120, 18); pct.BackgroundTransparency = 1
@@ -869,7 +869,7 @@ do
                                               NumberSequenceKeypoint.new(0.85, 0), NumberSequenceKeypoint.new(1, 1) }
         local faisca = GS.novaInstancia("Frame", fio)
         faisca.AnchorPoint = Vector2.new(0.5, 0.5); faisca.Position = UDim2.new(0, 0, 0.5, 0)
-        faisca.Size = UDim2.fromOffset(70, 3); faisca.BackgroundColor3 = Color3.fromRGB(225, 225, 225)
+        faisca.Size = UDim2.fromOffset(70, 3); faisca.BackgroundColor3 = Color3.fromRGB(170, 255, 0)
         faisca.BorderSizePixel = 0; redondo(faisca)
         local sg = GS.novaInstancia("UIGradient", faisca)
         sg.Transparency = NumberSequence.new{ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1) }
@@ -905,7 +905,7 @@ do
     end
 
     local SubBar=GS.novaInstancia("Frame",Header)
-    SubBar.Size=UDim2.new(1,-160,1,0); SubBar.BackgroundTransparency=1
+    SubBar.Size=UDim2.new(1,-54,1,0); SubBar.BackgroundTransparency=1
     do
         local l=GS.novaInstancia("UIListLayout",SubBar); l.FillDirection=Enum.FillDirection.Horizontal
         l.SortOrder=Enum.SortOrder.LayoutOrder; l.Padding=UDim.new(0,22)
@@ -920,41 +920,7 @@ do
         mkS(1.5,BRANCO,av,0.6)
         pcall(function() av.Image="rbxthumb://type=AvatarHeadShot&id="..LP.UserId.."&w=48&h=48" end)
     end
-    local function botaoTopo(nomeIco, x, corHover)
-        local b=GS.novaInstancia("TextButton",Header)
-        b.Size=UDim2.fromOffset(34,34); b.Position=UDim2.new(1,x,0.5,-17)
-        b.BackgroundColor3=T.vidro; b.BackgroundTransparency=V.campo; b.AutoButtonColor=false
-        b.Text=""; b.BorderSizePixel=0; redondo(b); mkS(1,BRANCO,b,V.borda); press(b)
-        local ic=icone(b,nomeIco,16,T.dim)
-        GS.conectar(b.MouseEnter,function()
-            tw(b,{BackgroundColor3=corHover or BRANCO,BackgroundTransparency=corHover and 0.1 or 0.75},0.15)
-            if ic then tw(ic,{ImageColor3=BRANCO},0.15) end
-        end)
-        GS.conectar(b.MouseLeave,function()
-            tw(b,{BackgroundColor3=T.vidro,BackgroundTransparency=V.campo},0.2)
-            if ic then tw(ic,{ImageColor3=T.dim},0.2) end
-        end)
-        return b
-    end
-    local XBtn=botaoTopo("x",-82,Color3.fromRGB(200,50,80))
-    local MinBtn=botaoTopo("minus",-122)
-    GS.conectar(XBtn.MouseButton1Click,function()
-        tw(abrirScale,{Scale=escalaBase*0.8},0.25,Enum.EasingStyle.Back,Enum.EasingDirection.In)
-        tw(MainFrame,{Position=MainFrame.Position+UDim2.new(0,0,0,40)},0.25,Enum.EasingStyle.Quint,Enum.EasingDirection.In)
-        task.wait(0.26)
-        ScreenGui:Destroy()
-    end)
-    local mini=false
-    GS.conectar(MinBtn.MouseButton1Click,function()
-        mini=not mini
-        local ic=MinBtn:FindFirstChild("Icone")
-        if ic then
-            local d=ICONES[mini and "plus" or "minus"]
-            ic.Image="rbxassetid://"..d[1]; ic.ImageRectOffset=Vector2.new(d[2],d[3])
-        end
-        tw(MainFrame,{Size=mini and UDim2.fromOffset(W,TITULO_H+HEADER_H+24) or UDim2.fromOffset(W,H)},0.4)
-    end)
-
+    -- Controles de fechar/minimizar removidos conforme solicitado; painel fica aberto pelo menu.
 
     -- ── Area de conteudo ──
     local CA=GS.novaInstancia("ScrollingFrame",MainFrame)
@@ -999,7 +965,7 @@ do
         row.BorderSizePixel=0; row.LayoutOrder=ord; mkC(12,row)
         local st=mkS(1,T.stroke,row,V.borda)
         local face=GS.novaInstancia("UIGradient",row)
-        face.Color=ColorSequence.new(BRANCO,Color3.fromRGB(176,232,227))
+        face.Color=ColorSequence.new(BRANCO,Color3.fromRGB(42, 75, 28))
         face.Rotation=70
         return row, st
     end
@@ -1179,7 +1145,7 @@ do
         row.BorderSizePixel=0; row.LayoutOrder=ord; mkC(12,row)
         local st=mkS(1,T.stroke,row,V.borda)
         local face=GS.novaInstancia("UIGradient",row)
-        face.Color=ColorSequence.new(BRANCO,Color3.fromRGB(176,232,227))
+        face.Color=ColorSequence.new(BRANCO,Color3.fromRGB(42, 75, 28))
         face.Rotation=70
         local bolha, ic = bolhaIcone(row, nomeIcone(ico), 36, UDim2.fromOffset(12,12))
         local lbl=GS.novaInstancia("TextLabel",row); lbl.Size=UDim2.new(1,-28,0,20); lbl.Position=UDim2.new(0,14,1,-34)
@@ -1673,7 +1639,7 @@ do
     -- ═══════════════ CONFIGURACOES ═══════════════
     ConfigFrame=GS.novaInstancia("Frame",ScreenGui)
     ConfigFrame.BackgroundTransparency=0.08; ConfigFrame.BorderSizePixel=0
-    ConfigFrame.Position=UDim2.new(0.5,-130,0.5,-134); ConfigFrame.Size=UDim2.new(0,260,0,268)
+    ConfigFrame.Position=UDim2.new(0.5,-130,0.5,-112); ConfigFrame.Size=UDim2.new(0,260,0,224)
     ConfigFrame.Visible=false; vidroRoxo(ConfigFrame, 70); mkC(14,ConfigFrame); mkS(3,T.stroke,ConfigFrame,0.2)
     local cfgScale=GS.novaInstancia("UIScale",ConfigFrame)
     do
@@ -1690,10 +1656,9 @@ do
         return b
     end
     KeybindButton=mkCB("KEYBIND: Insert",56)
-    GS.leveBtn=mkCB("MODO LEVE: OFF",104)
-    UnloadButton=mkCB("ENCERRAR TUDO",152)
+    UnloadButton=mkCB("ENCERRAR TUDO",104)
     UnloadButton.BackgroundColor3=T.perigo; UnloadButton.BackgroundTransparency=0.25; UnloadButton.TextColor3=T.perigoTxt
-    ConfigCloseButton=mkCB("FECHAR",212)
+    ConfigCloseButton=mkCB("FECHAR",164)
     GS.conectar(cfgBtn.MouseButton1Click,function()
         if ConfigFrame.Visible then
             ConfigFrame.Visible=false
@@ -14559,21 +14524,7 @@ GS.iniciarRetorno = function()
 end
 GS.rodar("Retorno seguro", GS.iniciarRetorno, GS.painelRetorno)
 
--- MODO LEVE (CONFIGURACOES): pra PC fraco / Windows 10 que crasha.
--- Pausa as animacoes em loop (borda girando, brilho do titulo), desliga o
--- efeito de onda dos cliques e deixa a checagem das chaves mais espacada.
-do
-    if GS.leveBtn then
-        GS.conectar(GS.leveBtn.MouseButton1Click,function()
-            GS.leve = not GS.leve
-            GS.leveBtn.Text = GS.leve and "MODO LEVE: ON" or "MODO LEVE: OFF"
-            for _, anim in ipairs(GS.animsInfinitas) do
-                pcall(function() if GS.leve then anim:Pause() else anim:Play() end end)
-            end
-            GS.toast(GS.leve and "🪶  Modo leve ligado" or "🪶  Modo leve desligado", GS.leve)
-        end)
-    end
-end
+-- Modo leve removido das configuracoes.
 
 -- SYNC DAS CHAVES: a cada 0.3s toda chave do painel confere o estado real
 -- da funcao (texto ON/OFF) e corrige o desenho se estiver errado.
