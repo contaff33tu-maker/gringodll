@@ -5272,7 +5272,7 @@ GS.iniciarValeRush = function()
         local interno=frame("Borda",box);interno.Size=UDim2.fromScale(1,1);interno.ZIndex=82
         local stroke=GS.novaInstancia("UIStroke");stroke.Color=cor;stroke.Thickness=1;stroke.Parent=interno
         local linha=frame("Linha",pasta);linha.BackgroundTransparency=0.25
-        linha.BackgroundColor3=cor;linha.AnchorPoint=Vector2.new(0.5,0.5);linha.ZIndex=80
+        linha.BackgroundColor3=cor;linha.AnchorPoint=Vector2.new(0.5,0.5);linha.ZIndex=84
         box.Visible=false;linha.Visible=false
         r.visual=pasta;r.ui={box=box,stroke=stroke,linha=linha}
         r.proximoTamanho=0;r.tamanho=Vector3.new(4,6,3)
@@ -5307,8 +5307,8 @@ GS.iniciarValeRush = function()
                         local x,y=pos.X-w*0.5,pos.Y-h*0.5
                         ui.box.Position=UDim2.fromOffset(x,y);ui.box.Size=UDim2.fromOffset(w,h);ui.box.Visible=true
                         ui.stroke.Color=cor;ui.linha.BackgroundColor3=cor
-                        local a=Vector2.new(viewport.X*0.5,viewport.Y-35)
-                        local b=Vector2.new(pos.X,math.clamp(y+h,0,viewport.Y))
+                        local a=Vector2.new(viewport.X*0.5,35)
+                        local b=Vector2.new(pos.X,math.clamp(y,0,viewport.Y))
                         local delta=b-a
                         ui.linha.Position=UDim2.fromOffset((a.X+b.X)*0.5,(a.Y+b.Y)*0.5)
                         ui.linha.Size=UDim2.fromOffset(delta.Magnitude,1)
