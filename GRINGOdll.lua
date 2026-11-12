@@ -1,4 +1,4 @@
--- GRINGOdll V50.20 · Feito pelo @henrique_system
+-- GRINGOdll V2.1 · Feito pelo @henrique_system
 -- Encerra a execucao anterior quando ela ja possui o registro de recursos.
 do
     local ok,ambiente=pcall(function() return type(getgenv)=="function" and getgenv() or _G end)
@@ -142,7 +142,7 @@ function GS.finalizarRecursos()
     print("[DEBUG-BOT]: Encerrar tudo: tarefas, eventos e objetos locais removidos")
 end
 
-GS.versao = "V50.20"
+GS.versao = "V2.1"
 GS.credito = "Feito pelo @henrique_system"
 -- Onde as janelas ficam: gethui() quando o executor tem (mais estavel que
 -- CoreGui em varios PCs/Windows), senao CoreGui.
@@ -153,8 +153,6 @@ local EspButton, AntiTravaButton
 local PuxarButton
 local TamanhoSlider
 local BikeAntiQuedaButton, BikeAntiQuedaKeyButton
-local CorGlobalButton, CorHexInput, CorAplicarButton, CorPreview
-local CorSwatches = {}
 local CarregarNomeInput, CarregarStatus, CarregarListaFrame, CostasButton
 local CostasCtrl = {}  -- botoes +/- de distancia/altura das costas
 local RegenUI = {}     -- botoes de regenerar / anti-void
@@ -163,7 +161,7 @@ local teclaMenu, escutandoTecla
 
 do
 -- ═══════════════════════════════════════════════════════════════
---   VISUAL V50.5 — VIDRO AZUL CLARO, BISEL VERDE-AGUA + ICONES LUCIDE
+--   VISUAL V2.1 — PRETO FOSCO + VERDE LIMPO + ICONES LUCIDE
 -- ═══════════════════════════════════════════════════════════════
 --   SO VISUAL: nenhuma funcao foi mexida. Os botoes que a logica usa
 --   continuam sendo os mesmos objetos (TextButton/TextBox/TextLabel)
@@ -180,40 +178,39 @@ do
     local LP = game:GetService("Players").LocalPlayer
     local BRANCO = Color3.new(1, 1, 1)
     local T = {
-        -- V50.5: vidro claro; tons da borda amostrados da foto de referencia.
-        bg        = Color3.fromRGB(185, 219, 230),
-        header    = Color3.fromRGB(211, 237, 241),
-        side      = Color3.fromRGB(139, 205, 202),
-        card      = Color3.fromRGB(191, 231, 231),
-        cardHover = Color3.fromRGB(146, 217, 209),
-        ctrl      = Color3.fromRGB(169, 218, 218),
-        stroke    = Color3.fromRGB(35, 167, 154),
-        strokeHi  = Color3.fromRGB(173, 255, 235),
-        text      = Color3.fromRGB(5, 28, 31),
-        dim       = Color3.fromRGB(7, 34, 37),
-        mute      = Color3.fromRGB(9, 39, 42),
-        on        = Color3.fromRGB(4, 95, 92),
-        onText    = Color3.fromRGB(234, 255, 250),
-        off       = Color3.fromRGB(120, 174, 175),
-        knobOn    = Color3.fromRGB(234, 255, 250),
-        knobOff   = Color3.fromRGB(34, 91, 94),
-        perigo    = Color3.fromRGB(132, 43, 66),
+        -- Tema discreto: preto fosco com verde limpo, sem brilho exagerado.
+        bg        = Color3.fromRGB(13, 16, 14),
+        header    = Color3.fromRGB(17, 22, 18),
+        side      = Color3.fromRGB(10, 14, 11),
+        card      = Color3.fromRGB(23, 29, 24),
+        cardHover = Color3.fromRGB(31, 43, 33),
+        ctrl      = Color3.fromRGB(18, 25, 19),
+        stroke    = Color3.fromRGB(42, 112, 59),
+        strokeHi  = Color3.fromRGB(76, 177, 96),
+        text      = Color3.fromRGB(232, 240, 233),
+        dim       = Color3.fromRGB(183, 197, 185),
+        mute      = Color3.fromRGB(133, 150, 137),
+        on        = Color3.fromRGB(35, 105, 53),
+        onText    = Color3.fromRGB(245, 255, 246),
+        off       = Color3.fromRGB(48, 58, 50),
+        knobOn    = Color3.fromRGB(240, 255, 242),
+        knobOff   = Color3.fromRGB(105, 122, 108),
+        perigo    = Color3.fromRGB(132, 43, 55),
         perigoTxt = Color3.fromRGB(255, 237, 240),
-        roxoA     = Color3.fromRGB(221, 240, 250),
-        roxoB     = Color3.fromRGB(145, 208, 210),
-        vidro     = Color3.fromRGB(181, 229, 225),
-        bordaFunda= Color3.fromRGB(4, 95, 92),
-        bordaLuz  = Color3.fromRGB(99, 229, 215),
+        roxoA     = Color3.fromRGB(28, 43, 31),
+        roxoB     = Color3.fromRGB(47, 88, 53),
+        vidro     = Color3.fromRGB(17, 25, 19),
+        bordaFunda= Color3.fromRGB(20, 54, 29),
+        bordaLuz  = Color3.fromRGB(65, 139, 77),
     }
-    -- Transparencia do vidro (0 = solido, 1 = invisivel).
-    -- Quer a janela mais transparente? aumenta "janela" (ex: 0.35).
+    -- Superficies mais opacas e simples, com pouco efeito de vidro.
     local V = {
-        janela = 0.30,
-        campo  = 0.46,
-        linha  = 0.34,
-        grupo  = 0.60,
-        borda  = 0.48,
-        card   = 0.24,
+        janela = 0.04,
+        campo  = 0.08,
+        linha  = 0.10,
+        grupo  = 0.08,
+        borda  = 0.24,
+        card   = 0.04,
     }
 
     -- ── Icones Lucide (48px, spritesheet publico no Roblox) ──
@@ -494,8 +491,8 @@ do
     MainFrame.Active = true; MainFrame.Parent = ScreenGui
     MainFrame.ClipsDescendants = true
     vidroRoxo(MainFrame, 60)
-    mkC(14, MainFrame)
-    -- V50.5: chapa de vidro com espessura, bisel e reflexo em movimento.
+    mkC(10, MainFrame)
+    -- V2.1: acabamento escuro discreto com detalhes verdes.
     do
         local laminas = {}
         local function lamina(nome,dx,dy,margem,cor,transparencia)
@@ -507,7 +504,7 @@ do
             f.ZIndex = 0
             f.Active = false
             f.Parent = ScreenGui
-            mkC(14+margem,f)
+            mkC(10+margem,f)
             local sc = GS.novaInstancia("UIScale",f)
             local item = {obj=f,dx=dx,dy=dy,margem=margem,scale=sc}
             table.insert(laminas,item)
@@ -555,7 +552,7 @@ do
         end)
         atualizarLaminas()
 
-        local borda = mkS(4,BRANCO,MainFrame,0.12)
+        local borda = mkS(2,T.stroke,MainFrame,0.28)
         borda.Name = "BordaVidroPolida"
         local bisel = GS.novaInstancia("UIGradient",borda)
         bisel.Rotation = 55
@@ -568,13 +565,13 @@ do
         }
 
         local interior = GS.novaInstancia("Frame",MainFrame)
-        interior.Name = "BiselInterno"
+        interior.Name = "AcabamentoInterno"
         interior.Size = UDim2.new(1,-10,1,-10)
         interior.Position = UDim2.fromOffset(5,5)
         interior.BackgroundTransparency = 1
         interior.BorderSizePixel = 0
         interior.ZIndex = 0
-        mkC(10,interior)
+        mkC(8,interior)
         local contorno = mkS(1,Color3.fromRGB(229,255,250),interior,0.25)
         local luzBorda = GS.novaInstancia("UIGradient",contorno)
         luzBorda.Rotation = 55
@@ -589,7 +586,7 @@ do
         reflexo.Name = "ReflexoVidro"
         reflexo.Size = UDim2.fromScale(1,1)
         reflexo.BackgroundColor3 = Color3.fromRGB(221,255,250)
-        reflexo.BackgroundTransparency = 0.65
+        reflexo.BackgroundTransparency = 0.94
         reflexo.BorderSizePixel = 0
         reflexo.ZIndex = 0
         mkC(14,reflexo)
@@ -1407,7 +1404,7 @@ do
             GS.defer(ajustar)
             GS.defer(function()
                 local cr = ch:FindFirstChildOfClass("UICorner")
-                if cr then cr.CornerRadius = UDim.new(0,12) end
+                if cr then cr.CornerRadius = UDim.new(0,8) end
             end)
         end)
         return f
@@ -1425,7 +1422,7 @@ do
         { nome="Visual",    ico="eye",         subs={"Visual"} },
         { nome="Teleporte", ico="map-pin",     subs={"Players","Subir nas costas"} },
         { nome="Veículo",   ico="bike",        subs={"Bike"}, oculta=true },
-        { nome="Mundo",     ico="globe",       subs={"Cor global"} },
+        { nome="_interno",  ico="",             subs={"_interno"}, oculta=true },
         { nome="Rastrear",  ico="scan-search", subs={"Objetos"}, oculta=true },
         { nome="Combate",   ico="swords",      subs={"Combate","Silent Aim","No Recoil","Munição"}, oculta=true },
         { nome="Assistente", ico="brain",      subs={"Resolver","Rastrear"} },
@@ -1625,38 +1622,6 @@ do
         BikeAntiQuedaKeyButton = pequeno(gb,"TECLA ANTI-QUEDA: E",nil,3,"keyboard")
     end
 
-
-    -- ── MUNDO › Cor global ──
-    do
-        local p = painel(6,1)
-        local gc = grupo(p, "Cor global", "Todo mundo vê", "palette", 1)
-        -- Paleta de cores vibrantes (clica pra escolher)
-        local paletaF=GS.novaInstancia("Frame",gc); paletaF.Size=UDim2.new(1,0,0,44)
-        paletaF.BackgroundTransparency=1; paletaF.LayoutOrder=1
-        local gl=GS.novaInstancia("UIGridLayout",paletaF); gl.CellSize=UDim2.new(0,38,0,38)
-        gl.CellPadding=UDim2.new(0,12,0,0); gl.SortOrder=Enum.SortOrder.LayoutOrder
-        gl.HorizontalAlignment=Enum.HorizontalAlignment.Center
-        local paleta={
-            Color3.fromRGB(255,0,0),   Color3.fromRGB(255,120,0), Color3.fromRGB(255,255,0),
-            Color3.fromRGB(0,255,0),   Color3.fromRGB(0,255,255), Color3.fromRGB(0,80,255),
-            Color3.fromRGB(170,0,255), Color3.fromRGB(255,0,200),
-        }
-        for i,c in ipairs(paleta) do
-            local b=GS.novaInstancia("TextButton",paletaF); b.Text=""; b.BackgroundColor3=c; b.AutoButtonColor=false
-            b.BorderSizePixel=0; b.LayoutOrder=i; redondo(b)
-            local st=mkS(2,BRANCO,b,0.7)
-            press(b)
-            GS.conectar(b.MouseEnter,function() tw(st,{Transparency=0},0.15) end)
-            GS.conectar(b.MouseLeave,function() tw(st,{Transparency=0.7},0.2) end)
-            table.insert(CorSwatches,{botao=b,cor=c})
-        end
-        CorHexInput      = inp(gc,"Ou digite a cor em HEX (ex: FF00FF)...",2)
-        CorPreview       = pequeno(gc,"COR ESCOLHIDA",Color3.fromRGB(255,0,200),3)
-        CorPreview.TextColor3 = Color3.fromRGB(255,255,255); CorPreview.AutoButtonColor = false
-        CorPreview.TextStrokeTransparency = 0.6
-        CorAplicarButton = acao(gc,"APLICAR COR AGORA","palette",4)
-        CorGlobalButton  = tog(gc,"Cor global (mantém aplicando)",5,"paint-bucket")
-    end
 
     -- ── RASTREAR / COMBATE / RESOLVER ── (montadas pelos modulos do fim do arquivo)
     GS.painelRastrear = painel(9,2)
@@ -3477,159 +3442,6 @@ end)
 
 do
 -- ═══════════════════════════════════════════════════════════════
---   COR GLOBAL — FORCA BRUTA NOS REMOTES DE COR DO JOGO
--- ═══════════════════════════════════════════════════════════════
--- Mudar cor direto pelo client NAO replica (FilteringEnabled), entao
--- o unico caminho pra todo mundo ver e o SERVIDOR aplicar a cor.
--- Isso varre o jogo inteiro atras de RemoteEvent/RemoteFunction com
--- nome de cor/avatar/skin/pintura e dispara cada um com TODOS os
--- formatos de argumento comuns:
---   Color3, BrickColor, HEX ("FF00FF" / "#FF00FF"), r,g,b (0-255),
---   tabela {R,G,B}, (Character, cor), (Player, cor), (nomeParte, cor)
--- Se o jogo tiver um sistema de cor que aceite qualquer um desses,
--- o servidor aplica e o mapa inteiro ve. Lista dos remotes no F9.
--- ═══════════════════════════════════════════════════════════════
-local corEscolhida      = Color3.fromRGB(255,0,200)
-local corGlobalAtivado  = false
-local corRemotes        = nil   -- cache da varredura
-local COR_REPETIR_RATE  = 2     -- segundos entre reaplicacoes no modo continuo
-local COR_NOMES_REMOTE  = {
-    "color", "colour", "paint", "pintar", "pintura", "rgb", "tint", "hue",
-    "skin", "bodycolor", "avatar", "outfit", "appearance", "aparencia",
-    "customiz", "personaliz", "dye", "tone",
-}
-local COR_PARTES = {
-    "Head", "Torso", "LeftArm", "RightArm", "LeftLeg", "RightLeg",
-    "HeadColor3", "TorsoColor3", "LeftArmColor3", "RightArmColor3",
-    "LeftLegColor3", "RightLegColor3",
-    "UpperTorso", "LowerTorso", "LeftUpperArm", "RightUpperArm",
-    "LeftUpperLeg", "RightUpperLeg",
-}
-
-local function _nomeEhDeCor(nome)
-    local n = nome:lower()
-    -- "cor" so no comeco/fim do nome (evita pegar "score", "record", "core"...)
-    if n == "cor" or n:match("^cor[_%s]") or n:match("^corpo") or n:match("cor$") then
-        return true
-    end
-    for _, chave in ipairs(COR_NOMES_REMOTE) do
-        if n:find(chave, 1, true) then return true end
-    end
-    return false
-end
-
-local function _procurarRemotesCor()
-    local achados = {}
-    local function varrer(raiz)
-        pcall(function()
-            for _, obj in ipairs(raiz:GetDescendants()) do
-                if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") or obj:IsA("UnreliableRemoteEvent"))
-                and _nomeEhDeCor(obj.Name) then
-                    table.insert(achados, obj)
-                end
-            end
-        end)
-    end
-    varrer(game:GetService("ReplicatedStorage"))
-    varrer(workspace)
-    varrer(LocalPlayer)
-    pcall(function() varrer(game:GetService("StarterGui")) end)
-    print("[GRINGO COR] Remotes de cor encontrados: " .. #achados)
-    for _, r in ipairs(achados) do print("  -> [" .. r.ClassName .. "] " .. r:GetFullName()) end
-    return achados
-end
-
-local function _argumentosCor(cor)
-    local r, g, b = math.floor(cor.R*255+0.5), math.floor(cor.G*255+0.5), math.floor(cor.B*255+0.5)
-    local hex = cor:ToHex()
-    local lista = {
-        { cor },
-        { BrickColor.new(cor) },
-        { hex }, { "#" .. hex }, { hex:upper() },
-        { r, g, b },
-        { cor.R, cor.G, cor.B },
-        { { R = r, G = g, B = b } },
-        { { r, g, b } },
-        { LocalPlayer.Character, cor },
-        { LocalPlayer, cor },
-        { "Color", cor }, { "BodyColor", cor }, { "Skin", cor },
-    }
-    for _, parte in ipairs(COR_PARTES) do
-        table.insert(lista, { parte, cor })
-    end
-    return lista
-end
-
-local function _dispararRemote(remote, args)
-    if remote:IsA("RemoteFunction") then
-        -- InvokeServer trava esperando resposta: roda separado
-        GS.spawn(function() pcall(function() remote:InvokeServer(table.unpack(args)) end) end)
-    else
-        pcall(function() remote:FireServer(table.unpack(args)) end)
-    end
-end
-
-local function aplicarCorGlobal()
-    if not corRemotes then corRemotes = _procurarRemotesCor() end
-    if #corRemotes == 0 then
-        CorAplicarButton.Text = "🎨  SEM REMOTE DE COR NESSE JOGO"
-        return false
-    end
-    local listaArgs = _argumentosCor(corEscolhida)
-    for _, remote in ipairs(corRemotes) do
-        if remote.Parent then
-            for _, args in ipairs(listaArgs) do
-                _dispararRemote(remote, args)
-            end
-        end
-    end
-    CorAplicarButton.Text = "🎨  APLICADO EM " .. #corRemotes .. " REMOTE(S)"
-    return true
-end
-
-local function definirCorEscolhida(cor)
-    corEscolhida = cor
-    CorPreview.BackgroundColor3 = cor
-    CorPreview.Text = "COR ESCOLHIDA: #" .. cor:ToHex():upper()
-    if corGlobalAtivado then aplicarCorGlobal() end
-end
-
-local function alternarCorGlobal()
-    corGlobalAtivado = not corGlobalAtivado
-    if corGlobalAtivado then
-        CorGlobalButton.Text = "COR GLOBAL: ON"
-        corRemotes = _procurarRemotesCor()   -- varre de novo (o jogo pode ter carregado mais coisa)
-        GS.spawn(function()
-            while corGlobalAtivado do
-                aplicarCorGlobal()
-                task.wait(COR_REPETIR_RATE)
-            end
-        end)
-    else
-        CorGlobalButton.Text = "COR GLOBAL: OFF"
-    end
-end
-
-for _, sw in ipairs(CorSwatches) do
-    GS.conectar(sw.botao.MouseButton1Click,function() definirCorEscolhida(sw.cor) end)
-end
-GS.conectar(CorHexInput.FocusLost,function()
-    local txt = CorHexInput.Text:gsub("#", ""):gsub("%s", "")
-    if #txt == 6 and txt:match("^%x+$") then
-        definirCorEscolhida(Color3.fromHex(txt))
-    elseif txt ~= "" then
-        CorHexInput.Text = ""
-        CorHexInput.PlaceholderText = "HEX invalido — use 6 digitos, ex: FF00FF"
-    end
-end)
-definirCorEscolhida(corEscolhida)
-GS.aplicarCorGlobal  = aplicarCorGlobal
-GS.alternarCorGlobal = alternarCorGlobal
-GS.pararCorGlobal    = function() corGlobalAtivado = false end
-end  -- fim COR GLOBAL
-
-do
--- ═══════════════════════════════════════════════════════════════
 --   SISTEMA DE TRANSPORTE: SUPORTE INTERNO + SUBIR NAS COSTAS
 -- ═══════════════════════════════════════════════════════════════
 -- Como funciona:
@@ -4337,7 +4149,7 @@ function GS.encerrar()
     -- Cada etapa e isolada: uma funcao ausente nao interrompe as demais.
     GS.emLimpeza=true
     for _,nome in ipairs({"pararFarmaFrascos","pararFarmaLucky","pararFarmaTesouro","pararFarmaNome",
-        "pararCorGlobal","limparCarregar","limparESP"}) do
+        "limparCarregar","limparESP"}) do
         if type(GS[nome])=="function" then GS.tentar(nome,GS[nome]) end
     end
     GS.tentar("hooks",removerHooks)
@@ -4401,8 +4213,6 @@ GS.conectar(PuxarButton.MouseButton1Click,alternarPuxar)
 GS.conectar(GS.dancaBtn.MouseButton1Click,GS.alternarDanca)
 GS.conectar(TamanhoSlider.Changed,aplicarTamanho)
 GS.conectar(BikeAntiQuedaButton.MouseButton1Click,alternarBikeAntiQueda)
-GS.conectar(CorAplicarButton.MouseButton1Click,GS.aplicarCorGlobal)
-GS.conectar(CorGlobalButton.MouseButton1Click,GS.alternarCorGlobal)
 
 -- ═══════════════════════════════════════════════════════════════
 --   ABA COMBATE — CONECTAR + AIMBOT (4 MODOS) + ESP
@@ -6257,7 +6067,7 @@ GS.iniciarFarma = function()
     end
 
     local function atualizarResumo(total)
-        status.Text = "V50.20 · " .. R.fase .. " · LOCALIZADOS: " .. total
+        status.Text = "V2.1 · " .. R.fase .. " · LOCALIZADOS: " .. total
         local limite = workspace.StreamingEnabled
             and "Streaming ativo: aparição no cliente não prova spawn no servidor."
             or "Streaming desligado: novas aparições são observações locais."
