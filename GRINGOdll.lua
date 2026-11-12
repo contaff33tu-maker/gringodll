@@ -1709,7 +1709,7 @@ do
     -- ═══════════════ CONFIGURACOES ═══════════════
     ConfigFrame=GS.novaInstancia("Frame",ScreenGui)
     ConfigFrame.BackgroundTransparency=0.08; ConfigFrame.BorderSizePixel=0
-    ConfigFrame.Position=UDim2.new(0.5,-130,0.5,-112); ConfigFrame.Size=UDim2.new(0,260,0,224)
+    ConfigFrame.Position=UDim2.new(0.5,-130,0.5,-136); ConfigFrame.Size=UDim2.new(0,260,0,272)
     ConfigFrame.Visible=false; vidroRoxo(ConfigFrame, 70); mkC(14,ConfigFrame); mkS(3,T.stroke,ConfigFrame,0.2)
     local cfgScale=GS.novaInstancia("UIScale",ConfigFrame)
     do
@@ -1728,7 +1728,19 @@ do
     KeybindButton=mkCB("KEYBIND: Insert",56)
     UnloadButton=mkCB("ENCERRAR TUDO",104)
     UnloadButton.BackgroundColor3=T.perigo; UnloadButton.BackgroundTransparency=0.25; UnloadButton.TextColor3=T.perigoTxt
-    ConfigCloseButton=mkCB("FECHAR",164)
+    SaveConfigButton=mkCB("SALVAR CONFIGURAÇÕES",164)
+    ConfigCloseButton=mkCB("FECHAR",212)
+    GS.conectar(SaveConfigButton.MouseButton1Click,function()
+        if GS.salvarConfiguracoes then
+            GS.salvarConfiguracoes()
+            SaveConfigButton.Text="CONFIGURAÇÕES SALVAS!"
+            GS.delay(1.5,function()
+                if SaveConfigButton and SaveConfigButton.Parent then
+                    SaveConfigButton.Text="SALVAR CONFIGURAÇÕES"
+                end
+            end)
+        end
+    end)
     GS.conectar(cfgBtn.MouseButton1Click,function()
         if ConfigFrame.Visible then
             ConfigFrame.Visible=false
